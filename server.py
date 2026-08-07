@@ -780,7 +780,18 @@ async def startup_event():
 # ─────────────────────────────────────────────────────────────
 @app.get("/hls/camera/{cam_id}/{filename}")
 async def serve_camera_virtual_file(cam_id: str, filename: str):
-    sub = f"stream{cam_id}_detected" if cam_id in running and os.path.exists(os.path.join(HLS_DIR, f"stream{cam_id}_detected/playlist.m3u8")) else f"stream{cam_id}_raw"
+    rtsp = cid_to_rtsp.get(cam_id)
+    active_detection_cid = None
+    if rtsp:
+        for other_cid, other_rtsp in list(cid_to_rtsp.items()):
+            if other_rtsp == rtsp:
+                if other_cid in running and os.path.exists(os.path.join(HLS_DIR, f"stream{other_cid}_detected/playlist.m3u8")):
+                    active_detection_cid = other_cid
+                    break
+    if active_detection_cid is not None:
+        sub = f"stream{active_detection_cid}_detected"
+    else:
+        sub = f"stream{cam_id}_raw"
     return await serve_hls(f"{sub}/{filename}")
 
 @app.get("/hls/camera/{cam_id}/playlist.m3u8")
@@ -790,8 +801,16 @@ async def smart_hls_playlist(cam_id: str): return await serve_camera_virtual_fil
 async def serve_hls(path: str):
     if path.endswith("playlist.m3u8") and "_raw" in path:
         cid = path.split("_raw")[0].replace("stream", "")
-        if cid in running and os.path.exists(os.path.join(HLS_DIR, f"stream{cid}_detected/playlist.m3u8")):
-            return await serve_hls(f"stream{cid}_detected/playlist.m3u8")
+        rtsp = cid_to_rtsp.get(cid)
+        active_detection_cid = None
+        if rtsp:
+            for other_cid, other_rtsp in list(cid_to_rtsp.items()):
+                if other_rtsp == rtsp:
+                    if other_cid in running and os.path.exists(os.path.join(HLS_DIR, f"stream{other_cid}_detected/playlist.m3u8")):
+                        active_detection_cid = other_cid
+                        break
+        if active_detection_cid is not None:
+            return await serve_hls(f"stream{active_detection_cid}_detected/playlist.m3u8")
     fp = os.path.join(HLS_DIR, path)
     if not os.path.exists(fp): return Response(status_code=404)
     mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"

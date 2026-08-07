@@ -46,6 +46,11 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;300000
 
 class DetectorWorker:
     def __init__(self, rtsp_url, output_dir, model_paths, fps=15, conf=0.25, iou=0.45, location=None):
+        import platform
+        # Lower FPS on Raspberry Pi to prevent CPU starvation and buffering
+        is_rpi = platform.system() == "Linux" and platform.machine() in ["aarch64", "armv7l"]
+        if is_rpi and fps == 15:
+            fps = 7
         self.rtsp_url, self.output_dir, self.fps, self.conf, self.iou = rtsp_url, output_dir, fps, conf, iou
         self.location = location or f"Camera {os.path.basename(output_dir).replace('stream', '').replace('_detected', '')}"
         self.width, self.height = 1280, 720
@@ -72,7 +77,7 @@ class DetectorWorker:
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", 
             "-profile:v", "main", "-level:v", "4.0",
-            "-b:v", "400k", "-maxrate", "600k", "-bufsize", "1M",
+            "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
             "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
             "-keyint_min", str(int(self.fps * 2)), 
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
@@ -81,7 +86,7 @@ class DetectorWorker:
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 400k (max 600k)", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 600k (max 800k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):
