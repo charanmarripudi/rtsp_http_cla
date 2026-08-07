@@ -687,6 +687,7 @@ def start_raw_stream(i, u):
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
+    print(f"[LOG] Camera {cid} raw stream started with resolution: 640x360, FPS: source, Bitrate: 400k (max 600k)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd}
     # Also, symlink any other cids already mapped to this rtsp
@@ -1128,6 +1129,8 @@ def start_detection(d: dict):
     # slow-motion. The detector opens its own RTSP connection internally, so
     # the raw FFmpeg is not needed while detection is active.
     _kill_raw_ffmpeg_for_camera(cid)
+    # Allow 1.0 second for the camera to release the RTSP TCP session slot
+    time.sleep(1.0)
 
     # Pass location to worker
     cmd = [sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc]
@@ -1978,16 +1981,14 @@ def get_alerts_json():
         results = []
         for a in data:
             if not isinstance(a, dict): continue
-            img_name = a.get("image")
-            # If image is just a filename, convert to full path
-            if img_name and "/" not in img_name and os.path.exists(os.path.join(ALERTS_DIR, img_name)):
+            img_path = a.get("image") or ""
+            filename = img_path.split("/")[-1] if img_path else ""
+            if filename:
                 base_url = get_alerts_base_url()
                 if base_url:
-                    a["image"] = f"{base_url.rstrip('/')}/hls/alerts/{img_name}"
+                    a["image"] = f"{base_url.rstrip('/')}/hls/alerts/{filename}"
                 else:
-                    a["image"] = f"/hls/alerts/{img_name}"
-                results.append(a)
-            elif img_name:
+                    a["image"] = f"/hls/alerts/{filename}"
                 results.append(a)
         # Show alerts in the order from alerts.json (newest first)
         return results

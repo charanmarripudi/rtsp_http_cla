@@ -81,6 +81,7 @@ class DetectorWorker:
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 400k (max 600k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):
@@ -134,7 +135,7 @@ class DetectorWorker:
                 try:
                     cur = conn.cursor()
                     ensure_alerts_schema(cur)
-                    insert_alert_db(cur, self.cam_id, self.location, f"{class_name} Detected", filename, now_dt)
+                    insert_alert_db(cur, self.cam_id, self.location, f"{class_name} Detected", image_path, now_dt)
                     conn.commit()
                     cur.close()
                 except: 
@@ -146,7 +147,7 @@ class DetectorWorker:
                 alog = os.path.join(adir_root, "hls", "alerts", "alerts.json")
                 os.makedirs(os.path.dirname(alog), exist_ok=True)
                 data = json.load(open(alog)) if os.path.exists(alog) else []
-                data.insert(0, {"camera": self.cam_id, "time": now_dt.strftime("%Y-%m-%d %H:%M:%S"), "event": f"{class_name} Detected", "image": filename})
+                data.insert(0, {"camera": self.cam_id, "time": now_dt.strftime("%Y-%m-%d %H:%M:%S"), "event": f"{class_name} Detected", "image": image_path})
                 json.dump(data, open(alog, "w"), indent=4)
             except: pass
         except: pass
