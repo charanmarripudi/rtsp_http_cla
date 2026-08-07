@@ -1,0 +1,55 @@
+# HLS live stream segments & playlists (auto-generated, very large)
+hls/
+!hls/.gitkeep
+
+# Live stream segment directories
+stream*_raw/
+stream*_detected/
+*.ts
+*.m3u8
+
+# Alert images (large binary files)
+# alerts.json is kept to preserve alert history
+
+# Logs
+logs/
+*.log
+
+# PID files
+*.pid
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+rpi_env/
+venv/
+env/
+.env
+
+# Model files (large binary, distribute separately)
+models/*.pt
+
+# Database credentials
+.env
+.db_creds_env
+*.db
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Backup files
+*.backup
+server.py.backup

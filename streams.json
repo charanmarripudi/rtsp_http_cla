@@ -1,0 +1,42 @@
+[
+  {
+    "rtsp": "rtsp://admin:Alg0M0nit%4070%23@192.168.96.41:554/stream1",
+    "location": "Location 17",
+    "location_id": "loc-1780036311336",
+    "device_id": "",
+    "serial_number": "",
+    "device_ip": "192.168.96.21",
+    "device_type": "",
+    "device_status": "offline"
+  },
+  {
+    "rtsp": "rtsp://admin:Alg0M0nit%4070%23@192.168.96.65:554/stream1",
+    "location": "mathura",
+    "location_id": "loc-1779875721",
+    "device_id": "3241",
+    "serial_number": "",
+    "device_ip": "123.456.789.345",
+    "device_type": "",
+    "device_status": "offline"
+  },
+  {
+    "rtsp": "rtsp://admin:Alg0M0nit%4070%23@192.168.96.41:554/stream1",
+    "location": "Location 20",
+    "location_id": "loc-1780038850556",
+    "device_id": "RPI-001",
+    "serial_number": "",
+    "device_ip": "192.168.96.26",
+    "device_type": "",
+    "device_status": "offline"
+  },
+  {
+    "rtsp": "rtsp://admin:Alg0M0nit%4070%23@192.168.96.65:554/stream1",
+    "location": "Location 20",
+    "location_id": "loc-1780038850556",
+    "device_id": "RPI-001",
+    "serial_number": "",
+    "device_ip": "192.168.96.26",
+    "device_type": "",
+    "device_status": "offline"
+  }
+]

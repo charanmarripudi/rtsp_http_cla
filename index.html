@@ -1,0 +1,1856 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RTSP Camera Dashboard</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@600;800&display=swap"
+    rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #0a0c0e;
+      --surface: #111417;
+      --border: #1e2228;
+      --accent: #00e5a0;
+      --accent-dim: rgba(0, 229, 160, .12);
+      --danger: #ff4155;
+      --text: #e8eaed;
+      --muted: #5c6370;
+      --radius: 12px;
+      --mono: 'JetBrains Mono', monospace;
+      --display: 'Syne', sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 28px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    header h1 {
+      font-family: var(--display);
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: .04em;
+      color: var(--accent);
+      text-transform: uppercase;
+    }
+
+    #system-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .72rem;
+      color: var(--muted);
+    }
+
+    #status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: background .4s;
+    }
+
+    #status-dot.ok {
+      background: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+    }
+
+    #status-dot.err {
+      background: var(--danger);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 18px;
+      padding: 22px;
+    }
+
+    .box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      transition: border-color .25s;
+    }
+
+    .box:hover {
+      border-color: #2a3040;
+    }
+
+    .box.detecting {
+      border-color: var(--accent);
+    }
+
+    .mode-badge {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      font-size: .63rem;
+      font-weight: 600;
+      letter-spacing: .08em;
+      padding: 3px 10px;
+      border-radius: 4px;
+      pointer-events: none;
+      max-width: calc(100% - 20px);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mode-badge.raw {
+      background: rgba(255, 255, 255, .08);
+      color: var(--muted);
+    }
+
+    .mode-badge.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .6
+      }
+    }
+
+    .video-wrap {
+      position: relative;
+      background: #000;
+      aspect-ratio: 16/9;
+      overflow: hidden;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    .cam-label {
+      position: absolute;
+      bottom: 8px;
+      right: 10px;
+      font-size: .65rem;
+      color: rgba(255, 255, 255, .4);
+      z-index: 5;
+    }
+
+    .controls {
+      padding: 14px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* Multi-select */
+    select.model {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .78rem;
+      padding: 4px 6px;
+      border-radius: 7px;
+      cursor: pointer;
+      outline: none;
+      transition: border-color .2s;
+      min-height: 64px;
+    }
+
+    select.model:focus {
+      border-color: var(--accent);
+    }
+
+    select.model option {
+      padding: 4px 6px;
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    select.model option:checked {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .select-hint {
+      font-size: .63rem;
+      color: var(--muted);
+      text-align: right;
+      margin-top: -6px;
+    }
+
+    /* Threshold sliders */
+    .thresholds {
+      background: rgba(255, 255, 255, .03);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .thresh-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .thresh-row label {
+      font-size: .7rem;
+      color: var(--muted);
+      min-width: 74px;
+      display: flex;
+      justify-content: space-between;
+      gap: 4px;
+    }
+
+    .thresh-row label span {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    input[type="range"] {
+      flex: 1;
+      height: 3px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      background: var(--border);
+      border-radius: 2px;
+      outline: none;
+    }
+
+    .btn-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    button {
+      font-family: var(--mono);
+      font-size: .78rem;
+      font-weight: 600;
+      letter-spacing: .06em;
+      padding: 9px 0;
+      border: none;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: opacity .2s, transform .12s;
+    }
+
+    button:active {
+      transform: scale(.97);
+    }
+
+    button:disabled {
+      opacity: .4;
+      cursor: not-allowed;
+    }
+
+    .start {
+      background: var(--accent);
+      color: #000;
+    }
+
+    .stop {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--danger);
+    }
+
+    .stop:hover:not(:disabled) {
+      background: rgba(255, 65, 85, .1);
+    }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+      z-index: 999;
+      font-size: .85rem;
+      color: var(--muted);
+      transition: opacity .4s;
+    }
+
+    #loading .spin {
+      width: 32px;
+      height: 32px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    #loading.gone {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* ── ALERTS SIDEBAR ─────────────────────────────────────────── */
+    .main-layout {
+      display: flex;
+      min-height: calc(100vh - 65px);
+    }
+
+    .grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 18px;
+      padding: 22px;
+    }
+
+    .alert-sidebar {
+      width: 300px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 65px);
+      position: sticky;
+      top: 65px;
+    }
+
+    .alert-header {
+      padding: 18px;
+      border-bottom: 1px solid var(--border);
+      font-family: var(--display);
+      font-size: .8rem;
+      font-weight: 800;
+      color: var(--accent);
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    #alert-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .alert-card {
+      flex-shrink: 0;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: .68rem;
+      transition: transform .2s, border-color .2s;
+      cursor: pointer;
+    }
+
+    .alert-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent) !important;
+    }
+
+    .alert-info {
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+      pointer-events: none;
+    }
+
+    .alert-meta {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+
+    .alert-event {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .alert-thumb {
+      width: 100%;
+      aspect-ratio: 16/9;
+      object-fit: cover;
+      cursor: pointer;
+      display: block;
+    }
+
+    /* ── CONFIG & WIDGETS LAYOUT ── */
+    .config-layout {
+      max-width: 1200px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+      gap: 20px;
+    }
+
+    .location-widgets {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 18px;
+    }
+
+    .location-summary {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-left: auto;
+      color: var(--muted);
+      font-size: .7rem;
+    }
+
+    .location-chip {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 4px 8px;
+      background: rgba(255, 255, 255, .03);
+    }
+
+    .location-table {
+      display: grid;
+      gap: 10px;
+    }
+
+    .location-row {
+      display: grid;
+      grid-template-columns: minmax(90px, .7fr) minmax(120px, 1fr) minmax(120px, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      background: rgba(0, 0, 0, .15);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      font-size: .72rem;
+    }
+
+    .location-row.header {
+      background: transparent;
+      color: var(--muted);
+      border-color: transparent;
+      padding-top: 0;
+      padding-bottom: 0;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      font-size: .62rem;
+    }
+
+    .camera-live-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .assignment-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 170px;
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 10px;
+      min-height: 78px;
+    }
+
+    .thresholds.compact {
+      padding: 8px;
+      gap: 8px;
+    }
+
+    .thresholds.compact .thresh-row {
+      gap: 6px;
+    }
+
+    .thresholds.compact .thresh-row label {
+      min-width: 62px;
+      font-size: .64rem;
+    }
+
+    .widget-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      height: fit-content;
+      transition: all .25s ease;
+    }
+
+    .widget-card:hover {
+      border-color: #2a3040;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    }
+
+    .widget-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, .01);
+    }
+
+    .widget-header.clickable {
+      cursor: pointer;
+    }
+
+    .widget-header.clickable:hover {
+      background: rgba(255, 255, 255, .03);
+    }
+
+    .widget-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .widget-title h3 {
+      font-family: var(--display);
+      font-size: .95rem;
+      font-weight: 800;
+      letter-spacing: .03em;
+      color: var(--accent);
+    }
+
+    .widget-header .expand-arrow {
+      font-size: .8rem;
+      color: var(--muted);
+      transition: transform .3s ease;
+    }
+
+    .widget-card.expanded .expand-arrow {
+      transform: rotate(180deg);
+    }
+
+    .widget-body {
+      padding: 22px;
+    }
+
+    .widget-card.collapsed .widget-body {
+      display: none;
+    }
+
+    .cameras-list-container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .camera-edit-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(0, 0, 0, .15);
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .camera-edit-row span.cam-num {
+      font-size: .8rem;
+      color: var(--muted);
+      font-weight: 600;
+      min-width: 50px;
+    }
+
+    .camera-edit-row input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .78rem;
+      padding: 8px 12px;
+      border-radius: 6px;
+      outline: none;
+      transition: border-color .2s;
+    }
+
+    .camera-edit-row input:focus {
+      border-color: var(--accent);
+    }
+
+    .camera-edit-row button.btn-remove {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid rgba(255, 65, 85, .3);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: .72rem;
+      font-family: var(--mono);
+      cursor: pointer;
+    }
+
+    .camera-edit-row button.btn-remove:hover {
+      background: rgba(255, 65, 85, .1);
+      border-color: var(--danger);
+    }
+
+    .camera-config-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .camera-config-fields {
+      display: grid;
+      grid-template-columns: 120px minmax(160px, .7fr) minmax(240px, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      background: rgba(0, 0, 0, .15);
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .camera-config-fields .cam-num {
+      font-size: .8rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .camera-config-fields input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .78rem;
+      padding: 8px 12px;
+      border-radius: 6px;
+      outline: none;
+      transition: border-color .2s;
+    }
+
+    .location-config-fields {
+      display: grid;
+      grid-template-columns: 100px 1.2fr 1fr 1fr 80px auto;
+      gap: 10px;
+      align-items: center;
+      background: rgba(0, 0, 0, .15);
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+
+    .location-config-fields span {
+      font-size: .8rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .location-config-fields input,
+    .location-config-fields select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .78rem;
+      padding: 8px 12px;
+      border-radius: 6px;
+      outline: none;
+    }
+
+    .camera-config-fields input:focus {
+      border-color: var(--accent);
+    }
+
+    .location-config-fields .btn-remove,
+    .camera-config-fields .btn-remove,
+    .location-row .btn-remove {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid rgba(255, 65, 85, .3);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: .72rem;
+      font-family: var(--mono);
+      cursor: pointer;
+    }
+
+    .location-config-fields .btn-remove:hover,
+    .camera-config-fields .btn-remove:hover,
+    .location-row .btn-remove:hover {
+      background: rgba(255, 65, 85, .1);
+      border-color: var(--danger);
+    }
+
+    .widget-actions {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #000;
+      padding: 10px 20px;
+      font-family: var(--mono);
+      font-size: .78rem;
+      font-weight: 600;
+      border-radius: 7px;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 10px 20px;
+      font-family: var(--mono);
+      font-size: .78rem;
+      font-weight: 600;
+      border-radius: 7px;
+      cursor: pointer;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, .05);
+      border-color: var(--muted);
+    }
+
+    /* Metric Row Styling */
+    .health-metrics {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .metric-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      font-size: .75rem;
+    }
+
+    .metric-row>span {
+      min-width: 100px;
+      color: var(--muted);
+    }
+
+    .bar-container {
+      flex: 1;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .bar {
+      height: 100%;
+      border-radius: 3px;
+    }
+
+    .metric-row .value {
+      min-width: 90px;
+      text-align: right;
+      font-weight: 600;
+    }
+
+    /* Item list styling */
+    .item-list-widget {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .item-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(0, 0, 0, .15);
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: .72rem;
+    }
+
+    .item-row .status-indicator {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: .6rem;
+      font-weight: 600;
+    }
+
+    .item-row .status-indicator.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .item-row .status-indicator.offline {
+      background: rgba(255, 65, 85, .12);
+      color: var(--danger);
+    }
+
+    /* Model checkbox grid */
+    .model-assign-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, .1);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    .model-assign-row .assign-label {
+      width: 100%;
+      font-size: .65rem;
+      color: var(--muted);
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .model-chip {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      font-size: .68rem;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all .2s;
+      user-select: none;
+    }
+
+    .model-chip:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    .model-chip input[type="checkbox"] {
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .model-chip.checked {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Tabs CSS */
+    .nav-tabs {
+      display: flex;
+      gap: 8px;
+      background: rgba(0, 0, 0, .2);
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .tab-btn {
+      font-family: var(--mono);
+      font-size: .78rem;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      transition: all .2s ease;
+      cursor: pointer;
+    }
+
+    .tab-btn:hover {
+      color: var(--text);
+    }
+
+      .tab-btn.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    @media (max-width: 760px) {
+      .main-layout {
+        flex-direction: column;
+      }
+
+      .alert-sidebar {
+        width: 100%;
+        height: auto;
+        position: static;
+        border-left: 0;
+        border-top: 1px solid var(--border);
+      }
+
+      .camera-config-fields,
+      .location-config-fields,
+      .location-row,
+      .assignment-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .location-summary {
+        display: none;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="loading">
+    <div class="spin"></div>
+    <span>Loading streams & models…</span>
+  </div>
+
+  <header>
+    <h1>RTSP Dashboard</h1>
+    <div class="nav-tabs">
+      <button class="tab-btn active" data-tab="manage">Locations</button>
+      <button class="tab-btn" data-tab="dashboard">Location Cameras</button>
+    </div>
+    <div id="system-status">
+      <div id="status-dot"></div>
+      <span id="status-label">connecting…</span>
+    </div>
+  </header>
+
+  <div class="config-layout tab-content" id="tab-manage" style="padding: 22px;">
+    <div class="widget-card"
+      style="max-width: 800px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);">
+      <div class="widget-header">
+        <div class="widget-title">
+          <h3>Add Locations & Devices</h3>
+        </div>
+      </div>
+      <div class="widget-body">
+        <p style="font-size: 0.78rem; color: var(--muted); margin-bottom: 20px;">
+          Add each site location and its device details. Cameras and models are configured inside the location widgets on the next tab.
+        </p>
+        <div class="cameras-list-container">
+          <div id="locations-edit-list">
+            <div style="color:var(--muted); font-size:.7rem;">Loading locations...</div>
+          </div>
+          <div class="widget-actions">
+            <button class="btn-secondary" id="btn-add-location">+ Add Location</button>
+            <button class="btn-primary" id="btn-save-locations">Save Locations</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab 2: Dashboard (Widgets) -->
+  <div class="main-layout tab-content" id="tab-dashboard" style="display: none;">
+    <div class="widgets-area"
+      style="flex: 1; padding: 22px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto;">
+
+      <div class="widget-card" style="border: 1px solid var(--border); border-radius: var(--radius);">
+        <div class="widget-header">
+          <div class="widget-title">
+            <h3 id="dashboard-title">Location Widgets</h3>
+          </div>
+          <span style="font-size: 0.7rem; color: var(--muted);">Click a location to add cameras and assign models</span>
+        </div>
+        <div class="widget-body">
+          <div class="location-widgets" id="location-widgets">
+            <div style="color:var(--muted); font-size:.7rem;">Loading saved cameras...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="config-grid">
+        <div class="widget-card" style="border: 1px solid var(--border); border-radius: var(--radius);">
+          <div class="widget-header">
+            <div class="widget-title">
+              <h3>Devices</h3>
+            </div>
+            <button class="btn-secondary" id="btn-refresh-devices" style="padding: 4px 10px; font-size: .65rem;">↻
+              Refresh</button>
+          </div>
+          <div class="widget-body">
+            <div id="devices-list-widget">
+              <div style="color:var(--muted); font-size:.7rem;">Loading devices...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right Side: Alerts Sidebar -->
+    <aside class="alert-sidebar">
+      <div class="alert-header">Detection Alerts</div>
+      <div id="alert-list">
+        <div style="color:var(--muted); font-size:.7rem; text-align:center; padding-top:20px;">Watching for alerts…
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="/static/js/detection.js?v=2.1"></script>
+  <script src="/static/js/location_dashboard.js?v=1.2"></script>
+
+  <script>
+    window.addEventListener("DOMContentLoaded", async () => {
+      if (window.initLocationDashboard) {
+        await window.initLocationDashboard();
+        return;
+      }
+
+      // ── CONFIG ──────────────────────────────────────────────────
+      // Use the current browser URL instead of a hardcoded one
+      const BASE = window.location.origin;
+
+      const locationWidgets = document.getElementById("location-widgets");
+      const dot = document.getElementById("status-dot");
+      const label = document.getElementById("status-label");
+      const loader = document.getElementById("loading");
+
+      let streams = [];
+      window.isOfflineMode = false;
+      try {
+        const r = await fetch("/api/streams");
+        if (!r.ok) throw new Error("HTTP error " + r.status);
+        streams = await r.json();
+        dot.className = "ok";
+        label.textContent = (Array.isArray(streams) ? streams.length : 0) + " camera(s) configured";
+
+        // Server is online. Clear offline local storage to sync with the empty/reset server configuration
+        if (Array.isArray(streams) && streams.length === 0) {
+          localStorage.removeItem("offline_streams");
+          localStorage.removeItem("offline_camera_models");
+          for (let i = 0; i < 20; i++) {
+            localStorage.removeItem(`offline_detecting_${i}`);
+            localStorage.removeItem(`offline_active_models_${i}`);
+          }
+        }
+      } catch (e) {
+        console.warn("Initial stream fetch failed, using offline fallback mode:", e);
+        window.isOfflineMode = true;
+        dot.className = "warn";
+        label.textContent = "Offline Mode (Using localStorage)";
+
+        const localStreams = localStorage.getItem("offline_streams");
+        if (localStreams) {
+          try {
+            const parsed = JSON.parse(localStreams);
+            // Map payload format (list of {rtsp}) to view format
+            streams = parsed.map((item, idx) => ({
+              id: idx,
+              label: `Camera ${idx + 1}`,
+              location: item.location || `Location ${idx + 1}`,
+              rtsp: item.rtsp,
+              hls_live: `/hls/camera/${idx}/playlist.m3u8`,
+              hls_raw: `/hls/stream${idx}_raw/playlist.m3u8`,
+              hls_detected: `/hls/stream${idx}_detected/playlist.m3u8`
+            }));
+          } catch (err) {
+            console.error("Failed to parse offline streams:", err);
+          }
+        }
+
+        if (!Array.isArray(streams) || streams.length === 0) {
+          streams = [
+            {
+              id: 0,
+              label: "Camera 1",
+              location: "Bangalore",
+              rtsp: "rtsp://admin:Alg0M0nit%4070%23@192.168.96.65:554/stream1",
+              hls_live: "/hls/camera/0/playlist.m3u8",
+              hls_raw: "/hls/stream0_raw/playlist.m3u8",
+              hls_detected: "/hls/stream0_detected/playlist.m3u8"
+            }
+          ];
+        }
+      }
+
+      let streamsArray = Array.isArray(streams) ? streams : [];
+
+      loader.classList.add("gone");
+
+      // ── VIDEO FRESHNESS & SLEEP DETECTION ──────────────────────
+      let lastHeartbeat = Date.now();
+      setInterval(() => {
+        const now = Date.now();
+        if (now - lastHeartbeat > 10000) { // Computer woke up from sleep
+          console.log("Wake up detected - refreshing stream...");
+          window.location.reload(); // Force full refresh to clear old HLS cache
+        }
+        lastHeartbeat = now;
+      }, 2000);
+
+      // ── ALERT POLLING (Smart Update) ───────────────────────────
+      const alertList = document.getElementById("alert-list");
+      let lastAlertTime = "";
+
+      function createMockAlertImage(camIdx, labelText) {
+        const canvas = document.createElement("canvas");
+        canvas.width = 320;
+        canvas.height = 180;
+        const ctx = canvas.getContext("2d");
+
+        // Draw background
+        ctx.fillStyle = "#111625";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Grid lines
+        ctx.strokeStyle = "#1f293d";
+        ctx.lineWidth = 1;
+        for (let x = 0; x < canvas.width; x += 30) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, canvas.height);
+          ctx.stroke();
+        }
+        for (let y = 0; y < canvas.height; y += 30) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(canvas.width, y);
+          ctx.stroke();
+        }
+
+        // Bounding box
+        ctx.strokeStyle = "#00ff66";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(80, 50, 160, 90);
+
+        // Label
+        ctx.fillStyle = "#00ff66";
+        ctx.fillRect(80, 30, 160, 20);
+        ctx.fillStyle = "#000000";
+        ctx.font = "bold 10px sans-serif";
+        ctx.fillText(labelText, 85, 44);
+
+        // Camera text
+        ctx.fillStyle = "rgba(255,255,255,0.4)";
+        ctx.font = "9px Courier New";
+        ctx.fillText(`CAM_${parseInt(camIdx) + 1}_ALERT_SNAP`, 10, 15);
+
+        return canvas.toDataURL("image/jpeg");
+      }
+
+      async function pollAlerts() {
+        if (window.isOfflineMode) {
+          let offlineAlerts = [];
+          try {
+            offlineAlerts = JSON.parse(localStorage.getItem("offline_alerts") || "[]");
+          } catch (_) { }
+
+          if (offlineAlerts.length === 0) {
+            offlineAlerts = [
+              {
+                camera: "0",
+                event: "ppe_new: 95%",
+                time: new Date(Date.now() - 30000).toISOString().replace('T', ' ').substring(0, 19),
+                image: createMockAlertImage("0", "ppe_new: 95%")
+              }
+            ];
+            localStorage.setItem("offline_alerts", JSON.stringify(offlineAlerts));
+          }
+
+          // Periodically add new alert (simulated)
+          const now = Date.now();
+          const lastAlertTime = parseInt(localStorage.getItem("offline_last_alert_time") || "0");
+          if (now - lastAlertTime > 12000 && document.visibilityState === "visible") {
+            // Find which cameras have offline active models
+            const activeCams = [];
+            for (let i = 0; i < streamsArray.length; i++) {
+              if (localStorage.getItem(`offline_detecting_${i}`) === "true") {
+                activeCams.push(i);
+              }
+            }
+
+            if (activeCams.length > 0) {
+              const randomCamIdx = activeCams[Math.floor(Math.random() * activeCams.length)];
+              const activeModels = JSON.parse(localStorage.getItem(`offline_active_models_${randomCamIdx}`) || "[]");
+              if (activeModels.length > 0) {
+                const modelName = activeModels[0].replace('.pt', '');
+                const newAlert = {
+                  camera: String(randomCamIdx),
+                  event: `${modelName}: 92%`,
+                  time: new Date().toISOString().replace('T', ' ').substring(0, 19),
+                  image: createMockAlertImage(String(randomCamIdx), `${modelName}: 92%`)
+                };
+                offlineAlerts.push(newAlert);
+                if (offlineAlerts.length > 20) offlineAlerts.shift();
+                localStorage.setItem("offline_alerts", JSON.stringify(offlineAlerts));
+                localStorage.setItem("offline_last_alert_time", String(now));
+              }
+            }
+          }
+
+          // Render
+          alertList.innerHTML = "";
+          const recentAlerts = [...offlineAlerts].reverse();
+          recentAlerts.forEach((a, idx) => {
+            const card = document.createElement("div");
+            card.className = "alert-card";
+            if (idx === 0) {
+              card.style.border = "1px solid var(--accent)";
+              card.style.boxShadow = "0 0 10px var(--accent-dim)";
+            }
+            card.onclick = () => {
+              const w = window.open();
+              w.document.write(`<img src="${a.image}" style="max-width:100%; height:auto; display:block; margin:20px auto; background:#000;">`);
+            };
+            card.innerHTML = `
+          <div class="alert-info">
+            <div class="alert-meta">
+              <span>CAM ${parseInt(a.camera) + 1}</span>
+              <span>${a.time.split(' ')[1]}</span>
+            </div>
+            <div class="alert-event">${a.event}</div>
+          </div>
+          <img src="${a.image}" class="alert-thumb" loading="lazy">
+        `;
+            alertList.appendChild(card);
+          });
+          return;
+        }
+
+        try {
+          const r = await fetch("/api/alerts");
+          const alerts = await r.json();
+          if (!alerts || !alerts.length) {
+            alertList.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding-top:20px;">Watching for alerts…</div>';
+            return;
+          }
+
+          // 1. Only refresh if the newest alert is different from what we have
+          const latest = alerts[0]; // Backend returns newest first
+          if (latest.time === lastAlertTime) return;
+          lastAlertTime = latest.time;
+
+          // 2. Clear and rebuild only when a new alert actually arrives
+          alertList.innerHTML = "";
+
+          // 3. Show all alerts in the order provided (newest first)
+          alerts.forEach((a, idx) => {
+            const card = document.createElement("div");
+            card.className = "alert-card";
+
+            // Highlight the newest one
+            if (idx === 0) {
+              card.style.border = "1px solid var(--accent)";
+              card.style.boxShadow = "0 0 10px var(--accent-dim)";
+            }
+
+            const imgUrl = `${BASE}/hls/alerts/${a.image}`;
+            card.onclick = () => window.open(imgUrl);
+
+            card.innerHTML = `
+          <div class="alert-info">
+            <div class="alert-meta">
+              <span>CAM ${a.camera}</span>
+              <span>${a.time.split(' ')[1]}</span>
+            </div>
+            <div class="alert-event">${a.event}</div>
+          </div>
+          <img src="${imgUrl}" class="alert-thumb" loading="lazy">
+        `;
+            alertList.appendChild(card);
+          });
+        } catch (e) { console.error("Alert poll failed", e); }
+      }
+
+      setInterval(pollAlerts, 3000);
+      pollAlerts();
+
+      // ── TAB SWITCHING LOGIC ──
+      const tabBtns = document.querySelectorAll(".tab-btn");
+      const tabContents = document.querySelectorAll(".tab-content");
+
+      tabBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+          const tabId = btn.getAttribute("data-tab");
+
+          tabBtns.forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+
+          tabContents.forEach(tc => {
+            if (tc.id === `tab-${tabId}`) {
+              tc.style.display = tabId === 'dashboard' ? 'flex' : 'block';
+            } else {
+              tc.style.display = 'none';
+            }
+          });
+
+          if (tabId === 'dashboard') {
+            loadDevicesWidget();
+            renderLocationWidgets();
+            notifyDetectionReady();
+          }
+        });
+      });
+
+      // ── CAMERA LIST CONFIG LOGIC ──
+      const camerasEditList = document.getElementById("cameras-edit-list");
+
+      // ── LOAD ALL AVAILABLE MODELS (for checkbox assignment) ──
+      let allModels = [];
+      try {
+        const mr = await fetch("/api/models");
+        if (!mr.ok) throw new Error("HTTP error " + mr.status);
+        const md = await mr.json();
+        allModels = md.models || [];
+      } catch (e) {
+        console.error("Failed to load models from API, using default list:", e);
+        allModels = [
+          "ppe_new.pt",
+          "nik_ppe_best.pt",
+          "firehose.pt",
+          "sand_ext_chocks.pt",
+          "fire_smoke.pt",
+          "construction.pt",
+          "tape.pt",
+          "tyre.pt",
+          "spillage.pt"
+        ];
+      }
+
+      // ── LOAD SAVED CAMERA-MODEL ASSIGNMENTS ──
+      let cameraModelsMap = {};
+      try {
+        const cmr = await fetch("/api/camera-models");
+        if (!cmr.ok) throw new Error("HTTP error " + cmr.status);
+        cameraModelsMap = await cmr.json();
+      } catch (e) {
+        console.error("Failed to load camera-models from API, using localStorage:", e);
+        const localModels = localStorage.getItem("offline_camera_models");
+        if (localModels) {
+          try {
+            cameraModelsMap = JSON.parse(localModels);
+          } catch (err) {
+            cameraModelsMap = {};
+          }
+        }
+        if (!cameraModelsMap || typeof cameraModelsMap !== "object") {
+          cameraModelsMap = {
+            "0": ["ppe_new.pt"]
+          };
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function notifyDetectionReady() {
+        window.dispatchEvent(new CustomEvent("rtsp-dashboard-ready"));
+      }
+
+      function buildCameraBox(s, i) {
+        const assignedModels = cameraModelsMap[String(i)] || [];
+        const assignedLabels = assignedModels.length
+          ? assignedModels.map(m => `<span class="model-chip checked">${escapeHtml(m.replace(".pt", ""))}</span>`).join("")
+          : '<span style="font-size: 0.65rem; color: var(--muted); font-style: italic;">No models assigned</span>';
+
+        const box = document.createElement("div");
+        box.className = "box";
+        box.id = `cam-box-${i}`;
+        box.setAttribute("data-camera-id", String(s.id ?? i));
+        box.innerHTML = `
+          <div class="video-wrap">
+            <div class="mode-badge raw" id="badge-${i}">RAW</div>
+            <video id="v${i}" controls autoplay muted playsinline data-src="${escapeHtml(s.hls_live)}"></video>
+            <div class="cam-label">${escapeHtml(s.label)} - ${escapeHtml(s.location || `Location ${i + 1}`)}</div>
+          </div>
+          <div class="controls">
+            <div class="assignment-panel">
+              <div class="assigned-models-container" id="assigned-models-${i}">
+                <span style="font-size: 0.65rem; color: var(--muted); display: block; margin-bottom: 4px; font-weight: 600; letter-spacing: 0.5px;">ASSIGNED MODELS</span>
+                <div class="assigned-chips-list" id="chips-${i}" style="display: flex; flex-wrap: wrap; gap: 4px;">
+                  ${assignedLabels}
+                </div>
+              </div>
+              <div class="thresholds compact">
+                <div class="thresh-row">
+                  <label>Conf <span class="conf-val">0.25</span></label>
+                  <input class="conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.25">
+                </div>
+                <div class="thresh-row">
+                  <label>IoU <span class="iou-val">0.45</span></label>
+                  <input class="iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.45">
+                </div>
+              </div>
+            </div>
+            <div class="btn-row">
+              <button class="start">Start</button>
+              <button class="stop">Stop</button>
+            </div>
+          </div>`;
+        return box;
+      }
+
+      function renderLocationWidgets() {
+        if (!locationWidgets) return;
+        locationWidgets.innerHTML = "";
+
+        if (streamsArray.length === 0) {
+          locationWidgets.innerHTML = `
+            <div style="grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 32px; border: 1px dashed var(--border); border-radius: 8px; background: rgba(255,255,255,0.01); color: var(--muted); text-align: center;">
+              <span style="font-size: 0.85rem; font-weight: 600; color: var(--text);">No Cameras Configured</span>
+              <span style="font-size: 0.72rem; color: var(--muted); margin-top: 6px; max-width: 360px; line-height: 1.4;">Go to Manage Cameras, add RTSP URLs, add location names, assign models, then save.</span>
+            </div>`;
+          return;
+        }
+
+        streamsArray.forEach((s, idx) => {
+          const location = s.location || `Location ${idx + 1}`;
+          const assigned = cameraModelsMap[String(idx)] || [];
+          const card = document.createElement("div");
+          card.className = "widget-card collapsed";
+          card.setAttribute("data-location-widget", String(idx));
+          card.innerHTML = `
+            <div class="widget-header clickable">
+              <div class="widget-title">
+                <h3>Widget ${idx + 1}</h3>
+              </div>
+              <div class="location-summary">
+                <span class="location-chip">${escapeHtml(location)}</span>
+                <span>${assigned.length} model(s)</span>
+              </div>
+              <span class="expand-arrow">▼</span>
+            </div>
+            <div class="widget-body">
+              <div class="location-table">
+                <div class="location-row header">
+                  <span>Camera</span>
+                  <span>Location</span>
+                  <span>Assigned Models</span>
+                  <span>Action</span>
+                </div>
+                <div class="location-row">
+                  <span>${escapeHtml(s.label || `Camera ${idx + 1}`)}</span>
+                  <span>${escapeHtml(location)}</span>
+                  <span>${assigned.length ? escapeHtml(assigned.map(m => m.replace(".pt", "")).join(", ")) : "No models assigned"}</span>
+                  <button class="btn-remove" data-remove-camera="${idx}">Remove</button>
+                </div>
+              </div>
+              <div class="camera-live-grid"></div>
+            </div>`;
+
+          const liveGrid = card.querySelector(".camera-live-grid");
+          liveGrid.appendChild(buildCameraBox(s, idx));
+
+          card.querySelector(".widget-header").addEventListener("click", () => {
+            card.classList.toggle("collapsed");
+            card.classList.toggle("expanded", !card.classList.contains("collapsed"));
+            notifyDetectionReady();
+          });
+
+          card.querySelector("[data-remove-camera]").addEventListener("click", (event) => {
+            event.stopPropagation();
+            removeCameraAt(idx);
+          });
+
+          locationWidgets.appendChild(card);
+        });
+      }
+
+      function removeCameraAt(index) {
+        streamsArray.splice(index, 1);
+        const newMap = {};
+        for (let i = 0; i <= streamsArray.length; i++) {
+          if (i < index) {
+            newMap[String(i)] = cameraModelsMap[String(i)] || [];
+          } else if (i > index) {
+            newMap[String(i - 1)] = cameraModelsMap[String(i)] || [];
+          }
+        }
+        cameraModelsMap = newMap;
+        renderCamerasConfig();
+        renderLocationWidgets();
+        saveCurrentConfiguration(false);
+      }
+
+      async function saveCurrentConfiguration(shouldReload) {
+        const payload = streamsArray
+          .map((item, idx) => ({
+            rtsp: (item.rtsp || "").trim(),
+            location: (item.location || `Location ${idx + 1}`).trim()
+          }))
+          .filter(item => item.rtsp !== "");
+
+        try {
+          const res = await fetch("/api/streams", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+
+          const resModels = await fetch("/api/camera-models", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(cameraModelsMap)
+          });
+
+          if (!res.ok || !resModels.ok) {
+            const errText = !res.ok ? await res.text() : await resModels.text();
+            throw new Error(errText);
+          }
+
+          localStorage.setItem("offline_streams", JSON.stringify(payload));
+          localStorage.setItem("offline_camera_models", JSON.stringify(cameraModelsMap));
+          if (shouldReload) {
+            setTimeout(() => {
+              window.location.reload();
+            }, 500);
+          }
+        } catch (e) {
+          console.warn("API save failed, using local storage fallback:", e);
+          localStorage.setItem("offline_streams", JSON.stringify(payload));
+          localStorage.setItem("offline_camera_models", JSON.stringify(cameraModelsMap));
+          if (shouldReload) {
+            setTimeout(() => {
+              window.location.reload();
+            }, 800);
+          }
+        }
+      }
+
+      // Syncing state helper
+      function updateCheckboxState(camIdx, modelName, isChecked) {
+        const key = String(camIdx);
+        if (!cameraModelsMap[key]) {
+          cameraModelsMap[key] = [];
+        }
+        if (isChecked) {
+          if (!cameraModelsMap[key].includes(modelName)) {
+            cameraModelsMap[key].push(modelName);
+          }
+        } else {
+          cameraModelsMap[key] = cameraModelsMap[key].filter(m => m !== modelName);
+        }
+      }
+
+      function renderCamerasConfig() {
+        camerasEditList.innerHTML = "";
+        if (streamsArray.length === 0) {
+          camerasEditList.innerHTML = '<div style="color:var(--muted); font-size:.7rem;">No cameras configured. Click "+ Add Camera" to start.</div>';
+          return;
+        }
+
+        streamsArray.forEach((s, idx) => {
+          const assignedModels = cameraModelsMap[String(idx)] || [];
+
+          const wrapper = document.createElement("div");
+          wrapper.className = "camera-config-wrapper";
+
+          // Row 1: RTSP input + remove
+          const row = document.createElement("div");
+          row.className = "camera-config-fields";
+          row.innerHTML = `
+        <span class="cam-num">Widget ${idx + 1}</span>
+        <input type="text" value="${escapeHtml(s.location || `Location ${idx + 1}`)}" placeholder="Location e.g. Bangalore" data-index="${idx}" class="camera-location-input">
+        <input type="text" value="${escapeHtml(s.rtsp || '')}" placeholder="rtsp://your-camera-url" data-index="${idx}" class="camera-rtsp-input">
+        <button class="btn-remove" data-index="${idx}">Remove</button>
+      `;
+          wrapper.appendChild(row);
+
+          // Listen for RTSP URL changes in real-time
+          const input = row.querySelector(".camera-rtsp-input");
+          const locationInput = row.querySelector(".camera-location-input");
+          locationInput.addEventListener("input", (e) => {
+            if (streamsArray[idx]) {
+              streamsArray[idx].location = e.target.value;
+            }
+          });
+          input.addEventListener("input", (e) => {
+            if (streamsArray[idx]) {
+              streamsArray[idx].rtsp = e.target.value;
+            }
+          });
+
+          // Row 2: Model checkboxes
+          if (allModels.length > 0) {
+            const modelRow = document.createElement("div");
+            modelRow.className = "model-assign-row";
+            modelRow.setAttribute("data-cam-index", idx);
+            modelRow.innerHTML = '<span class="assign-label">Assign Models</span>' +
+              allModels.map(m => {
+                const checked = assignedModels.includes(m) ? 'checked' : '';
+                const chipClass = checked ? 'model-chip checked' : 'model-chip';
+                return `<label class="${chipClass}">
+              <input type="checkbox" value="${m}" ${checked} data-cam="${idx}">
+              ${m.replace('.pt', '')}
+            </label>`;
+              }).join('');
+            wrapper.appendChild(modelRow);
+
+            // Toggle checked class on chip and update state in real-time
+            modelRow.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+              cb.addEventListener('change', () => {
+                const isChecked = cb.checked;
+                cb.closest('.model-chip').classList.toggle('checked', isChecked);
+                updateCheckboxState(idx, cb.value, isChecked);
+              });
+            });
+          }
+
+          camerasEditList.appendChild(wrapper);
+        });
+
+        // Bind remove button clicks
+        camerasEditList.querySelectorAll(".btn-remove").forEach(btn => {
+          btn.onclick = () => {
+            const index = parseInt(btn.getAttribute("data-index"));
+            removeCameraAt(index);
+          };
+        });
+      }
+
+      // Populate config cameras with loaded streams
+      renderCamerasConfig();
+
+      // Add camera
+      document.getElementById("btn-add-camera").onclick = () => {
+        streamsArray.push({ rtsp: "", location: `Location ${streamsArray.length + 1}` });
+        renderCamerasConfig();
+        renderLocationWidgets();
+      };
+
+      // Save cameras list + model assignments
+      document.getElementById("btn-save-cameras").onclick = async () => {
+        const btn = document.getElementById("btn-save-cameras");
+        btn.disabled = true;
+        btn.textContent = "Saving...";
+
+        await saveCurrentConfiguration(true);
+      };
+
+      renderLocationWidgets();
+      notifyDetectionReady();
+
+      // ── LOAD OTHER WIDGETS DYNAMICALLY ──
+      async function loadModelsWidget() {
+        const listContainer = document.getElementById("models-list-widget");
+
+        // Gather all unique assigned models across all configured cameras
+        const assignedSet = new Set();
+        Object.values(cameraModelsMap).forEach(modelsList => {
+          if (Array.isArray(modelsList)) {
+            modelsList.forEach(m => assignedSet.add(m));
+          }
+        });
+        const assignedList = Array.from(assignedSet);
+
+        if (assignedList.length === 0) {
+          listContainer.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding: 10px 0;">No models assigned to any camera. Go to Manage Cameras.</div>';
+          return;
+        }
+
+        listContainer.innerHTML = '<div class="item-list-widget">' +
+          assignedList.map(m => `
+        <div class="item-row">
+          <span>${m.replace(".pt", "")}</span>
+          <span class="status-indicator active">ASSIGNED</span>
+        </div>
+      `).join('') + '</div>';
+      }
+
+      async function loadPipelinesWidget() {
+        const listContainer = document.getElementById("pipelines-list-widget");
+        if (window.isOfflineMode) {
+          const active = [];
+          const modelMap = {};
+          for (let i = 0; i < streamsArray.length; i++) {
+            if (localStorage.getItem(`offline_detecting_${i}`) === "true") {
+              active.push(String(i));
+              modelMap[String(i)] = JSON.parse(localStorage.getItem(`offline_active_models_${i}`) || "[]");
+            }
+          }
+
+          if (active.length === 0) {
+            listContainer.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding: 10px 0;">No active AI detection pipelines</div>';
+          } else {
+            listContainer.innerHTML = '<div class="item-list-widget">' +
+              active.map(cam => {
+                const modelsUsed = modelMap[cam] || [];
+                return `
+              <div class="item-row">
+                <span>Camera ${parseInt(cam) + 1}</span>
+                <span class="status-indicator active">RUNNING (${modelsUsed.map(m => m.replace('.pt', '')).join(', ')})</span>
+              </div>
+            `;
+              }).join('') + '</div>';
+          }
+          return;
+        }
+        try {
+          const r = await fetch("/api/status");
+          const d = await r.json();
+          const active = d.active || [];
+          const modelMap = d.models || {};
+
+          if (active.length === 0) {
+            listContainer.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding: 10px 0;">No active AI detection pipelines</div>';
+          } else {
+            listContainer.innerHTML = '<div class="item-list-widget">' +
+              active.map(cam => {
+                const modelsUsed = modelMap[cam] || [];
+                return `
+              <div class="item-row">
+                <span>Camera ${parseInt(cam) + 1}</span>
+                <span class="status-indicator active">RUNNING (${modelsUsed.map(m => m.replace('.pt', '')).join(', ')})</span>
+              </div>
+            `;
+              }).join('') + '</div>';
+          }
+        } catch (e) {
+          listContainer.innerHTML = '<div style="color:var(--danger); font-size:.7rem;">Failed to load status.</div>';
+        }
+      }
+
+      // ── DEVICES WIDGET ──
+      async function loadDevicesWidget() {
+        const listContainer = document.getElementById("devices-list-widget");
+        if (!listContainer) return;
+        listContainer.innerHTML = '<div style="color:var(--muted); font-size:.7rem;">Checking devices...</div>';
+
+        if (window.isOfflineMode) {
+          const devices = streamsArray.map((s, idx) => {
+            let ip = "192.168.96.65";
+            try {
+              const match = s.rtsp.match(/@([^:/]+)(?::(\d+))?/);
+              if (match) {
+                ip = match[1];
+              }
+            } catch (_) { }
+            const isDetecting = localStorage.getItem(`offline_detecting_${idx}`) === "true";
+            return {
+              device_id: String(idx),
+              device_name: s.label || `Camera ${idx + 1}`,
+              device_ip: ip,
+              rtsp_url: s.rtsp,
+              device_status: "online",
+              stream_active: isDetecting,
+              last_checked: new Date().toISOString()
+            };
+          });
+
+          listContainer.innerHTML = '<div class="item-list-widget">' +
+            devices.map(dev => {
+              return `
+            <div class="item-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-weight: 600;">${dev.device_name}</span>
+                <span class="status-indicator active">ONLINE</span>
+              </div>
+              <div style="display: flex; gap: 16px; font-size: .62rem; color: var(--muted);">
+                <span>ID: <span style="color: var(--text);">${dev.device_id}</span></span>
+                <span>IP: <span style="color: var(--text);">${dev.device_ip || 'N/A'}</span></span>
+                <span>Stream: <span style="color: ${dev.stream_active ? 'var(--accent)' : 'var(--muted)'}">${dev.stream_active ? 'ACTIVE (AI)' : 'ACTIVE (RAW)'}</span></span>
+              </div>
+            </div>
+          `;
+            }).join('') + '</div>';
+          return;
+        }
+
+        try {
+          const r = await fetch("/api/devices");
+          const d = await r.json();
+          const devices = d.devices || [];
+
+          if (devices.length === 0) {
+            listContainer.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding: 10px 0;">No devices configured</div>';
+          } else {
+            listContainer.innerHTML = '<div class="item-list-widget">' +
+              devices.map(dev => {
+                const isOnline = dev.device_status === 'online';
+                const statusClass = isOnline ? 'active' : 'offline';
+                const statusText = isOnline ? 'ONLINE' : 'OFFLINE';
+                return `
+              <div class="item-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="font-weight: 600;">${dev.device_name}</span>
+                  <span class="status-indicator ${statusClass}">${statusText}</span>
+                </div>
+                <div style="display: flex; gap: 16px; font-size: .62rem; color: var(--muted);">
+                  <span>ID: <span style="color: var(--text);">${dev.device_id}</span></span>
+                  <span>IP: <span style="color: var(--text);">${dev.device_ip || 'N/A'}</span></span>
+                  <span>Stream: <span style="color: ${dev.stream_active ? 'var(--accent)' : 'var(--muted)'}">${dev.stream_active ? 'ACTIVE' : 'IDLE'}</span></span>
+                </div>
+              </div>
+            `;
+              }).join('') + '</div>';
+          }
+        } catch (e) {
+          listContainer.innerHTML = '<div style="color:var(--danger); font-size:.7rem;">Failed to load devices.</div>';
+        }
+      }
+
+      // Refresh button for devices
+      const refreshDevicesBtn = document.getElementById("btn-refresh-devices");
+      if (refreshDevicesBtn) {
+        refreshDevicesBtn.onclick = () => loadDevicesWidget();
+      }
+    });
+  </script>
+
+</body>
+
+</html>

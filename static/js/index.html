@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RTSP AI Surveillance Dashboard</title>
+
+<style>
+body {
+    font-family: Arial;
+    margin: 0;
+    background: #0f172a;
+    color: white;
+}
+
+header {
+    padding: 15px;
+    background: #111827;
+    text-align: center;
+    font-size: 20px;
+    font-weight: bold;
+}
+
+.container {
+    display: flex;
+    height: 100vh;
+}
+
+/* LEFT PANEL */
+.sidebar {
+    width: 320px;
+    background: #1f2937;
+    padding: 15px;
+    overflow-y: auto;
+}
+
+.camera-block {
+    margin-bottom: 20px;
+    padding: 10px;
+    background: #111827;
+    border-radius: 10px;
+}
+
+.camera-title {
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+/* RIGHT PANEL */
+.main {
+    flex: 1;
+    padding: 10px;
+}
+
+iframe {
+    width: 100%;
+    height: 90vh;
+    border: none;
+    background: black;
+}
+
+button {
+    margin: 3px;
+    padding: 5px 10px;
+    border: none;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+.start {
+    background: #22c55e;
+    color: white;
+}
+
+.stop {
+    background: #ef4444;
+    color: white;
+}
+
+.model-box {
+    margin: 5px 0;
+    padding: 5px;
+    background: #0b1220;
+    border-radius: 5px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+RTSP AI Surveillance Dashboard (Dynamic Detection System)
+</header>
+
+<div class="container">
+
+    <!-- LEFT: Controls -->
+    <div class="sidebar">
+
+        <h3>Cameras & Detection</h3>
+        <div id="cameraContainer"></div>
+
+    </div>
+
+    <!-- RIGHT: Live Stream -->
+    <div class="main">
+
+        <iframe id="streamFrame"></iframe>
+
+    </div>
+
+</div>
+
+<script>
+
+/************************************************************
+ * LOAD STREAMS
+ ************************************************************/
+async function loadStreams() {
+
+    const res = await fetch("/api/streams");
+    const streams = await res.json();
+
+    const container = document.getElementById("cameraContainer");
+
+    streams.forEach(stream => {
+
+        const camId = stream.id;
+
+        const div = document.createElement("div");
+        div.className = "camera-block";
+
+        div.innerHTML = `
+            <div class="camera-title">Camera ${camId}</div>
+
+            <button onclick="viewStream(${camId})">View</button>
+
+            <div id="models_${camId}">Loading models...</div>
+        `;
+
+        container.appendChild(div);
+
+        loadModels(camId);
+    });
+}
+
+/************************************************************
+ * LOAD MODELS (DYNAMIC FROM BACKEND)
+ ************************************************************/
+async function loadModels(cameraId) {
+
+    const res = await fetch("/api/models");
+    const data = await res.json();
+
+    const container = document.getElementById(`models_${cameraId}`);
+
+    container.innerHTML = "";
+
+    data.models.forEach(model => {
+
+        const div = document.createElement("div");
+        div.className = "model-box";
+
+        div.innerHTML = `
+            <div>${model}</div>
+
+            <button class="start"
+                onclick="startDetection(${cameraId}, '${model}')">
+                Start
+            </button>
+
+            <button class="stop"
+                onclick="stopDetection(${cameraId}, '${model}')">
+                Stop
+            </button>
+        `;
+
+        container.appendChild(div);
+    });
+}
+
+/************************************************************
+ * STREAM VIEW
+ ************************************************************/
+function viewStream(cameraId) {
+
+    document.getElementById("streamFrame").src =
+        `/stream.html?s=${cameraId}`;
+}
+
+/************************************************************
+ * START DETECTION
+ ************************************************************/
+async function startDetection(camera, model) {
+
+    await fetch("/api/detection/start", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            camera: camera,
+            model: model
+        })
+    });
+
+    alert(`Started ${model} on Camera ${camera}`);
+}
+
+/************************************************************
+ * STOP DETECTION
+ ************************************************************/
+async function stopDetection(camera, model) {
+
+    await fetch("/api/detection/stop", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            camera: camera,
+            model: model
+        })
+    });
+
+    alert(`Stopped ${model} on Camera ${camera}`);
+}
+
+/************************************************************
+ * INIT
+ ************************************************************/
+loadStreams();
+
+</script>
+
+</body>
+</html>
