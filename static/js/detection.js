@@ -48,12 +48,14 @@ function playHLS(video, url, idx) {
     });
 }
 
-async function waitAndSwitch(video, meta, idx) {
+async function waitAndSwitch(video, meta, idx, box) {
     const start = Date.now();
     while (Date.now() - start < 30000) {
+        if (!box.classList.contains("detecting")) return;
         try {
             const r = await fetch(meta.hls_detected + "?t=" + Date.now());
             if (r.ok && (await r.text()).includes(".ts")) {
+                if (!box.classList.contains("detecting")) return;
                 playHLS(video, meta.hls_detected, idx);
                 return;
             }
@@ -113,6 +115,12 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
     }
 
     box.querySelector(".start").onclick = async () => {
+        if (hlsInstances[i]) {
+            hlsInstances[i].destroy();
+            delete hlsInstances[i];
+        }
+        video.src = "";
+
         const cm = await (await fetch("/api/camera-models")).json();
         const models = cm[camStr] || [];
         if (!models.length) return alert("No models assigned");
@@ -130,10 +138,16 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
             headers: { "Content-Type": "application/json" }, 
             body: JSON.stringify({ camera: i, models, rtsp: meta.rtsp, conf, iou, location }) 
         });
-        waitAndSwitch(video, meta, i);
+        waitAndSwitch(video, meta, i, box);
     };
 
     box.querySelector(".stop").onclick = async () => {
+        if (hlsInstances[i]) {
+            hlsInstances[i].destroy();
+            delete hlsInstances[i];
+        }
+        video.src = "";
+
         box.classList.remove("detecting");
         updateBadge(false);
         await fetch("/api/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ camera: i }) });
