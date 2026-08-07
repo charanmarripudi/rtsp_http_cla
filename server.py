@@ -667,25 +667,43 @@ def start_raw_stream(i, u):
     try: os.remove(log_file)
     except: pass
     # FFmpeg cmd
-    cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
-        "-rtsp_transport", "tcp",
-        "-probesize", "1M", "-analyzeduration", "1M",
-        "-i", u,
-        "-an",
-        "-vf", "scale=854:-2",
-        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-profile:v", "main", "-level:v", "4.0",
-        "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
-        "-threads", "2", "-pix_fmt", "yuv420p",
-        "-g", "60", "-keyint_min", "60",
-        "-f", "hls",
-        "-hls_time", "2",
-        "-hls_list_size", "6",
-        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
-        "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
-        os.path.join(sd, "playlist.m3u8")
-    ]
+    import platform
+    is_rpi_sys = platform.system() == "Linux" and platform.machine() in ["aarch64", "armv7l"]
+    
+    if is_rpi_sys:
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+            "-rtsp_transport", "tcp",
+            "-i", u,
+            "-an",
+            "-c:v", "copy",
+            "-f", "hls",
+            "-hls_time", "2",
+            "-hls_list_size", "6",
+            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
+            "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
+            os.path.join(sd, "playlist.m3u8")
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+            "-rtsp_transport", "tcp",
+            "-probesize", "1M", "-analyzeduration", "1M",
+            "-i", u,
+            "-an",
+            "-vf", "scale=854:-2",
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-profile:v", "main", "-level:v", "4.0",
+            "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
+            "-threads", "2", "-pix_fmt", "yuv420p",
+            "-g", "60", "-keyint_min", "60",
+            "-f", "hls",
+            "-hls_time", "2",
+            "-hls_list_size", "6",
+            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
+            "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
+            os.path.join(sd, "playlist.m3u8")
+        ]
     log_fh = open(log_file, "w")
     print(f"[LOG] Camera {cid} raw stream started with resolution: 854x480, FPS: source, Bitrate: 600k (max 800k)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)

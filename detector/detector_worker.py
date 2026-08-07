@@ -46,11 +46,6 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;300000
 
 class DetectorWorker:
     def __init__(self, rtsp_url, output_dir, model_paths, fps=15, conf=0.25, iou=0.45, location=None):
-        import platform
-        # Lower FPS on Raspberry Pi to prevent CPU starvation and buffering
-        is_rpi = platform.system() == "Linux" and platform.machine() in ["aarch64", "armv7l"]
-        if is_rpi and fps == 15:
-            fps = 7
         self.rtsp_url, self.output_dir, self.fps, self.conf, self.iou = rtsp_url, output_dir, fps, conf, iou
         self.location = location or f"Camera {os.path.basename(output_dir).replace('stream', '').replace('_detected', '')}"
         self.width, self.height = 1280, 720
@@ -71,20 +66,37 @@ class DetectorWorker:
 
     def _create_ffmpeg(self):
         os.makedirs(self.output_dir, exist_ok=True)
-        # Reverted to Original Stable Profile (2s segments, 12s buffer window):
-        cmd = [
-            "ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
-            "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
-            "-tune", "zerolatency", "-pix_fmt", "yuv420p", 
-            "-profile:v", "main", "-level:v", "4.0",
-            "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
-            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
-            "-keyint_min", str(int(self.fps * 2)), 
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
-            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist", 
-            "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
-            os.path.join(self.output_dir, "playlist.m3u8")
-        ]
+        import platform
+        is_rpi_sys = platform.system() == "Linux" and platform.machine() in ["aarch64", "armv7l"]
+        
+        if is_rpi_sys:
+            # Raspberry Pi Hardware H.264 Encoder (extremely low CPU usage)
+            cmd = [
+                "ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
+                "-r", str(self.fps), "-i", "-", "-an", "-c:v", "h264_v4l2m2m", "-pix_fmt", "yuv420p", 
+                "-b:v", "600k", "-maxrate", "800k",
+                "-g", str(int(self.fps * 2)),
+                "-keyint_min", str(int(self.fps * 2)), 
+                "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
+                "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist", 
+                "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
+                os.path.join(self.output_dir, "playlist.m3u8")
+            ]
+        else:
+            # Software encoder for Mac/PC
+            cmd = [
+                "ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
+                "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
+                "-tune", "zerolatency", "-pix_fmt", "yuv420p", 
+                "-profile:v", "main", "-level:v", "4.0",
+                "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
+                "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
+                "-keyint_min", str(int(self.fps * 2)), 
+                "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
+                "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist", 
+                "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
+                os.path.join(self.output_dir, "playlist.m3u8")
+            ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
         print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 600k (max 800k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
