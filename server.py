@@ -673,10 +673,10 @@ def start_raw_stream(i, u):
         "-probesize", "1M", "-analyzeduration", "1M",
         "-i", u,
         "-an",
-        "-vf", "scale=640:-2",
+        "-vf", "scale=854:-2",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
         "-profile:v", "main", "-level:v", "4.0",
-        "-b:v", "400k", "-maxrate", "600k", "-bufsize", "1M",
+        "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
         "-threads", "2", "-pix_fmt", "yuv420p",
         "-g", "60", "-keyint_min", "60",
         "-f", "hls",
@@ -687,7 +687,7 @@ def start_raw_stream(i, u):
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started with resolution: 640x360, FPS: source, Bitrate: 400k (max 600k)")
+    print(f"[LOG] Camera {cid} raw stream started with resolution: 854x480, FPS: source, Bitrate: 600k (max 800k)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd}
     # Also, symlink any other cids already mapped to this rtsp
@@ -719,8 +719,15 @@ def monitor_raw_streams_loop():
             conf_urls = read_streams_conf()
             for i, u in enumerate(conf_urls):
                 cid = str(i)
-                detection_active = cid in running and (running[cid].get("proc") and running[cid]["proc"].poll() is None)
-                if detection_active:
+                normalized_rtsp = u.strip()
+                # Check if any camera using this RTSP URL has detection active
+                rtsp_detection_active = False
+                for other_cid, other_rtsp in list(cid_to_rtsp.items()):
+                    if other_rtsp == normalized_rtsp:
+                        if other_cid in running and (running[other_cid].get("proc") and running[other_cid]["proc"].poll() is None):
+                            rtsp_detection_active = True
+                            break
+                if rtsp_detection_active:
                     continue
                 
                 normalized_rtsp = u.strip()
