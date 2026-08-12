@@ -722,6 +722,14 @@ def start_raw_stream(i, u):
                     os.remove(other_sd)
             os.symlink(os.path.basename(sd), other_sd)
 
+def _kill_raw_ffmpeg_for_camera(cid):
+    rtsp = cid_to_rtsp.get(cid)
+    if rtsp and rtsp in rtsp_cache:
+        if rtsp_cache[rtsp].get("proc"):
+            _async_kill(rtsp_cache[rtsp]["proc"])
+            del rtsp_cache[rtsp]
+        del cid_to_rtsp[cid]
+
 def monitor_raw_streams_loop():
     time.sleep(10)
     while True:
@@ -1162,27 +1170,22 @@ def start_detection(d: dict):
                 import shutil
                 shutil.rmtree(det_dir)
         os.makedirs(det_dir, exist_ok=True)
-    # Start detector worker FIRST (while raw FFmpeg is still serving video)
+    clean_only_detected(cid)
+
+    # Kill the raw FFmpeg for this camera before starting the detector.
+    # Without this, both the raw FFmpeg and the detector worker open their own
+    # RTSP connection simultaneously. Two concurrent RTSP consumers compete for
+    # the camera's available bandwidth, causing the detected stream to run in
+    # slow-motion. The detector opens its own RTSP connection internally, so
+    # the raw FFmpeg is not needed while detection is active.
+    _kill_raw_ffmpeg_for_camera(cid)
+    # Allow 1.0 second for the camera to release the RTSP TCP session slot
+    time.sleep(1.0)
+
+    # Pass location to worker
     cmd = [sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc]
     log = open(os.path.join(HLS_DIR, f"stream{cid}_detected/worker.log"), "a")
     running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc}
-
-    # In a daemon thread: wait until stream{cid}_detected playlist has real segments, then stop raw FFmpeg
-    def kill_raw_after_detected_ready(camera: str):
-        playlist_file = os.path.join(HLS_DIR, f"stream{camera}_detected", "playlist.m3u8")
-        t_start = time.time()
-        while time.time() - t_start < 20.0:
-            if os.path.exists(playlist_file):
-                try:
-                    with open(playlist_file, "r") as f:
-                        if ".ts" in f.read():
-                            break
-                except: pass
-            time.sleep(0.5)
-        _kill_raw_ffmpeg_for_camera(camera)
-
-    import threading
-    threading.Thread(target=kill_raw_after_detected_ready, args=(cid,), daemon=True).start()
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
 
 @app.post("/api/stop")

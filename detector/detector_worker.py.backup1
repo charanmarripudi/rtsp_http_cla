@@ -51,7 +51,6 @@ class DetectorWorker:
         self.width, self.height = 1280, 720
         self._stop_event, self._frame_queue, self._result_queue = threading.Event(), queue.Queue(maxsize=2), queue.Queue(maxsize=2)
         self._latest_raw_frame, self._frame_lock, self._cap_ok, self._last_frame_time = None, threading.Lock(), True, time.time()
-        self._latest_boxes, self._box_lock = [], threading.Lock()
         self.alert_timers, self.alert_triggered = {}, set()
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         self.models = [YOLO(mp) for mp in (model_paths if isinstance(model_paths, list) else [model_paths])]
@@ -67,20 +66,37 @@ class DetectorWorker:
 
     def _create_ffmpeg(self):
         os.makedirs(self.output_dir, exist_ok=True)
-        # Software encoder (libx264 ultrafast) — 100% reliable on both Mac and Raspberry Pi
-        cmd = [
-            "ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
-            "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
-            "-tune", "zerolatency", "-pix_fmt", "yuv420p", 
-            "-profile:v", "main", "-level:v", "4.0",
-            "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
-            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
-            "-keyint_min", str(int(self.fps * 2)), 
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
-            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist", 
-            "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
-            os.path.join(self.output_dir, "playlist.m3u8")
-        ]
+        import platform
+        is_rpi_sys = platform.system() == "Linux" and platform.machine() in ["aarch64", "armv7l"]
+        
+        if is_rpi_sys:
+            # Raspberry Pi Hardware H.264 Encoder (extremely low CPU usage)
+            cmd = [
+                "ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
+                "-r", str(self.fps), "-i", "-", "-an", "-c:v", "h264_v4l2m2m", "-pix_fmt", "yuv420p", 
+                "-b:v", "600k", "-maxrate", "800k",
+                "-g", str(int(self.fps * 2)),
+                "-keyint_min", str(int(self.fps * 2)), 
+                "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
+                "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist", 
+                "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
+                os.path.join(self.output_dir, "playlist.m3u8")
+            ]
+        else:
+            # Software encoder for Mac/PC
+            cmd = [
+                "ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
+                "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
+                "-tune", "zerolatency", "-pix_fmt", "yuv420p", 
+                "-profile:v", "main", "-level:v", "4.0",
+                "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
+                "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
+                "-keyint_min", str(int(self.fps * 2)), 
+                "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
+                "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist", 
+                "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
+                os.path.join(self.output_dir, "playlist.m3u8")
+            ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
         print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 600k (max 800k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
@@ -94,24 +110,15 @@ class DetectorWorker:
 
     def _run_all_models(self, f):
         try:
-            cur_cls, now = set(), time.time()
-            boxes_data = []
+            ann, cur_cls, now = Annotator(f.copy(), line_width=2), set(), time.time()
             for midx, model in enumerate(self.models):
                 for r in model.predict(f, conf=self.conf, iou=self.iou, imgsz=640, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
                             cls = r.names[int(b.cls[0])]
                             cur_cls.add(cls)
-                            label_text = f"{cls} {float(b.conf[0]):.2f}"
-                            color_val = colors(int(b.cls[0])+midx*50, True)
-                            boxes_data.append((b.xyxy[0].cpu().numpy().tolist(), label_text, color_val))
-
-            # Render alert image snapshot with bounding boxes
-            ann = Annotator(f.copy(), line_width=2)
-            for b_xyxy, label_text, color_val in boxes_data:
-                ann.box_label(b_xyxy, label_text, color=color_val)
+                            ann.box_label(b.xyxy[0].cpu().numpy().tolist(), f"{cls} {float(b.conf[0]):.2f}", color=colors(int(b.cls[0])+midx*50, True))
             res = ann.result()
-
             for c in cur_cls:
                 if c not in self.alert_timers: self.alert_timers[c] = now
                 elif now - self.alert_timers[c] >= 3.0 and c not in self.alert_triggered:
@@ -120,8 +127,8 @@ class DetectorWorker:
                 if c not in cur_cls:
                     del self.alert_timers[c]
                     if c in self.alert_triggered: self.alert_triggered.remove(c)
-            return boxes_data
-        except: return []
+            return res
+        except: return f
 
     def _save_alert(self, class_name, frame):
         try:
@@ -148,7 +155,18 @@ class DetectorWorker:
                     insert_alert_db(cur, self.cam_id, self.location, f"{class_name} Detected", image_path, now_dt)
                     conn.commit()
                     cur.close()
-                except: pass
+                except: 
+                    if self._db_conn: self._db_conn.rollback()
+
+            # Local JSON Store
+            try:
+                adir_root = os.path.dirname(os.path.dirname(self.output_dir))
+                alog = os.path.join(adir_root, "hls", "alerts", "alerts.json")
+                os.makedirs(os.path.dirname(alog), exist_ok=True)
+                data = json.load(open(alog)) if os.path.exists(alog) else []
+                data.insert(0, {"camera": self.cam_id, "time": now_dt.strftime("%Y-%m-%d %H:%M:%S"), "event": f"{class_name} Detected", "image": image_path})
+                json.dump(data, open(alog, "w"), indent=4)
+            except: pass
         except: pass
 
     def _get_connecting_frame(self):
@@ -164,9 +182,11 @@ class DetectorWorker:
         while not self._stop_event.is_set():
             try: f = self._frame_queue.get(timeout=1.0)
             except: continue
-            boxes = self._run_all_models(f)
-            with self._box_lock:
-                self._latest_boxes = boxes
+            ann = self._run_all_models(f)
+            if self._result_queue.full():
+                try: self._result_queue.get_nowait()
+                except: pass
+            self._result_queue.put(ann)
 
     def _capture_thread(self, cap):
         retry_count = 0
@@ -197,7 +217,7 @@ class DetectorWorker:
             self._stop_event.clear(); self._frame_queue, self._result_queue, self._latest_raw_frame, self._cap_ok = queue.Queue(maxsize=2), queue.Queue(maxsize=2), None, True
             try:
                 # Initialize default dimensions early for fallback frame
-                self.width, self.height = 1280, 720
+                self.width, self.height = 854, 480
                 
                 cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
@@ -207,13 +227,21 @@ class DetectorWorker:
                     time.sleep(2)
                     cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
                     retry_count +=1
+                if not cap.isOpened(): 
+                    # If we can't open camera, still run FFmpeg with fallback frame
+                    h, w = 480, 854
+                else:
+                    h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                    w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                    if not h or not w: h, w = 480, 854
                 
-                ffmpeg = self._create_ffmpeg()
+                self.width = 854; self.height = int(int(h) * (854 / int(w)))
+                self.height += self.height % 2; ffmpeg = self._create_ffmpeg()
                 inf_t = threading.Thread(target=self._inference_thread, daemon=True); inf_t.start()
                 if cap and cap.isOpened():
                     cap_t = threading.Thread(target=self._capture_thread, args=(cap,), daemon=True); cap_t.start()
                 
-                f_int, last_w = 1.0 / self.fps, 0.0
+                f_int, last_w, last_ann = 1.0 / self.fps, 0.0, None
                 while True:
                     if cap and cap.isOpened():
                         if not self._cap_ok or time.time() - self._last_frame_time > 15.0: break
@@ -232,21 +260,12 @@ class DetectorWorker:
                     else:
                         time.sleep(0.005)
                         continue
+
+                    try: last_ann = self._result_queue.get_nowait()
+                    except: pass
                     
                     if now - last_w < f_int: continue
-                    last_w = now
-                    
-                    with self._box_lock:
-                        cur_boxes = list(self._latest_boxes)
-                    
-                    if cur_boxes:
-                        ann = Annotator(pf.copy(), line_width=2)
-                        for b_xyxy, label_text, color_val in cur_boxes:
-                            ann.box_label(b_xyxy, label_text, color=color_val)
-                        out = ann.result()
-                    else:
-                        out = pf
-
+                    last_w = now; out = last_ann if last_ann is not None else pf
                     if ffmpeg.poll() is not None: break
                     try: 
                         ffmpeg.stdin.write(out.tobytes())
@@ -255,6 +274,11 @@ class DetectorWorker:
             except: 
                 import traceback
                 traceback.print_exc()
+            time.sleep(3)
+
+
+
+
 # import cv2, subprocess, os, time, threading, queue, json
 # from datetime import datetime
 # from ultralytics import YOLO
