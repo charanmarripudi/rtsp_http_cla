@@ -705,7 +705,8 @@ def start_raw_stream(i, u):
             os.path.join(sd, "playlist.m3u8")
         ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started with resolution: 854x480, FPS: source, Bitrate: 600k (max 800k)")
+    res_str = "native passthrough (source)" if is_rpi_sys else "854x480"
+    print(f"[LOG] Camera {cid} raw stream started with resolution: {res_str}, FPS: source, Codec: {'copy (0% CPU)' if is_rpi_sys else 'libx264'}")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd}
     # Also, symlink any other cids already mapped to this rtsp
