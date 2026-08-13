@@ -22,14 +22,17 @@ function playHLS(video, url, idx) {
         enableWorker: true,
         lowLatencyMode: true,
         liveSyncDurationCount: 2,
+        liveMaxLatencyDurationCount: 4,
+        liveDurationInfinity: true,
         liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 8,
-        manifestLoadingTimeOut: 20000,
-        manifestLoadingMaxRetry: 8,
-        manifestLoadingRetryDelay: 1000,
-        fragLoadingTimeOut: 20000,
-        fragLoadingMaxRetry: 6,
+        maxBufferLength: 4,
+        manifestLoadingTimeOut: 15000,
+        manifestLoadingMaxRetry: 10,
+        manifestLoadingRetryDelay: 500,
+        fragLoadingTimeOut: 15000,
+        fragLoadingMaxRetry: 10,
+        fragLoadingRetryDelay: 500,
     });
     hlsInstances[idx] = hls;
 

@@ -823,7 +823,15 @@ async def serve_hls(path: str):
     fp = os.path.join(HLS_DIR, path)
     if not os.path.exists(fp): return Response(status_code=404)
     mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
-    return FileResponse(fp, media_type=mt, headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"})
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    }
+    return FileResponse(fp, media_type=mt, headers=headers)
 
 @app.get("/api/models")
 def get_models(): return {"models": [f for f in os.listdir(MODEL_DIR) if f.endswith(".pt")]} if os.path.exists(MODEL_DIR) else {"models": []}

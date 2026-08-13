@@ -88,7 +88,7 @@ class DetectorWorker:
             "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
             "-keyint_min", str(int(self.fps * 2)), 
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
-            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist", 
+            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
