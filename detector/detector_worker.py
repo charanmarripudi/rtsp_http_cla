@@ -73,10 +73,9 @@ class DetectorWorker:
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", 
             "-profile:v", "main", "-level:v", "4.0",
-            "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
-            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
-            "-keyint_min", str(int(self.fps * 2)), 
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
+            "-g", str(int(self.fps * 1)), # GOP = 1s * FPS for real-time low latency
+            "-keyint_min", str(int(self.fps * 1)), 
+            "-f", "hls", "-hls_time", "1", "-hls_list_size", "5",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist", 
             "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")

@@ -21,10 +21,13 @@ function playHLS(video, url, idx) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        liveSyncDurationCount: 2,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 3,
+        maxLiveSyncPlaybackRate: 1.1,
         liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 8,
+        maxBufferLength: 4,
+        maxMaxBufferLength: 6,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 8,
         manifestLoadingRetryDelay: 1000,
@@ -43,6 +46,18 @@ function playHLS(video, url, idx) {
         stopSimulatedCanvas(idx, video);
         video.play().catch(() => {});
     });
+
+    // Real-time Live Edge Lock: keep stream synchronized within ~1.5s of live reality
+    hls.on(Hls.Events.LEVEL_UPDATED, (_, data) => {
+        if (data.details && data.details.live) {
+            const livePosition = data.details.edge || data.details.totalduration;
+            const latency = livePosition - video.currentTime;
+            if (latency > 3.0 && !video.paused && video.readyState >= 3) {
+                video.currentTime = Math.max(0, livePosition - 0.8);
+            }
+        }
+    });
+
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) {
             hls.destroy();
