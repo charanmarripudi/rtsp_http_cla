@@ -291,12 +291,19 @@ class DetectorWorker:
                         cur_boxes = list(self._latest_boxes)
                     
                     if cur_boxes:
-                        ann = Annotator(pf.copy(), line_width=2)
                         for b_xyxy, label_text, color_val in cur_boxes:
-                            ann.box_label(b_xyxy, label_text, color=color_val)
-                        out = ann.result()
-                    else:
-                        out = pf
+                            try:
+                                x1, y1, x2, y2 = [int(v) for v in b_xyxy]
+                                if isinstance(color_val, (list, tuple)) and len(color_val) >= 3:
+                                    c = (int(color_val[0]), int(color_val[1]), int(color_val[2]))
+                                else:
+                                    c = (0, 255, 128)
+                                cv2.rectangle(pf, (x1, y1), (x2, y2), c, 1)
+                                t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)[0]
+                                cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 4)), (x1 + t_size[0] + 4, max(0, y1)), c, -1)
+                                cv2.putText(pf, label_text, (x1 + 2, max(t_size[1] + 2, y1 - 2)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1, cv2.LINE_AA)
+                            except: pass
+                    out = pf
 
                     if ffmpeg.poll() is not None: break
                     try: 
