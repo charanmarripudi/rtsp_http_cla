@@ -10,6 +10,8 @@ function playHLS(video, url, idx) {
     }
     video.dataset.currentUrl = url;
     if (hlsInstances[idx]) { hlsInstances[idx].destroy(); delete hlsInstances[idx]; }
+    if (video._liveSyncInterval) { clearInterval(video._liveSyncInterval); delete video._liveSyncInterval; }
+
     const fullUrl = url + "?t=" + Date.now();
     if (typeof Hls === "undefined" || !Hls.isSupported()) {
         video.src = fullUrl;
@@ -21,10 +23,13 @@ function playHLS(video, url, idx) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        liveSyncDurationCount: 2,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 2,
+        maxLiveSyncPlaybackRate: 1.15,
         liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 8,
+        maxBufferLength: 4,
+        maxMaxBufferLength: 6,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 8,
         manifestLoadingRetryDelay: 1000,
@@ -47,9 +52,21 @@ function playHLS(video, url, idx) {
         if (data.fatal) {
             hls.destroy();
             delete hlsInstances[idx];
+            if (video._liveSyncInterval) { clearInterval(video._liveSyncInterval); delete video._liveSyncInterval; }
             setTimeout(() => playHLS(video, url, idx), 2000);
         }
     });
+
+    // Active Live-Edge Sync Monitor: continuously stays close to real-time without needing page refresh
+    video._liveSyncInterval = setInterval(() => {
+        if (!video.paused && video.buffered && video.buffered.length > 0) {
+            const liveEdge = video.buffered.end(video.buffered.length - 1);
+            const latency = liveEdge - video.currentTime;
+            if (latency > 3.0) {
+                video.currentTime = liveEdge - 0.2;
+            }
+        }
+    }, 2500);
 }
 
 async function waitAndSwitch(video, meta, idx, box, badge) {

@@ -173,13 +173,13 @@ class LocationDashboardStore {
         if (!this.streams.length) return;
         const seen = new Set(this.locations.map(l => l.location.toLowerCase()));
         const seenIds = new Set(this.locations.map(l => l.id));
-        
+
         this.streams.forEach((stream, idx) => {
             const name = stream.location || `Location ${idx + 1}`;
             const id = stream.location_id || `loc-${this.locations.length + 1}`;
-            
+
             if (seen.has(name.toLowerCase()) || seenIds.has(id)) return;
-            
+
             seen.add(name.toLowerCase());
             seenIds.add(id);
             this.locations.push({
@@ -305,7 +305,7 @@ class LocationDashboard {
     async saveLocations(shouldReload = false) {
         const payload = this.store.locationPayloads();
         localStorage.setItem("offline_locations", JSON.stringify(payload));
-        
+
         const btn = document.getElementById("btn-save-locations");
         if (btn) {
             btn.disabled = true;
@@ -370,7 +370,7 @@ class LocationDashboard {
         this.locations.splice(idx, 1);
         // Also remove or unlink cameras associated with this location
         this.streams = this.streams.filter(stream => stream.location_id !== id && stream.location !== item.location);
-        
+
         // Cleanup camera model mappings for deleted cameras
         const streamIds = this.streams.map(s => String(s.id));
         Object.keys(this.cameraModels).forEach(cid => {
@@ -379,7 +379,7 @@ class LocationDashboard {
 
         this.renderLocationForm();
         this.renderLocationWidgets();
-        
+
         // PERSIST BOTH to prevent re-seeding from old streams.json
         this.saveLocations(false);
         this.saveCameras(false);
@@ -470,7 +470,7 @@ class LocationDashboard {
 
     addCamera(loc, locIdx) {
         const nextId = this.streams.reduce((max, item) => Math.max(max, Number(item.id) || 0), -1) + 1;
-        
+
         // Start with no models pre-selected (empty list) so the user explicitly chooses models
         this.cameraModels[String(nextId)] = [];
 
