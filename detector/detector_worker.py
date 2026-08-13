@@ -1,4 +1,12 @@
-import cv2, subprocess, os, time, threading, queue, json
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["TORCH_NUM_THREADS"] = "1"
+
+import cv2, subprocess, time, threading, queue, json
 from datetime import datetime
 from ultralytics import YOLO
 from ultralytics.utils.plotting import Annotator, colors
@@ -25,8 +33,10 @@ if str(BASE_DIR) not in sys.path:
 # Optimize PyTorch CPU threading to prevent CPU starvation on Raspberry Pi
 try:
     import torch
-    torch.set_num_threads(2)
-except Exception as e:
+    torch.set_num_threads(1)
+    if hasattr(torch, "set_num_interop_threads"):
+        torch.set_num_interop_threads(1)
+except Exception:
     pass
 
 from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db
@@ -69,9 +79,10 @@ class DetectorWorker:
         os.makedirs(self.output_dir, exist_ok=True)
         # Software encoder (libx264 ultrafast) — 100% reliable on both Mac and Raspberry Pi
         cmd = [
-            "ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
+            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+            "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
-            "-tune", "zerolatency", "-pix_fmt", "yuv420p", 
+            "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "main", "-level:v", "4.0",
             "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
             "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
@@ -200,11 +211,13 @@ class DetectorWorker:
 
     def _inference_thread(self):
         while not self._stop_event.is_set():
-            try: f = self._frame_queue.get(timeout=1.0)
+            try: f = self._frame_queue.get(timeout=0.5)
             except: continue
             boxes = self._run_all_models(f)
             with self._box_lock:
                 self._latest_boxes = boxes
+            # Pacing: 50ms pause ensures CPU cores are shared gracefully across all cameras
+            time.sleep(0.05)
 
     def _capture_thread(self, cap):
         retry_count = 0
