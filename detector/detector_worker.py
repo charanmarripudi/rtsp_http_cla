@@ -96,15 +96,34 @@ class DetectorWorker:
         try:
             cur_cls, now = set(), time.time()
             boxes_data = []
+            f_h, f_w = f.shape[:2]
+            max_allowed_area = 0.50 * (f_w * f_h)  # Discard unrealistic full-screen false positive boxes (>50% of screen)
+
             for midx, model in enumerate(self.models):
                 for r in model.predict(f, conf=self.conf, iou=self.iou, imgsz=640, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
+                            box_xyxy = b.xyxy[0].cpu().numpy().tolist()
+                            x1, y1, x2, y2 = box_xyxy
+                            bw = max(0, x2 - x1)
+                            bh = max(0, y2 - y1)
+                            box_area = bw * bh
+                            
+                            # Discard gigantic false positive background bounding boxes (>50% of screen or >85% dimension)
+                            if box_area > max_allowed_area or bw > 0.85 * f_w or bh > 0.85 * f_h:
+                                continue
+                                
                             cls = r.names[int(b.cls[0])]
+                            conf_val = float(b.conf[0])
+                            
+                            # For large full-body negative detections, require solid confidence (>= 0.35) to eliminate false alarms
+                            if box_area > 0.20 * (f_w * f_h) and conf_val < 0.35:
+                                continue
+                                
                             cur_cls.add(cls)
-                            label_text = f"{cls} {float(b.conf[0]):.2f}"
+                            label_text = f"{cls} {conf_val:.2f}"
                             color_val = colors(int(b.cls[0])+midx*50, True)
-                            boxes_data.append((b.xyxy[0].cpu().numpy().tolist(), label_text, color_val))
+                            boxes_data.append((box_xyxy, label_text, color_val))
 
             # Render alert image snapshot with bounding boxes
             ann = Annotator(f.copy(), line_width=2)
