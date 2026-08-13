@@ -136,6 +136,16 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
     // Restore Sliders
     const confSlider = box.querySelector(".conf-slider");
     const iouSlider = box.querySelector(".iou-slider");
+    if (meta.conf !== undefined && confSlider) {
+        confSlider.value = meta.conf;
+        const valSpan = box.querySelector(".conf-val");
+        if (valSpan) valSpan.textContent = parseFloat(meta.conf).toFixed(2);
+    }
+    if (meta.iou !== undefined && iouSlider) {
+        iouSlider.value = meta.iou;
+        const valSpan = box.querySelector(".iou-val");
+        if (valSpan) valSpan.textContent = parseFloat(meta.iou).toFixed(2);
+    }
     if (confSlider) {
         confSlider.oninput = () => box.querySelector(".conf-val").textContent = parseFloat(confSlider.value).toFixed(2);
     }
@@ -148,8 +158,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         const models = cm[camStr] || [];
         if (!models.length) return alert("No models assigned");
         
-        const conf = confSlider ? parseFloat(confSlider.value) : 0.25;
-        const iou = iouSlider ? parseFloat(iouSlider.value) : 0.45;
+        const conf = confSlider ? parseFloat(confSlider.value) : (meta.conf || 0.40);
+        const iou = iouSlider ? parseFloat(iouSlider.value) : (meta.iou || 0.45);
         const location = meta.location || meta.label || "Camera " + (i+1);
         
         box.classList.add("detecting");

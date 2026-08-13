@@ -37,6 +37,8 @@ class LocationDashboardTemplates {
 
     static cameraBox(stream) {
         const id = Number(stream.id);
+        const confVal = stream.conf !== undefined && stream.conf !== null ? Number(stream.conf).toFixed(2) : "0.40";
+        const iouVal = stream.iou !== undefined && stream.iou !== null ? Number(stream.iou).toFixed(2) : "0.45";
         return `
             <div class="box" id="cam-box-${id}" data-camera-id="${id}">
                 <div class="video-wrap">
@@ -48,8 +50,8 @@ class LocationDashboardTemplates {
                     <div class="assignment-panel">
                         <div><span style="font-size:0.65rem;color:var(--muted);display:block;margin-bottom:4px;font-weight:600;">ASSIGNED MODELS</span><div class="assigned-chips-list" id="chips-${id}" style="display:flex;flex-wrap:wrap;gap:4px;"></div></div>
                         <div class="thresholds compact">
-                            <div class="thresh-row"><label>Conf <span class="conf-val">0.40</span></label><input class="conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.40"></div>
-                            <div class="thresh-row"><label>IoU <span class="iou-val">0.45</span></label><input class="iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.45"></div>
+                            <div class="thresh-row"><label>Conf <span class="conf-val">${confVal}</span></label><input class="conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${confVal}"></div>
+                            <div class="thresh-row"><label>IoU <span class="iou-val">${iouVal}</span></label><input class="iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iouVal}"></div>
                         </div>
                     </div>
                     <div class="btn-row">
@@ -226,7 +228,9 @@ class LocationDashboardStore {
             location: loc.location || item.location || `Location ${idx + 1}`,
             device_id: loc.device_id || item.device_id || "",
             device_ip: loc.device_ip || item.device_ip || "",
-            device_status: loc.device_status || item.device_status || "offline"
+            device_status: loc.device_status || item.device_status || "offline",
+            conf: item.conf !== undefined && item.conf !== null ? parseFloat(item.conf) : 0.40,
+            iou: item.iou !== undefined && item.iou !== null ? parseFloat(item.iou) : 0.45
         };
     }
 }
@@ -426,6 +430,28 @@ class LocationDashboard {
                     }
                 }
             });
+        });
+
+        card.querySelectorAll(".box").forEach(camBox => {
+            const camId = Number(camBox.getAttribute("data-camera-id"));
+            const stream = this.streams.find(s => Number(s.id) === camId);
+            if (!stream) return;
+            const confSlider = camBox.querySelector(".conf-slider");
+            const iouSlider = camBox.querySelector(".iou-slider");
+            if (confSlider) {
+                confSlider.addEventListener("input", e => {
+                    stream.conf = parseFloat(e.target.value);
+                    const valSpan = camBox.querySelector(".conf-val");
+                    if (valSpan) valSpan.textContent = parseFloat(e.target.value).toFixed(2);
+                });
+            }
+            if (iouSlider) {
+                iouSlider.addEventListener("input", e => {
+                    stream.iou = parseFloat(e.target.value);
+                    const valSpan = camBox.querySelector(".iou-val");
+                    if (valSpan) valSpan.textContent = parseFloat(e.target.value).toFixed(2);
+                });
+            }
         });
 
         card.querySelector(".save-cameras").addEventListener("click", () => this.saveCameras(true));
