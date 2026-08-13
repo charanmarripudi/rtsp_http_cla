@@ -52,7 +52,13 @@ class LocationDashboardTemplates {
                             <div class="thresh-row"><label>IoU <span class="iou-val">0.45</span></label><input class="iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.45"></div>
                         </div>
                     </div>
-                    <div class="btn-row"><button class="start">Start</button><button class="stop">Stop</button></div>
+                    <div class="btn-row">
+                        <button class="start">Start</button>
+                        <button class="stop">Stop</button>
+                    </div>
+                    <button class="btn-remove-camera-card" data-stream-id="${id}" style="width:100%;margin-top:8px;background:rgba(255,65,85,0.12);color:var(--danger);border:1px solid rgba(255,65,85,0.4);border-radius:6px;padding:8px;font-size:0.74rem;font-family:var(--mono);font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s ease;">
+                        ✕ Remove Camera
+                    </button>
                 </div>
             </div>`;
     }
@@ -379,7 +385,12 @@ class LocationDashboard {
         this.saveCameras(false);
     }
 
-    renderLocationWidgets() {
+    renderLocationWidgets(force = false) {
+        const hasRenderedCards = this.locationWidgets.querySelectorAll(".widget-card").length > 0;
+        if (!force && hasRenderedCards) {
+            // Location cards & video elements are already rendered and playing — keep them alive!
+            return;
+        }
         this.locationWidgets.innerHTML = "";
         if (!this.locations.length) {
             this.locationWidgets.innerHTML = '<div style="grid-column:1/-1;color:var(--muted);font-size:.75rem;">Add locations on the first tab to create widgets here.</div>';
@@ -400,9 +411,23 @@ class LocationDashboard {
         card.querySelector(".widget-header").addEventListener("click", () => {
             card.classList.toggle("collapsed");
             card.classList.toggle("expanded", !card.classList.contains("collapsed"));
-            window.dispatchEvent(new CustomEvent("rtsp-dashboard-ready"));
         });
         card.querySelector(".add-camera").addEventListener("click", () => this.addCamera(loc, locIdx));
+
+        card.querySelectorAll(".btn-remove-camera-card").forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const targetId = Number(btn.getAttribute("data-stream-id"));
+                const targetStream = this.streams.find(s => Number(s.id) === targetId);
+                if (targetStream) {
+                    const camLabel = targetStream.location || targetStream.label || `Camera ${targetId + 1}`;
+                    if (confirm(`Remove ${camLabel}?`)) {
+                        this.removeCamera(targetStream);
+                    }
+                }
+            });
+        });
+
         card.querySelector(".save-cameras").addEventListener("click", () => this.saveCameras(true));
         return card;
     }
@@ -445,6 +470,10 @@ class LocationDashboard {
 
     addCamera(loc, locIdx) {
         const nextId = this.streams.reduce((max, item) => Math.max(max, Number(item.id) || 0), -1) + 1;
+        
+        // Start with no models pre-selected (empty list) so the user explicitly chooses models
+        this.cameraModels[String(nextId)] = [];
+
         this.streams.push({
             id: nextId,
             label: loc.location || `Camera ${nextId + 1}`,
@@ -458,13 +487,14 @@ class LocationDashboard {
             hls_raw: `/hls/stream${nextId}_raw/playlist.m3u8`,
             hls_detected: `/hls/stream${nextId}_detected/playlist.m3u8`
         });
-        this.renderLocationWidgets();
+        this.renderLocationWidgets(true);
+        this.saveCameras(false);
     }
 
     removeCamera(stream) {
         this.streams = this.streams.filter(item => item !== stream);
         delete this.cameraModels[String(stream.id)];
-        this.renderLocationWidgets();
+        this.renderLocationWidgets(true);
         this.saveCameras(false);
     }
 

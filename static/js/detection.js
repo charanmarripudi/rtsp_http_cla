@@ -5,6 +5,10 @@ function stopSimulatedCanvas(idx, video) {
 }
 
 function playHLS(video, url, idx) {
+    if (video.dataset.currentUrl === url && hlsInstances[idx]) {
+        return; // Stream is already playing this URL — don't interrupt or buffer!
+    }
+    video.dataset.currentUrl = url;
     if (hlsInstances[idx]) { hlsInstances[idx].destroy(); delete hlsInstances[idx]; }
     const fullUrl = url + "?t=" + Date.now();
     if (typeof Hls === "undefined" || !Hls.isSupported()) {
