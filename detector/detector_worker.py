@@ -45,7 +45,7 @@ def get_alerts_base_url():
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;30000000|reorder_queue_size;30|probesize;10000000|analyzeduration;10000000"
 
 class DetectorWorker:
-    def __init__(self, rtsp_url, output_dir, model_paths, fps=15, conf=0.25, iou=0.45, location=None):
+    def __init__(self, rtsp_url, output_dir, model_paths, fps=15, conf=0.40, iou=0.45, location=None):
         self.rtsp_url, self.output_dir, self.fps, self.conf, self.iou = rtsp_url, output_dir, fps, conf, iou
         self.location = location or f"Camera {os.path.basename(output_dir).replace('stream', '').replace('_detected', '')}"
         self.width, self.height = 1280, 720
@@ -97,7 +97,21 @@ class DetectorWorker:
             cur_cls, now = set(), time.time()
             boxes_data = []
             f_h, f_w = f.shape[:2]
-            max_allowed_area = 0.50 * (f_w * f_h)  # Discard unrealistic full-screen false positive boxes (>50% of screen)
+            f_area = f_w * f_h
+
+            # Strict realistic bounding box limits for PPE categories
+            # Small gear (boots, shoes, gloves, helmet, mask, goggles) should NEVER span across rooms/desks
+            small_gear_classes = {
+                "gum-boots", "no-gum-boots", "boots", "no_boots", 
+                "gloves", "no-gloves", "no_gloves", 
+                "helmet", "hard-hat", "no-hard-hat", "no_helmet", 
+                "mask", "no-mask", "goggles", "no_goggles", 
+                "cap-lamp", "no-cap-lamp", "wheel-choke", "sand-bucket"
+            }
+            torso_gear_classes = {
+                "saftey-vest", "no-saftey-vest", "safety vest", "no_safety_vest", 
+                "saftey-belt", "no-saftey-belt", "harness", "no_harness", "vest"
+            }
 
             for midx, model in enumerate(self.models):
                 for r in model.predict(f, conf=self.conf, iou=self.iou, imgsz=640, verbose=False):
@@ -108,18 +122,23 @@ class DetectorWorker:
                             bw = max(0, x2 - x1)
                             bh = max(0, y2 - y1)
                             box_area = bw * bh
-                            
-                            # Discard gigantic false positive background bounding boxes (>50% of screen or >85% dimension)
-                            if box_area > max_allowed_area or bw > 0.85 * f_w or bh > 0.85 * f_h:
-                                continue
-                                
                             cls = r.names[int(b.cls[0])]
+                            cls_lower = str(cls).strip().lower().replace("_", "-")
                             conf_val = float(b.conf[0])
-                            
-                            # For large full-body negative detections, require solid confidence (>= 0.35) to eliminate false alarms
-                            if box_area > 0.20 * (f_w * f_h) and conf_val < 0.35:
-                                continue
-                                
+
+                            # 1. Reject small gear if bounding box is absurdly large (e.g. spanning multiple tables/people)
+                            if any(k in cls_lower for k in ["boot", "glove", "helmet", "hat", "mask", "goggle", "lamp", "choke", "bucket"]):
+                                if bw > 0.28 * f_w or bh > 0.35 * f_h or box_area > 0.07 * f_area:
+                                    continue
+                            # 2. Reject torso gear if bounding box exceeds realistic human upper-body scale
+                            elif any(k in cls_lower for k in ["vest", "belt", "harness"]):
+                                if bw > 0.40 * f_w or bh > 0.55 * f_h or box_area > 0.16 * f_area:
+                                    continue
+                            # 3. General ceiling for full-body / environment detections
+                            else:
+                                if bw > 0.50 * f_w or bh > 0.80 * f_h or box_area > 0.28 * f_area:
+                                    continue
+
                             cur_cls.add(cls)
                             label_text = f"{cls} {conf_val:.2f}"
                             color_val = colors(int(b.cls[0])+midx*50, True)

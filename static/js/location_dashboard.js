@@ -48,7 +48,7 @@ class LocationDashboardTemplates {
                     <div class="assignment-panel">
                         <div><span style="font-size:0.65rem;color:var(--muted);display:block;margin-bottom:4px;font-weight:600;">ASSIGNED MODELS</span><div class="assigned-chips-list" id="chips-${id}" style="display:flex;flex-wrap:wrap;gap:4px;"></div></div>
                         <div class="thresholds compact">
-                            <div class="thresh-row"><label>Conf <span class="conf-val">0.25</span></label><input class="conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.25"></div>
+                            <div class="thresh-row"><label>Conf <span class="conf-val">0.40</span></label><input class="conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.40"></div>
                             <div class="thresh-row"><label>IoU <span class="iou-val">0.45</span></label><input class="iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.45"></div>
                         </div>
                     </div>
