@@ -103,26 +103,69 @@ class DetectorWorker:
         res = cv2.resize(f, (nw, nh))
         return cv2.copyMakeBorder(res, (self.height-nh)//2, (self.height-nh+1)//2, (self.width-nw)//2, (self.width-nw+1)//2, cv2.BORDER_CONSTANT, value=[0,0,0])
 
+    def _is_valid_box(self, cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop_img=None):
+        # 1. Absolute Minimum Size (Rejects micro-noise and camera compression artifacts)
+        if bw < 22 or bh < 22 or box_area < 550:
+            return False
+
+        # 2. Aspect Ratios
+        aspect_w_to_h = bw / max(1.0, bh)
+        aspect_h_to_w = bh / max(1.0, bw)
+
+        # 3. Small Gear (Helmets, Masks, Boots, Gloves, Goggles, Caps)
+        if any(k in cls_lower for k in ["boot", "glove", "helmet", "hat", "mask", "goggle", "lamp", "choke", "bucket"]):
+            if bw > 0.28 * f_w or bh > 0.35 * f_h or box_area > 0.07 * f_area:
+                return False
+            # Small gear cannot be an extreme horizontal or vertical line
+            if aspect_w_to_h > 2.5 or aspect_h_to_w > 3.0:
+                return False
+            # Negative small gear needs higher confidence to avoid chair/table false positives
+            if cls_lower.startswith("no-") or cls_lower.startswith("no_"):
+                if conf_val < max(self.conf, 0.48):
+                    return False
+
+        # 4. Torso Gear (Safety Vests, Harnesses, Belts)
+        elif any(k in cls_lower for k in ["vest", "belt", "harness"]):
+            if bw > 0.45 * f_w or bh > 0.60 * f_h or box_area > 0.20 * f_area:
+                return False
+            # Human torso is naturally upright or proportional
+            if aspect_w_to_h > 2.2 or aspect_h_to_w > 3.5:
+                return False
+            # For "no-safety-vest", require minimum confidence and structural dimensions
+            if cls_lower.startswith("no-") or cls_lower.startswith("no_"):
+                if conf_val < max(self.conf, 0.48):
+                    return False
+                if bw < 35 or bh < 40:
+                    return False
+
+        # 5. Fire & Smoke
+        elif "fire" in cls_lower or "smoke" in cls_lower:
+            if box_area < 800:
+                return False
+
+        # 6. General / Full-Body Classes (Person, Vehicle, etc.)
+        else:
+            if bw > 0.70 * f_w or bh > 0.90 * f_h or box_area > 0.45 * f_area:
+                return False
+
+        # 7. Flat-Space / Empty Background Filter (Rejects flat empty walls and uniform floor shadows)
+        if crop_img is not None and crop_img.size > 0:
+            try:
+                import numpy as np
+                # Flat empty floor/shadow textures have low standard deviation (< 10.0)
+                if np.std(crop_img) < 10.0:
+                    return False
+            except:
+                pass
+
+        return True
+
     def _run_all_models(self, f):
         try:
             cur_cls, now = set(), time.time()
             boxes_data = []
             f_h, f_w = f.shape[:2]
             f_area = f_w * f_h
-
-            # Strict realistic bounding box limits for PPE categories
-            # Small gear (boots, shoes, gloves, helmet, mask, goggles) should NEVER span across rooms/desks
-            small_gear_classes = {
-                "gum-boots", "no-gum-boots", "boots", "no_boots", 
-                "gloves", "no-gloves", "no_gloves", 
-                "helmet", "hard-hat", "no-hard-hat", "no_helmet", 
-                "mask", "no-mask", "goggles", "no_goggles", 
-                "cap-lamp", "no-cap-lamp", "wheel-choke", "sand-bucket"
-            }
-            torso_gear_classes = {
-                "saftey-vest", "no-saftey-vest", "safety vest", "no_safety_vest", 
-                "saftey-belt", "no-saftey-belt", "harness", "no_harness", "vest"
-            }
 
             for midx, model in enumerate(self.models):
                 for r in model.predict(f, conf=self.conf, iou=self.iou, imgsz=640, verbose=False):
@@ -137,18 +180,17 @@ class DetectorWorker:
                             cls_lower = str(cls).strip().lower().replace("_", "-")
                             conf_val = float(b.conf[0])
 
-                            # 1. Reject small gear if bounding box is absurdly large (e.g. spanning multiple tables/people)
-                            if any(k in cls_lower for k in ["boot", "glove", "helmet", "hat", "mask", "goggle", "lamp", "choke", "bucket"]):
-                                if bw > 0.28 * f_w or bh > 0.35 * f_h or box_area > 0.07 * f_area:
-                                    continue
-                            # 2. Reject torso gear if bounding box exceeds realistic human upper-body scale
-                            elif any(k in cls_lower for k in ["vest", "belt", "harness"]):
-                                if bw > 0.40 * f_w or bh > 0.55 * f_h or box_area > 0.16 * f_area:
-                                    continue
-                            # 3. General ceiling for full-body / environment detections
-                            else:
-                                if bw > 0.50 * f_w or bh > 0.80 * f_h or box_area > 0.28 * f_area:
-                                    continue
+                            # Crop the detected region for texture verification
+                            crop = None
+                            try:
+                                ix1, iy1, ix2, iy2 = max(0, int(x1)), max(0, int(y1)), min(f_w, int(x2)), min(f_h, int(y2))
+                                if ix2 > ix1 and iy2 > iy1:
+                                    crop = f[iy1:iy2, ix1:ix2]
+                            except: pass
+
+                            # Dynamic validation across all models
+                            if not self._is_valid_box(cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop):
+                                continue
 
                             cur_cls.add(cls)
                             label_text = f"{cls} {conf_val:.2f}"
