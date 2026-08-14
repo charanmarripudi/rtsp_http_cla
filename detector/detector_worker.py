@@ -85,15 +85,15 @@ class DetectorWorker:
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "main", "-level:v", "4.0",
             "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
-            "-g", str(int(self.fps)), # GOP = 1s * FPS (12 frames)
-            "-keyint_min", str(int(self.fps)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "1", "-hls_list_size", "6",
+            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS (24 frames)
+            "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
+            "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Ultra-Low Latency: 1.0s GOP, Bitrate: 800k (max 1000k)", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Speed: 1.4x real-time (GOP 24), Bitrate: 800k (max 1000k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):
