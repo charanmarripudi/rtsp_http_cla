@@ -681,10 +681,15 @@ def start_raw_stream(i, u):
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
         "-rtsp_transport", "tcp",
+        "-probesize", "1M", "-analyzeduration", "1M",
         "-i", u,
         "-an",
-        "-c:v", "copy",
-        "-bsf:v", "dump_extra=freq=keyframe",
+        "-vf", "scale=1280:-2",
+        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+        "-profile:v", "main", "-level:v", "4.0",
+        "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
+        "-threads", "1", "-pix_fmt", "yuv420p",
+        "-g", "60", "-keyint_min", "60",
         "-f", "hls",
         "-hls_time", "2",
         "-hls_list_size", "10",
@@ -693,7 +698,7 @@ def start_raw_stream(i, u):
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started with resolution: native passthrough (full resolution), FPS: source, Codec: copy (0% CPU)")
+    print(f"[LOG] Camera {cid} raw stream started with resolution: 1280x720 (720p HD), FPS: 25.0, Bitrate: 800k (max 1000k), Codec: libx264 (yuv420p, keyframe every 2s)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd}
     # Also, symlink any other cids already mapped to this rtsp
