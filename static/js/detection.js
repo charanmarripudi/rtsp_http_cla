@@ -21,11 +21,11 @@ function playHLS(video, url, idx) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        liveSyncDurationCount: 2,        // 2 segments (4s) - optimal tight live sync
-        liveMaxLatencyDurationCount: 5,  // Auto-seek if latency drifts beyond 5 segments (10s)
-        liveBackBufferLength: 30,
-        maxBufferLength: 8,              // 8s in browser memory
-        maxMaxBufferLength: 12,
+        liveSyncDurationCount: 3,        // 3 segments (6s) - rock-solid buffer cushion
+        liveMaxLatencyDurationCount: 7,  // Auto-seek if latency drifts beyond 7 segments (14s)
+        liveBackBufferLength: 60,
+        maxBufferLength: 12,             // 12s in browser memory
+        maxMaxBufferLength: 20,
         manifestLoadingTimeOut: 15000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,

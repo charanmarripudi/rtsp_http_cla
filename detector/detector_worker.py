@@ -87,7 +87,7 @@ class DetectorWorker:
             "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
             "-g", str(int(self.fps * 2)), # GOP = 2s * FPS (30 frames)
             "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
+            "-f", "hls", "-hls_time", "2", "-hls_list_size", "10",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
@@ -216,8 +216,8 @@ class DetectorWorker:
             boxes = self._run_all_models(f)
             with self._box_lock:
                 self._latest_boxes = boxes
-            # Pacing: 50ms pause ensures CPU cores are shared gracefully across all cameras
-            time.sleep(0.05)
+            # Pacing: 80ms pause ensures CPU cores are shared gracefully across all cameras
+            time.sleep(0.08)
 
     def _capture_thread(self, cap):
         retry_count = 0
