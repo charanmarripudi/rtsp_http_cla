@@ -52,7 +52,7 @@ def get_alerts_base_url():
     except: pass
     return os.getenv("ALERTS_BASE_URL", "")
 
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|timeout;5000000|reorder_queue_size;5|probesize;500000|analyzeduration;500000"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 class DetectorWorker:
     def __init__(self, rtsp_url, output_dir, model_paths, fps=15, conf=0.40, iou=0.45, location=None):
@@ -247,22 +247,28 @@ class DetectorWorker:
                 ffmpeg.kill(); ffmpeg.wait()
             self._stop_event.clear(); self._frame_queue, self._result_queue, self._latest_raw_frame, self._cap_ok = queue.Queue(maxsize=2), queue.Queue(maxsize=2), None, True
             try:
-                # Initialize default dimensions early for fallback frame
                 self.width, self.height = 1280, 720
-                
                 cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 
                 retry_count = 0
                 while not cap.isOpened() and retry_count < 10:
-                    time.sleep(2)
+                    time.sleep(0.5)
                     cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-                    retry_count +=1
+                    retry_count += 1
+                
+                if cap and cap.isOpened():
+                    cap_t = threading.Thread(target=self._capture_thread, args=(cap,), daemon=True)
+                    cap_t.start()
+
+                # Wait up to 5s for the first real frame from camera before starting FFmpeg
+                t0 = time.time()
+                while time.time() - t0 < 5.0 and self._latest_raw_frame is None:
+                    time.sleep(0.05)
                 
                 ffmpeg = self._create_ffmpeg()
-                inf_t = threading.Thread(target=self._inference_thread, daemon=True); inf_t.start()
-                if cap and cap.isOpened():
-                    cap_t = threading.Thread(target=self._capture_thread, args=(cap,), daemon=True); cap_t.start()
+                inf_t = threading.Thread(target=self._inference_thread, daemon=True)
+                inf_t.start()
                 
                 f_int, last_w = 1.0 / self.fps, 0.0
                 while True:
@@ -270,9 +276,9 @@ class DetectorWorker:
                         if not self._cap_ok or time.time() - self._last_frame_time > 15.0: break
                     with self._frame_lock: f = self._latest_raw_frame
                     
-                    # Use fallback connecting frame if no frame available
                     if f is None: 
-                        f = self._get_connecting_frame()
+                        time.sleep(0.01)
+                        continue
                     
                     now = time.time()
                     # Only letterbox if we are going to use it for FFmpeg OR if inference queue is empty
