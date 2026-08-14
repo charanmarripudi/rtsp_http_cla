@@ -55,7 +55,7 @@ def get_alerts_base_url():
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 class DetectorWorker:
-    def __init__(self, rtsp_url, output_dir, model_paths, fps=15, conf=0.40, iou=0.45, location=None):
+    def __init__(self, rtsp_url, output_dir, model_paths, fps=12, conf=0.40, iou=0.45, location=None):
         self.rtsp_url, self.output_dir, self.fps, self.conf, self.iou = rtsp_url, output_dir, fps, conf, iou
         self.location = location or f"Camera {os.path.basename(output_dir).replace('stream', '').replace('_detected', '')}"
         self.width, self.height = 1280, 720
@@ -85,7 +85,7 @@ class DetectorWorker:
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "main", "-level:v", "4.0",
             "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
-            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS (30 frames)
+            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS (24 frames)
             "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "10",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
@@ -93,7 +93,7 @@ class DetectorWorker:
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Low Latency: ON, Bitrate: 600k (max 800k)", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Low Latency: ON, Bitrate: 800k (max 1000k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):
@@ -216,8 +216,8 @@ class DetectorWorker:
             boxes = self._run_all_models(f)
             with self._box_lock:
                 self._latest_boxes = boxes
-            # Pacing: 80ms pause ensures CPU cores are shared gracefully across all cameras
-            time.sleep(0.08)
+            # Pacing: 40ms pause keeps inference fast (~12 infer/s) while sharing CPU
+            time.sleep(0.04)
 
     def _capture_thread(self, cap):
         retry_count = 0
