@@ -21,11 +21,13 @@ function playHLS(video, url, idx) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 8,
-        liveBackBufferLength: 60,
-        maxBufferLength: 12,
-        maxMaxBufferLength: 20,
+        startPosition: -1,               // Start directly at the LIVE edge (not 20s in the past)
+        liveSyncDurationCount: 2,        // 2 segments (~4.0s safe real-time delay)
+        liveMaxLatencyDurationCount: 4,  // Auto-catchup if delay exceeds 8.0s
+        liveDurationInfinity: true,
+        liveBackBufferLength: 10,
+        maxBufferLength: 8,
+        maxMaxBufferLength: 12,
         manifestLoadingTimeOut: 15000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,
@@ -43,6 +45,9 @@ function playHLS(video, url, idx) {
 
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
         stopSimulatedCanvas(idx, video);
+        if (hls.liveSyncPosition) {
+            video.currentTime = hls.liveSyncPosition;
+        }
         video.play().catch(() => {});
     });
     hls.on(Hls.Events.ERROR, (_, data) => {
