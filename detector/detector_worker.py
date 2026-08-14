@@ -84,9 +84,9 @@ class DetectorWorker:
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "main", "-level:v", "4.0",
-            "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
-            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
-            "-keyint_min", str(int(self.fps * 2)), 
+            "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
+            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS (30 frames)
+            "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
