@@ -680,25 +680,27 @@ def start_raw_stream(i, u):
     
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+        "-fflags", "nobuffer", "-flags", "low_delay",
+        "-strict", "experimental",
         "-rtsp_transport", "tcp",
-        "-probesize", "1M", "-analyzeduration", "1M",
+        "-probesize", "512k", "-analyzeduration", "512k",
         "-i", u,
         "-an",
         "-vf", "scale=1280:-2",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
         "-profile:v", "main", "-level:v", "4.0",
-        "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
+        "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "1M",
         "-threads", "1", "-pix_fmt", "yuv420p",
-        "-g", "60", "-keyint_min", "60",
+        "-g", "40", "-keyint_min", "40",
         "-f", "hls",
         "-hls_time", "2",
-        "-hls_list_size", "10",
+        "-hls_list_size", "6",
         "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started with resolution: 1280x720 (720p HD), FPS: 25.0, Bitrate: 800k (max 1000k), Codec: libx264 (yuv420p, keyframe every 2s)")
+    print(f"[LOG] Camera {cid} raw stream started with resolution: 1280x720 (720p HD), Low Latency: ON, Bitrate: 800k (max 1000k)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd}
     # Also, symlink any other cids already mapped to this rtsp

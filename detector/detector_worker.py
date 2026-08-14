@@ -52,7 +52,7 @@ def get_alerts_base_url():
     except: pass
     return os.getenv("ALERTS_BASE_URL", "")
 
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;30000000|reorder_queue_size;30|probesize;10000000|analyzeduration;10000000"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|timeout;5000000|reorder_queue_size;5|probesize;500000|analyzeduration;500000"
 
 class DetectorWorker:
     def __init__(self, rtsp_url, output_dir, model_paths, fps=15, conf=0.40, iou=0.45, location=None):
@@ -87,13 +87,13 @@ class DetectorWorker:
             "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
             "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
             "-keyint_min", str(int(self.fps * 2)), 
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "10",
+            "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 600k (max 800k)", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Low Latency: ON, Bitrate: 600k (max 800k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):
