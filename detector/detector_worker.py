@@ -67,6 +67,25 @@ class DetectorWorker:
         self.models = [YOLO(mp) for mp in (model_paths if isinstance(model_paths, list) else [model_paths])]
         self._db_conn = None
 
+        # Check if any model requires person body anchoring (PPE / Violation models)
+        self.person_detector = None
+        has_ppe = False
+        ppe_keywords = ["vest", "helmet", "hat", "boot", "glove", "mask", "goggle", "belt", "harness", "lamp", "fall"]
+        for m in self.models:
+            for cname in m.names.values():
+                if any(k in str(cname).lower() for k in ppe_keywords):
+                    has_ppe = True
+                    break
+        if has_ppe:
+            person_model_path = os.path.join(str(BASE_DIR), "models", "yolov8n.pt")
+            if not os.path.exists(person_model_path):
+                person_model_path = "yolov8n.pt"
+            try:
+                self.person_detector = YOLO(person_model_path)
+                print(f"[LOG] Camera {self.cam_id}: Loaded Human Body Anchor model (yolov8n.pt) for high-precision PPE validation", flush=True)
+            except Exception as e:
+                print(f"[WARN] Could not load person detector: {e}", flush=True)
+
     def _get_db_conn(self):
         if not PSYCOPG2_AVAILABLE: return None
         if self._db_conn is None or self._db_conn.closed:
@@ -102,6 +121,34 @@ class DetectorWorker:
         nw, nh = int(w*s), int(h*s)
         res = cv2.resize(f, (nw, nh))
         return cv2.copyMakeBorder(res, (self.height-nh)//2, (self.height-nh+1)//2, (self.width-nw)//2, (self.width-nw+1)//2, cv2.BORDER_CONSTANT, value=[0,0,0])
+
+    def _is_gear_on_person(self, box, person_boxes):
+        if not person_boxes:
+            return False
+        bx1, by1, bx2, by2 = box
+        bw, bh = max(0, bx2 - bx1), max(0, by2 - by1)
+        b_area = bw * bh
+        if b_area <= 0: return False
+        
+        for px1, py1, px2, py2 in person_boxes:
+            pw, ph = max(0, px2 - px1), max(0, py2 - py1)
+            # Expand person bounding box slightly (25%) for boots on floor, helmet on head, harness straps
+            exp_px1 = px1 - pw * 0.20
+            exp_px2 = px2 + pw * 0.20
+            exp_py1 = py1 - ph * 0.25
+            exp_py2 = py2 + ph * 0.25
+            
+            ix1 = max(bx1, exp_px1)
+            iy1 = max(by1, exp_py1)
+            ix2 = min(bx2, exp_px2)
+            iy2 = min(by2, exp_py2)
+            
+            if ix2 > ix1 and iy2 > iy1:
+                inter_area = (ix2 - ix1) * (iy2 - iy1)
+                # If at least 20% of the gear box overlaps with the person's body region, it's valid
+                if inter_area / b_area >= 0.20:
+                    return True
+        return False
 
     def _is_valid_box(self, cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop_img=None):
         # 1. Absolute Minimum Size (Rejects micro-noise and camera compression artifacts)
@@ -167,6 +214,18 @@ class DetectorWorker:
             f_h, f_w = f.shape[:2]
             f_area = f_w * f_h
 
+            # Detect persons in frame to anchor human-dependent PPE classes
+            person_boxes = []
+            if self.person_detector is not None:
+                try:
+                    p_res = self.person_detector.predict(f, classes=[0], conf=0.30, imgsz=640, verbose=False)
+                    if p_res and p_res[0].boxes:
+                        for pb in p_res[0].boxes:
+                            person_boxes.append(pb.xyxy[0].cpu().numpy().tolist())
+                except: pass
+
+            ppe_keywords = ["vest", "helmet", "hat", "boot", "glove", "mask", "goggle", "belt", "harness", "lamp", "fall"]
+
             for midx, model in enumerate(self.models):
                 for r in model.predict(f, conf=self.conf, iou=self.iou, imgsz=640, verbose=False):
                     if r.boxes:
@@ -179,6 +238,12 @@ class DetectorWorker:
                             cls = r.names[int(b.cls[0])]
                             cls_lower = str(cls).strip().lower().replace("_", "-")
                             conf_val = float(b.conf[0])
+
+                            # Anchor PPE and Violation classes to an actual human body
+                            is_ppe = any(k in cls_lower for k in ppe_keywords)
+                            if is_ppe:
+                                if self.person_detector is not None and not self._is_gear_on_person(box_xyxy, person_boxes):
+                                    continue
 
                             # Crop the detected region for texture verification
                             crop = None
