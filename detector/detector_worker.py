@@ -211,29 +211,25 @@ class DetectorWorker:
 
     def _inference_thread(self):
         while not self._stop_event.is_set():
-            try: f = self._frame_queue.get(timeout=0.5)
-            except: continue
+            try:
+                f = self._frame_queue.get(timeout=0.2)
+            except:
+                continue
             boxes = self._run_all_models(f)
             with self._box_lock:
                 self._latest_boxes = boxes
-            # Pacing: 40ms pause keeps inference fast (~12 infer/s) while sharing CPU
-            time.sleep(0.04)
+            time.sleep(0.03)
 
     def _capture_thread(self, cap):
-        retry_count = 0
-        max_retries = 10
         while not self._stop_event.is_set():
             ret, f = cap.read()
             if not ret:
-                retry_count +=1
-                if retry_count > max_retries:
-                    self._cap_ok = False
-                    break
-                time.sleep(2)
+                time.sleep(0.1)
                 continue
-            retry_count =0 # Reset retry count on success
             with self._frame_lock:
-                self._latest_raw_frame, self._cap_ok, self._last_frame_time = f, True, time.time()
+                self._latest_raw_frame = f
+                self._cap_ok = True
+                self._last_frame_time = time.time()
 
     def run(self):
         ffmpeg, cap, inf_t, cap_t = None, None, None, None
@@ -245,7 +241,12 @@ class DetectorWorker:
                 try: ffmpeg.stdin.close()
                 except: pass
                 ffmpeg.kill(); ffmpeg.wait()
-            self._stop_event.clear(); self._frame_queue, self._result_queue, self._latest_raw_frame, self._cap_ok = queue.Queue(maxsize=2), queue.Queue(maxsize=2), None, True
+            self._stop_event.clear()
+            self._frame_queue = queue.Queue(maxsize=1)
+            self._result_queue = queue.Queue(maxsize=1)
+            self._latest_raw_frame = None
+            self._cap_ok = True
+
             try:
                 self.width, self.height = 1280, 720
                 cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
@@ -270,29 +271,38 @@ class DetectorWorker:
                 inf_t = threading.Thread(target=self._inference_thread, daemon=True)
                 inf_t.start()
                 
-                f_int, last_w = 1.0 / self.fps, 0.0
+                f_int = 1.0 / self.fps
+                next_frame_time = time.time()
+                
                 while True:
                     if cap and cap.isOpened():
                         if not self._cap_ok or time.time() - self._last_frame_time > 15.0: break
-                    with self._frame_lock: f = self._latest_raw_frame
-                    
-                    if f is None: 
-                        time.sleep(0.01)
-                        continue
                     
                     now = time.time()
-                    # Only letterbox if we are going to use it for FFmpeg OR if inference queue is empty
-                    if now - last_w >= f_int or not self._frame_queue.full():
-                        pf = self._letterbox(f)
-                        if not self._frame_queue.full() and cap and cap.isOpened(): 
-                            self._frame_queue.put(pf)
-                    else:
-                        time.sleep(0.005)
+                    if now < next_frame_time:
+                        time.sleep(max(0.001, next_frame_time - now))
+                        continue
+                    next_frame_time += f_int
+                    if now - next_frame_time > 0.3:
+                        next_frame_time = now + f_int
+                    
+                    with self._frame_lock:
+                        f = self._latest_raw_frame
+                    
+                    if f is None:
                         continue
                     
-                    if now - last_w < f_int: continue
-                    last_w = now
+                    # Ultra-fast in-place resize to 720p HD
+                    pf = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
                     
+                    # Send copy to inference thread if ready
+                    if not self._frame_queue.full():
+                        try:
+                            self._frame_queue.put_nowait(pf.copy())
+                        except:
+                            pass
+                    
+                    # Draw latest bounding boxes
                     with self._box_lock:
                         cur_boxes = list(self._latest_boxes)
                     
@@ -300,23 +310,18 @@ class DetectorWorker:
                         for b_xyxy, label_text, color_val in cur_boxes:
                             try:
                                 x1, y1, x2, y2 = [int(v) for v in b_xyxy]
-                                if isinstance(color_val, (list, tuple)) and len(color_val) >= 3:
-                                    c = (int(color_val[0]), int(color_val[1]), int(color_val[2]))
-                                else:
-                                    c = (0, 255, 128)
-                                cv2.rectangle(pf, (x1, y1), (x2, y2), c, 1)
-                                t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)[0]
-                                cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 4)), (x1 + t_size[0] + 4, max(0, y1)), c, -1)
-                                cv2.putText(pf, label_text, (x1 + 2, max(t_size[1] + 2, y1 - 2)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1, cv2.LINE_AA)
+                                c = tuple(color_val) if isinstance(color_val, (list, tuple)) and len(color_val) >= 3 else (0, 255, 128)
+                                cv2.rectangle(pf, (x1, y1), (x2, y2), c, 2)
+                                t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
+                                cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 4, max(0, y1)), c, -1)
+                                cv2.putText(pf, label_text, (x1 + 2, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
                             except: pass
-                    out = pf
-
+                    
                     if ffmpeg.poll() is not None: break
-                    try: 
-                        ffmpeg.stdin.write(out.tobytes())
-                        ffmpeg.stdin.flush()
+                    try:
+                        ffmpeg.stdin.write(pf)
                     except: break
-            except: 
+            except:
                 import traceback
                 traceback.print_exc()
 # import cv2, subprocess, os, time, threading, queue, json

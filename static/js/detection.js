@@ -51,7 +51,19 @@ function playHLS(video, url, idx) {
         video.play().catch(() => {});
     });
     hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.details === 'bufferStalledError') {
+            if (video.paused) {
+                video.play().catch(() => {});
+            }
+            return;
+        }
         if (data.fatal) {
+            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                try { hls.recoverMediaError(); return; } catch (_) {}
+            }
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                try { hls.startLoad(); return; } catch (_) {}
+            }
             hls.destroy();
             delete hlsInstances[idx];
             setTimeout(() => playHLS(video, url, idx), 2000);
