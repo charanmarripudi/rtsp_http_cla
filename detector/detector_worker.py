@@ -124,6 +124,7 @@ class DetectorWorker:
 
     def _is_gear_on_person(self, box, cls_lower, person_boxes):
         if not person_boxes:
+            # If no persons detected at all in the entire room, wearable gear cannot float in empty air
             return False
         bx1, by1, bx2, by2 = box
         bw, bh = max(0, bx2 - bx1), max(0, by2 - by1)
@@ -134,19 +135,19 @@ class DetectorWorker:
             pw, ph = max(0, px2 - px1), max(0, py2 - py1)
             if pw <= 0 or ph <= 0: continue
 
-            # 1. Scale constraint: gear cannot be significantly larger than the person wearing it
+            # 1. Scale constraint: gear cannot be 2x larger than the person wearing it
             if any(k in cls_lower for k in ["helmet", "hat", "mask", "goggle", "lamp"]):
-                if bw > pw * 1.15 or bh > ph * 0.55: continue
+                if bw > pw * 1.3 or bh > ph * 0.65: continue
             elif any(k in cls_lower for k in ["vest", "belt", "harness"]):
-                if bw > pw * 1.35 or bh > ph * 0.95: continue
+                if bw > pw * 1.5 or bh > ph * 1.1: continue
             elif any(k in cls_lower for k in ["boot", "shoe"]):
-                if bw > pw * 1.15 or bh > ph * 0.45: continue
+                if bw > pw * 1.3 or bh > ph * 0.55: continue
 
             # 2. Overlap constraint with human body region
-            exp_px1 = px1 - pw * 0.15
-            exp_px2 = px2 + pw * 0.15
-            exp_py1 = py1 - ph * 0.20
-            exp_py2 = py2 + ph * 0.20
+            exp_px1 = px1 - pw * 0.25
+            exp_px2 = px2 + pw * 0.25
+            exp_py1 = py1 - ph * 0.30
+            exp_py2 = py2 + ph * 0.30
             
             ix1 = max(bx1, exp_px1)
             iy1 = max(by1, exp_py1)
@@ -155,14 +156,18 @@ class DetectorWorker:
             
             if ix2 > ix1 and iy2 > iy1:
                 inter_area = (ix2 - ix1) * (iy2 - iy1)
-                # At least 35% of the gear bounding box must be on the person
-                if inter_area / b_area >= 0.35:
+                # If at least 15% of the box overlaps with the person area, it is valid
+                if inter_area / b_area >= 0.15:
                     return True
         return False
 
     def _is_valid_box(self, cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop_img=None):
-        # 1. Absolute Minimum Size (Rejects micro-noise and camera compression artifacts)
-        if bw < 22 or bh < 22 or box_area < 550:
+        # Respect user confidence setting
+        if conf_val < self.conf:
+            return False
+
+        # 1. Absolute Minimum Size (Rejects micro-noise and single-pixel compression artifacts)
+        if bw < 15 or bh < 15 or box_area < 300:
             return False
 
         # 2. Aspect Ratios
@@ -171,46 +176,33 @@ class DetectorWorker:
 
         # 3. Small Gear (Helmets, Masks, Boots, Gloves, Goggles, Caps)
         if any(k in cls_lower for k in ["boot", "glove", "helmet", "hat", "mask", "goggle", "lamp", "choke", "bucket"]):
-            if bw > 0.18 * f_w or bh > 0.25 * f_h or box_area > 0.04 * f_area:
+            if bw > 0.25 * f_w or bh > 0.35 * f_h or box_area > 0.06 * f_area:
                 return False
-            # Small gear cannot be an extreme horizontal or vertical line
-            if aspect_w_to_h > 2.5 or aspect_h_to_w > 3.0:
+            if aspect_w_to_h > 3.0 or aspect_h_to_w > 3.5:
                 return False
-            # Negative small gear needs higher confidence to avoid chair/table false positives
-            if cls_lower.startswith("no-") or cls_lower.startswith("no_"):
-                if conf_val < max(self.conf, 0.48):
-                    return False
 
         # 4. Torso Gear (Safety Vests, Harnesses, Belts)
         elif any(k in cls_lower for k in ["vest", "belt", "harness"]):
-            if bw > 0.25 * f_w or bh > 0.40 * f_h or box_area > 0.08 * f_area:
+            if bw > 0.35 * f_w or bh > 0.50 * f_h or box_area > 0.12 * f_area:
                 return False
-            # Human torso is naturally upright or proportional
-            if aspect_w_to_h > 2.2 or aspect_h_to_w > 3.5:
+            if aspect_w_to_h > 2.8 or aspect_h_to_w > 4.0:
                 return False
-            # For "no-safety-vest" / "no-safety-belt", require minimum confidence and structural dimensions
-            if cls_lower.startswith("no-") or cls_lower.startswith("no_"):
-                if conf_val < max(self.conf, 0.48):
-                    return False
-                if bw < 35 or bh < 40:
-                    return False
 
         # 5. Fire & Smoke
         elif "fire" in cls_lower or "smoke" in cls_lower:
-            if box_area < 800:
+            if box_area < 500:
                 return False
 
         # 6. General / Full-Body Classes (Person, Vehicle, etc.)
         else:
-            if bw > 0.70 * f_w or bh > 0.90 * f_h or box_area > 0.45 * f_area:
+            if bw > 0.75 * f_w or bh > 0.95 * f_h or box_area > 0.50 * f_area:
                 return False
 
-        # 7. Flat-Space / Empty Background Filter (Rejects flat empty walls and uniform floor shadows)
+        # 7. Flat-Space / Empty Background Filter (Only rejects completely uniform flat textures)
         if crop_img is not None and crop_img.size > 0:
             try:
                 import numpy as np
-                # Flat empty walls/floors have low standard deviation (< 14.0)
-                if np.std(crop_img) < 14.0:
+                if np.std(crop_img) < 8.0:
                     return False
             except:
                 pass
@@ -228,7 +220,7 @@ class DetectorWorker:
             person_boxes = []
             if self.person_detector is not None:
                 try:
-                    p_res = self.person_detector.predict(f, classes=[0], conf=0.30, imgsz=640, verbose=False)
+                    p_res = self.person_detector.predict(f, classes=[0], conf=min(0.25, self.conf), imgsz=640, verbose=False)
                     if p_res and p_res[0].boxes:
                         for pb in p_res[0].boxes:
                             person_boxes.append(pb.xyxy[0].cpu().numpy().tolist())
