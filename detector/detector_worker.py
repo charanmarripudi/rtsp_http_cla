@@ -122,7 +122,7 @@ class DetectorWorker:
         res = cv2.resize(f, (nw, nh))
         return cv2.copyMakeBorder(res, (self.height-nh)//2, (self.height-nh+1)//2, (self.width-nw)//2, (self.width-nw+1)//2, cv2.BORDER_CONSTANT, value=[0,0,0])
 
-    def _is_gear_on_person(self, box, person_boxes):
+    def _is_gear_on_person(self, cls_lower, box, person_boxes):
         if not person_boxes:
             return False
         bx1, by1, bx2, by2 = box
@@ -130,24 +130,46 @@ class DetectorWorker:
         b_area = bw * bh
         if b_area <= 0: return False
         
+        bcx = (bx1 + bx2) / 2.0
+        bcy = (by1 + by2) / 2.0
+        
         for px1, py1, px2, py2 in person_boxes:
-            pw, ph = max(0, px2 - px1), max(0, py2 - py1)
-            # Expand person bounding box slightly (25%) for boots on floor, helmet on head, harness straps
-            exp_px1 = px1 - pw * 0.20
-            exp_px2 = px2 + pw * 0.20
-            exp_py1 = py1 - ph * 0.25
-            exp_py2 = py2 + ph * 0.25
+            pw = max(1.0, px2 - px1)
+            ph = max(1.0, py2 - py1)
             
-            ix1 = max(bx1, exp_px1)
-            iy1 = max(by1, exp_py1)
-            ix2 = min(bx2, exp_px2)
-            iy2 = min(by2, exp_py2)
+            # The gear's horizontal center MUST be within the person's body horizontal span
+            if not (px1 - pw * 0.12 <= bcx <= px2 + pw * 0.12):
+                continue
+                
+            # Vertical Anatomical Region Checks:
+            if any(k in cls_lower for k in ["helmet", "hat", "mask", "goggle", "cap", "lamp"]):
+                # Head / Face: Upper 40% of body
+                if not (py1 - ph * 0.20 <= bcy <= py1 + ph * 0.45):
+                    continue
+            elif any(k in cls_lower for k in ["vest", "belt", "harness"]):
+                # Torso: Middle 10% to 78% of body
+                if not (py1 + ph * 0.08 <= bcy <= py1 + ph * 0.80):
+                    continue
+            elif any(k in cls_lower for k in ["boot", "shoe"]):
+                # Feet / Lower legs: Bottom 35% of body
+                if not (py1 + ph * 0.60 <= bcy <= py2 + ph * 0.25):
+                    continue
+            else:
+                # General body gear
+                if not (py1 - ph * 0.15 <= bcy <= py2 + ph * 0.15):
+                    continue
+                    
+            # Containment check with person silhouette
+            ix1 = max(bx1, px1 - pw * 0.10)
+            iy1 = max(by1, py1 - ph * 0.15)
+            ix2 = min(bx2, px2 + pw * 0.10)
+            iy2 = min(by2, py2 + ph * 0.15)
             
             if ix2 > ix1 and iy2 > iy1:
                 inter_area = (ix2 - ix1) * (iy2 - iy1)
-                # If at least 20% of the gear box overlaps with the person's body region, it's valid
-                if inter_area / b_area >= 0.20:
+                if inter_area / b_area >= 0.35:
                     return True
+                    
         return False
 
     def _is_valid_box(self, cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop_img=None):
@@ -163,10 +185,8 @@ class DetectorWorker:
         if any(k in cls_lower for k in ["boot", "glove", "helmet", "hat", "mask", "goggle", "lamp", "choke", "bucket"]):
             if bw > 0.28 * f_w or bh > 0.35 * f_h or box_area > 0.07 * f_area:
                 return False
-            # Small gear cannot be an extreme horizontal or vertical line
             if aspect_w_to_h > 2.5 or aspect_h_to_w > 3.0:
                 return False
-            # Negative small gear needs higher confidence to avoid chair/table false positives
             if cls_lower.startswith("no-") or cls_lower.startswith("no_"):
                 if conf_val < max(self.conf, 0.48):
                     return False
@@ -175,15 +195,22 @@ class DetectorWorker:
         elif any(k in cls_lower for k in ["vest", "belt", "harness"]):
             if bw > 0.45 * f_w or bh > 0.60 * f_h or box_area > 0.20 * f_area:
                 return False
-            # Human torso is naturally upright or proportional
             if aspect_w_to_h > 2.2 or aspect_h_to_w > 3.5:
                 return False
-            # For "no-safety-vest", require minimum confidence and structural dimensions
             if cls_lower.startswith("no-") or cls_lower.startswith("no_"):
                 if conf_val < max(self.conf, 0.48):
                     return False
                 if bw < 35 or bh < 40:
                     return False
+            else:
+                # Real positive safety vests are high-visibility fluorescent. Empty white/gray walls have near-zero saturation (< 25)
+                if crop_img is not None and crop_img.size > 0:
+                    try:
+                        import numpy as np
+                        hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
+                        if np.mean(hsv[:, :, 1]) < 25.0:
+                            return False
+                    except: pass
 
         # 5. Fire & Smoke
         elif "fire" in cls_lower or "smoke" in cls_lower:
@@ -239,13 +266,13 @@ class DetectorWorker:
                             cls_lower = str(cls).strip().lower().replace("_", "-")
                             conf_val = float(b.conf[0])
 
-                            # Anchor PPE and Violation classes to an actual human body
+                            # Anchor PPE and Violation classes to an actual human body with anatomical region checks
                             is_ppe = any(k in cls_lower for k in ppe_keywords)
                             if is_ppe:
-                                if self.person_detector is not None and not self._is_gear_on_person(box_xyxy, person_boxes):
+                                if self.person_detector is not None and not self._is_gear_on_person(cls_lower, box_xyxy, person_boxes):
                                     continue
 
-                            # Crop the detected region for texture verification
+                            # Crop the detected region for texture & color saturation verification
                             crop = None
                             try:
                                 ix1, iy1, ix2, iy2 = max(0, int(x1)), max(0, int(y1)), min(f_w, int(x2)), min(f_h, int(y2))
