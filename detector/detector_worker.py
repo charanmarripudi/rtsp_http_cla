@@ -55,7 +55,7 @@ def get_alerts_base_url():
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 class DetectorWorker:
-    def __init__(self, rtsp_url, output_dir, model_paths, fps=12, conf=0.40, iou=0.45, location=None):
+    def __init__(self, rtsp_url, output_dir, model_paths, fps=15, conf=0.40, iou=0.45, location=None):
         self.rtsp_url, self.output_dir, self.fps, self.conf, self.iou = rtsp_url, output_dir, fps, conf, iou
         self.location = location or f"Camera {os.path.basename(output_dir).replace('stream', '').replace('_detected', '')}"
         self.width, self.height = 1280, 720
