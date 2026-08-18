@@ -688,13 +688,13 @@ def start_raw_stream(i, u):
         "-vf", "scale=1280:-2",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
         "-profile:v", "main", "-level:v", "4.0",
-        "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
+        "-b:v", "1000k", "-maxrate", "1200k", "-bufsize", "2M",
         "-threads", "1", "-pix_fmt", "yuv420p",
         "-g", "40", "-keyint_min", "40", "-sc_threshold", "0",
         "-f", "hls",
         "-hls_time", "2",
         "-hls_list_size", "6",
-        "-hls_flags", "delete_segments+independent_segments+omit_endlist+temp_file",
+        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
     ]
