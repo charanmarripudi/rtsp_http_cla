@@ -37,6 +37,8 @@ class LocationDashboardTemplates {
 
     static cameraBox(stream) {
         const id = Number(stream.id);
+        const confVal = stream.conf !== undefined && stream.conf !== null ? Number(stream.conf).toFixed(2) : "0.40";
+        const iouVal = stream.iou !== undefined && stream.iou !== null ? Number(stream.iou).toFixed(2) : "0.45";
         return `
             <div class="box" id="cam-box-${id}" data-camera-id="${id}">
                 <div class="video-wrap">
@@ -48,11 +50,17 @@ class LocationDashboardTemplates {
                     <div class="assignment-panel">
                         <div><span style="font-size:0.65rem;color:var(--muted);display:block;margin-bottom:4px;font-weight:600;">ASSIGNED MODELS</span><div class="assigned-chips-list" id="chips-${id}" style="display:flex;flex-wrap:wrap;gap:4px;"></div></div>
                         <div class="thresholds compact">
-                            <div class="thresh-row"><label>Conf <span class="conf-val">0.25</span></label><input class="conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.25"></div>
-                            <div class="thresh-row"><label>IoU <span class="iou-val">0.45</span></label><input class="iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.45"></div>
+                            <div class="thresh-row"><label>Conf <span class="conf-val">${confVal}</span></label><input class="conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${confVal}"></div>
+                            <div class="thresh-row"><label>IoU <span class="iou-val">${iouVal}</span></label><input class="iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iouVal}"></div>
                         </div>
                     </div>
-                    <div class="btn-row"><button class="start">Start</button><button class="stop">Stop</button></div>
+                    <div class="btn-row">
+                        <button class="start">Start</button>
+                        <button class="stop">Stop</button>
+                    </div>
+                    <button class="btn-remove-camera-card" data-stream-id="${id}" style="width:100%;margin-top:8px;background:rgba(255,65,85,0.12);color:var(--danger);border:1px solid rgba(255,65,85,0.4);border-radius:6px;padding:8px;font-size:0.74rem;font-family:var(--mono);font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s ease;">
+                        ✕ Remove Camera
+                    </button>
                 </div>
             </div>`;
     }
@@ -167,13 +175,13 @@ class LocationDashboardStore {
         if (!this.streams.length) return;
         const seen = new Set(this.locations.map(l => l.location.toLowerCase()));
         const seenIds = new Set(this.locations.map(l => l.id));
-        
+
         this.streams.forEach((stream, idx) => {
             const name = stream.location || `Location ${idx + 1}`;
             const id = stream.location_id || `loc-${this.locations.length + 1}`;
-            
+
             if (seen.has(name.toLowerCase()) || seenIds.has(id)) return;
-            
+
             seen.add(name.toLowerCase());
             seenIds.add(id);
             this.locations.push({
@@ -220,7 +228,9 @@ class LocationDashboardStore {
             location: loc.location || item.location || `Location ${idx + 1}`,
             device_id: loc.device_id || item.device_id || "",
             device_ip: loc.device_ip || item.device_ip || "",
-            device_status: loc.device_status || item.device_status || "offline"
+            device_status: loc.device_status || item.device_status || "offline",
+            conf: item.conf !== undefined && item.conf !== null ? parseFloat(item.conf) : 0.40,
+            iou: item.iou !== undefined && item.iou !== null ? parseFloat(item.iou) : 0.45
         };
     }
 }
@@ -299,7 +309,7 @@ class LocationDashboard {
     async saveLocations(shouldReload = false) {
         const payload = this.store.locationPayloads();
         localStorage.setItem("offline_locations", JSON.stringify(payload));
-        
+
         const btn = document.getElementById("btn-save-locations");
         if (btn) {
             btn.disabled = true;
@@ -364,7 +374,7 @@ class LocationDashboard {
         this.locations.splice(idx, 1);
         // Also remove or unlink cameras associated with this location
         this.streams = this.streams.filter(stream => stream.location_id !== id && stream.location !== item.location);
-        
+
         // Cleanup camera model mappings for deleted cameras
         const streamIds = this.streams.map(s => String(s.id));
         Object.keys(this.cameraModels).forEach(cid => {
@@ -373,13 +383,18 @@ class LocationDashboard {
 
         this.renderLocationForm();
         this.renderLocationWidgets();
-        
+
         // PERSIST BOTH to prevent re-seeding from old streams.json
         this.saveLocations(false);
         this.saveCameras(false);
     }
 
-    renderLocationWidgets() {
+    renderLocationWidgets(force = false) {
+        const hasRenderedCards = this.locationWidgets.querySelectorAll(".widget-card").length > 0;
+        if (!force && hasRenderedCards) {
+            // Location cards & video elements are already rendered and playing — keep them alive!
+            return;
+        }
         this.locationWidgets.innerHTML = "";
         if (!this.locations.length) {
             this.locationWidgets.innerHTML = '<div style="grid-column:1/-1;color:var(--muted);font-size:.75rem;">Add locations on the first tab to create widgets here.</div>';
@@ -400,9 +415,45 @@ class LocationDashboard {
         card.querySelector(".widget-header").addEventListener("click", () => {
             card.classList.toggle("collapsed");
             card.classList.toggle("expanded", !card.classList.contains("collapsed"));
-            window.dispatchEvent(new CustomEvent("rtsp-dashboard-ready"));
         });
         card.querySelector(".add-camera").addEventListener("click", () => this.addCamera(loc, locIdx));
+
+        card.querySelectorAll(".btn-remove-camera-card").forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const targetId = Number(btn.getAttribute("data-stream-id"));
+                const targetStream = this.streams.find(s => Number(s.id) === targetId);
+                if (targetStream) {
+                    const camLabel = targetStream.location || targetStream.label || `Camera ${targetId + 1}`;
+                    if (confirm(`Remove ${camLabel}?`)) {
+                        this.removeCamera(targetStream);
+                    }
+                }
+            });
+        });
+
+        card.querySelectorAll(".box").forEach(camBox => {
+            const camId = Number(camBox.getAttribute("data-camera-id"));
+            const stream = this.streams.find(s => Number(s.id) === camId);
+            if (!stream) return;
+            const confSlider = camBox.querySelector(".conf-slider");
+            const iouSlider = camBox.querySelector(".iou-slider");
+            if (confSlider) {
+                confSlider.addEventListener("input", e => {
+                    stream.conf = parseFloat(e.target.value);
+                    const valSpan = camBox.querySelector(".conf-val");
+                    if (valSpan) valSpan.textContent = parseFloat(e.target.value).toFixed(2);
+                });
+            }
+            if (iouSlider) {
+                iouSlider.addEventListener("input", e => {
+                    stream.iou = parseFloat(e.target.value);
+                    const valSpan = camBox.querySelector(".iou-val");
+                    if (valSpan) valSpan.textContent = parseFloat(e.target.value).toFixed(2);
+                });
+            }
+        });
+
         card.querySelector(".save-cameras").addEventListener("click", () => this.saveCameras(true));
         return card;
     }
@@ -445,6 +496,10 @@ class LocationDashboard {
 
     addCamera(loc, locIdx) {
         const nextId = this.streams.reduce((max, item) => Math.max(max, Number(item.id) || 0), -1) + 1;
+
+        // Start with no models pre-selected (empty list) so the user explicitly chooses models
+        this.cameraModels[String(nextId)] = [];
+
         this.streams.push({
             id: nextId,
             label: loc.location || `Camera ${nextId + 1}`,
@@ -458,13 +513,14 @@ class LocationDashboard {
             hls_raw: `/hls/stream${nextId}_raw/playlist.m3u8`,
             hls_detected: `/hls/stream${nextId}_detected/playlist.m3u8`
         });
-        this.renderLocationWidgets();
+        this.renderLocationWidgets(true);
+        this.saveCameras(false);
     }
 
     removeCamera(stream) {
         this.streams = this.streams.filter(item => item !== stream);
         delete this.cameraModels[String(stream.id)];
-        this.renderLocationWidgets();
+        this.renderLocationWidgets(true);
         this.saveCameras(false);
     }
 

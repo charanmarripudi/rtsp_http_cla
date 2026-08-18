@@ -421,15 +421,23 @@ def normalize_stream_entry(item, idx):
         location = str(item.get("location", "")).strip()
         location_id = str(item.get("location_id", "")).strip()
         device_fields = normalize_device_fields(item)
+        try: conf = float(item.get("conf", 0.40))
+        except: conf = 0.40
+        try: iou = float(item.get("iou", 0.45))
+        except: iou = 0.45
     else:
         rtsp = str(item).strip()
         location = f"Location {idx + 1}"
         location_id = f"loc-{idx + 1}"
         device_fields = normalize_device_fields({})
+        conf = 0.40
+        iou = 0.45
     data = {
         "rtsp": rtsp,
         "location": location,
-        "location_id": location_id
+        "location_id": location_id,
+        "conf": conf,
+        "iou": iou
     }
     data.update(device_fields)
     return data
@@ -670,42 +678,28 @@ def start_raw_stream(i, u):
     import platform
     is_rpi_sys = platform.system() == "Linux" and platform.machine() in ["aarch64", "armv7l"]
     
-    if is_rpi_sys:
-        cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
-            "-rtsp_transport", "tcp",
-            "-i", u,
-            "-an",
-            "-c:v", "copy",
-            "-f", "hls",
-            "-hls_time", "2",
-            "-hls_list_size", "6",
-            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
-            "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
-            os.path.join(sd, "playlist.m3u8")
-        ]
-    else:
-        cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
-            "-rtsp_transport", "tcp",
-            "-probesize", "1M", "-analyzeduration", "1M",
-            "-i", u,
-            "-an",
-            "-vf", "scale=854:-2",
-            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-            "-profile:v", "main", "-level:v", "4.0",
-            "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
-            "-threads", "2", "-pix_fmt", "yuv420p",
-            "-g", "60", "-keyint_min", "60",
-            "-f", "hls",
-            "-hls_time", "2",
-            "-hls_list_size", "6",
-            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
-            "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
-            os.path.join(sd, "playlist.m3u8")
-        ]
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+        "-rtsp_transport", "tcp",
+        "-probesize", "1M", "-analyzeduration", "1M",
+        "-i", u,
+        "-an",
+        "-r", "20",
+        "-vf", "scale=1280:-2",
+        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+        "-profile:v", "main", "-level:v", "4.0",
+        "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
+        "-threads", "1", "-pix_fmt", "yuv420p",
+        "-g", "40", "-keyint_min", "40", "-sc_threshold", "0",
+        "-f", "hls",
+        "-hls_time", "2",
+        "-hls_list_size", "8",
+        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
+        "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
+        os.path.join(sd, "playlist.m3u8")
+    ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started with resolution: 854x480, FPS: source, Bitrate: 600k (max 800k)")
+    print(f"[LOG] Camera {cid} raw stream started with resolution: 1280x720 (720p HD), FPS: 20.0, Speed: 1.4x real-time (GOP 40), Bitrate: 800k (max 1000k)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd}
     # Also, symlink any other cids already mapped to this rtsp
@@ -830,7 +824,15 @@ async def serve_hls(path: str):
     fp = os.path.join(HLS_DIR, path)
     if not os.path.exists(fp): return Response(status_code=404)
     mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
-    return FileResponse(fp, media_type=mt, headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"})
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    }
+    return FileResponse(fp, media_type=mt, headers=headers)
 
 @app.get("/api/models")
 def get_models(): return {"models": [f for f in os.listdir(MODEL_DIR) if f.endswith(".pt")]} if os.path.exists(MODEL_DIR) else {"models": []}
@@ -872,6 +874,8 @@ def get_streams(
             "device_ip": meta.get("device_ip", ""),
             "device_status": meta.get("device_status", "offline"),
             "rtsp": meta.get("rtsp", ""),
+            "conf": float(meta.get("conf", 0.40)),
+            "iou": float(meta.get("iou", 0.45)),
             "hls_live": f"/hls/camera/{i}/playlist.m3u8",
             "hls_raw": f"/hls/stream{i}_raw/playlist.m3u8",
             "hls_detected": f"/hls/stream{i}_detected/playlist.m3u8"
@@ -1152,37 +1156,24 @@ def start_detection(d: dict):
     if cid in running: 
         _async_kill(running[cid].get("proc")); 
         del running[cid]
-    # Only clean detected dir, leave raw dir alone!
-    def clean_only_detected(camera: str):
-        det_dir = os.path.join(HLS_DIR, f"stream{camera}_detected")
-        if os.path.exists(det_dir):
-            if os.path.islink(det_dir):
-                os.unlink(det_dir)
-            else:
-                import shutil
-                shutil.rmtree(det_dir)
-        os.makedirs(det_dir, exist_ok=True)
-    # Start detector worker FIRST (while raw FFmpeg is still serving video)
+
+    # Immediately kill raw stream for this camera so camera RTSP socket is 100% dedicated to detector
+    _kill_raw_ffmpeg_for_camera(cid)
+
+    # Clean only detected dir
+    det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
+    if os.path.exists(det_dir):
+        if os.path.islink(det_dir):
+            os.unlink(det_dir)
+        else:
+            import shutil
+            shutil.rmtree(det_dir)
+    os.makedirs(det_dir, exist_ok=True)
+
+    # Start detector worker
     cmd = [sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc]
     log = open(os.path.join(HLS_DIR, f"stream{cid}_detected/worker.log"), "a")
     running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc}
-
-    # In a daemon thread: wait until stream{cid}_detected playlist has real segments, then stop raw FFmpeg
-    def kill_raw_after_detected_ready(camera: str):
-        playlist_file = os.path.join(HLS_DIR, f"stream{camera}_detected", "playlist.m3u8")
-        t_start = time.time()
-        while time.time() - t_start < 20.0:
-            if os.path.exists(playlist_file):
-                try:
-                    with open(playlist_file, "r") as f:
-                        if ".ts" in f.read():
-                            break
-                except: pass
-            time.sleep(0.5)
-        _kill_raw_ffmpeg_for_camera(camera)
-
-    import threading
-    threading.Thread(target=kill_raw_after_detected_ready, args=(cid,), daemon=True).start()
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
 
 @app.post("/api/stop")

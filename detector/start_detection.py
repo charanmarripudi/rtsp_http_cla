@@ -10,7 +10,7 @@ if len(sys.argv) < 4:
 camera_idx = sys.argv[1]
 rtsp_url = sys.argv[2]
 model_names = [m.strip() for m in sys.argv[3].split(",") if m.strip()]
-conf = float(sys.argv[4]) if len(sys.argv) > 4 else 0.25
+conf = float(sys.argv[4]) if len(sys.argv) > 4 else 0.40
 iou = float(sys.argv[5]) if len(sys.argv) > 5 else 0.45
 location = sys.argv[6] if len(sys.argv) > 6 else f"Camera {camera_idx}"
 

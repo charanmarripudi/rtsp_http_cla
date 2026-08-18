@@ -5,6 +5,10 @@ function stopSimulatedCanvas(idx, video) {
 }
 
 function playHLS(video, url, idx) {
+    if (video.dataset.currentUrl === url && hlsInstances[idx]) {
+        return; // Stream is already playing this URL — don't interrupt or buffer!
+    }
+    video.dataset.currentUrl = url;
     if (hlsInstances[idx]) { hlsInstances[idx].destroy(); delete hlsInstances[idx]; }
     const fullUrl = url + "?t=" + Date.now();
     if (typeof Hls === "undefined" || !Hls.isSupported()) {
@@ -17,15 +21,17 @@ function playHLS(video, url, idx) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        liveSyncDurationCount: 2,
-        liveBackBufferLength: 0,
-        backBufferLength: 0,
-        maxBufferLength: 8,
-        manifestLoadingTimeOut: 20000,
-        manifestLoadingMaxRetry: 8,
-        manifestLoadingRetryDelay: 1000,
-        fragLoadingTimeOut: 20000,
-        fragLoadingMaxRetry: 6,
+        liveSyncDurationCount: 3,        // 3 segments (6s cushion) - guarantees playhead never hits live edge
+        liveMaxLatencyDurationCount: 7,  // Auto-seek if latency drifts beyond 14s
+        liveBackBufferLength: 60,
+        maxBufferLength: 12,             // 12s in browser memory
+        maxMaxBufferLength: 20,
+        manifestLoadingTimeOut: 15000,
+        manifestLoadingMaxRetry: 10,
+        manifestLoadingRetryDelay: 500,
+        fragLoadingTimeOut: 15000,
+        fragLoadingMaxRetry: 10,
+        fragLoadingRetryDelay: 500,
     });
     hlsInstances[idx] = hls;
 
@@ -37,10 +43,27 @@ function playHLS(video, url, idx) {
 
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
         stopSimulatedCanvas(idx, video);
+        video.muted = true;
+        video.playsInline = true;
+        if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
+            try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+        }
         video.play().catch(() => {});
     });
     hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.details === 'bufferStalledError') {
+            if (video.paused) {
+                video.play().catch(() => {});
+            }
+            return;
+        }
         if (data.fatal) {
+            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                try { hls.recoverMediaError(); return; } catch (_) {}
+            }
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                try { hls.startLoad(); return; } catch (_) {}
+            }
             hls.destroy();
             delete hlsInstances[idx];
             setTimeout(() => playHLS(video, url, idx), 2000);
@@ -132,6 +155,16 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
     // Restore Sliders
     const confSlider = box.querySelector(".conf-slider");
     const iouSlider = box.querySelector(".iou-slider");
+    if (meta.conf !== undefined && confSlider) {
+        confSlider.value = meta.conf;
+        const valSpan = box.querySelector(".conf-val");
+        if (valSpan) valSpan.textContent = parseFloat(meta.conf).toFixed(2);
+    }
+    if (meta.iou !== undefined && iouSlider) {
+        iouSlider.value = meta.iou;
+        const valSpan = box.querySelector(".iou-val");
+        if (valSpan) valSpan.textContent = parseFloat(meta.iou).toFixed(2);
+    }
     if (confSlider) {
         confSlider.oninput = () => box.querySelector(".conf-val").textContent = parseFloat(confSlider.value).toFixed(2);
     }
@@ -144,8 +177,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         const models = cm[camStr] || [];
         if (!models.length) return alert("No models assigned");
         
-        const conf = confSlider ? parseFloat(confSlider.value) : 0.25;
-        const iou = iouSlider ? parseFloat(iouSlider.value) : 0.45;
+        const conf = confSlider ? parseFloat(confSlider.value) : (meta.conf || 0.40);
+        const iou = iouSlider ? parseFloat(iouSlider.value) : (meta.iou || 0.45);
         const location = meta.location || meta.label || "Camera " + (i+1);
         
         box.classList.add("detecting");

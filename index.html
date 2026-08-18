@@ -734,17 +734,23 @@
 
     .widget-actions {
       display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      margin-top: 10px;
+      justify-content: flex-start;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .widget-actions button {
+      flex: 1;
+      padding: 8px 14px;
+      font-size: .74rem;
     }
 
     .btn-primary {
       background: var(--accent);
       color: #000;
-      padding: 10px 20px;
+      padding: 8px 16px;
       font-family: var(--mono);
-      font-size: .78rem;
+      font-size: .74rem;
       font-weight: 600;
       border-radius: 7px;
       border: none;
@@ -755,9 +761,9 @@
       background: transparent;
       color: var(--text);
       border: 1px solid var(--border);
-      padding: 10px 20px;
+      padding: 8px 16px;
       font-family: var(--mono);
-      font-size: .78rem;
+      font-size: .74rem;
       font-weight: 600;
       border-radius: 7px;
       cursor: pointer;
@@ -766,6 +772,24 @@
     .btn-secondary:hover {
       background: rgba(255, 255, 255, .05);
       border-color: var(--muted);
+    }
+
+    .btn-danger {
+      background: rgba(255, 65, 85, .12);
+      color: var(--danger);
+      border: 1px solid rgba(255, 65, 85, .35);
+      padding: 8px 16px;
+      font-family: var(--mono);
+      font-size: .74rem;
+      font-weight: 600;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all .2s ease;
+    }
+
+    .btn-danger:hover {
+      background: rgba(255, 65, 85, .25);
+      border-color: var(--danger);
     }
 
     /* Metric Row Styling */
@@ -920,7 +944,7 @@
       color: var(--text);
     }
 
-      .tab-btn.active {
+    .tab-btn.active {
       background: var(--accent-dim);
       color: var(--accent);
     }
@@ -981,7 +1005,8 @@
       </div>
       <div class="widget-body">
         <p style="font-size: 0.78rem; color: var(--muted); margin-bottom: 20px;">
-          Add each site location and its device details. Cameras and models are configured inside the location widgets on the next tab.
+          Add each site location and its device details. Cameras and models are configured inside the location widgets
+          on the next tab.
         </p>
         <div class="cameras-list-container">
           <div id="locations-edit-list">
@@ -1044,8 +1069,8 @@
     </aside>
   </div>
 
-  <script src="/static/js/detection.js?v=2.1"></script>
-  <script src="/static/js/location_dashboard.js?v=1.2"></script>
+  <script src="/static/js/detection.js?v=3.5"></script>
+  <script src="/static/js/location_dashboard.js?v=3.5"></script>
 
   <script>
     window.addEventListener("DOMContentLoaded", async () => {
