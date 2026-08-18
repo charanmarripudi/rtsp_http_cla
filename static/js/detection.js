@@ -108,7 +108,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
             if (r.ok) {
                 const text = await r.text();
                 const tsCount = (text.match(/\.ts/g) || []).length;
-                if (tsCount >= 1) {
+                if (tsCount >= 2) {
                     if (!box.classList.contains("detecting")) return;
                     playHLS(video, meta.hls_detected, idx);
                     if (badge) badge.textContent = "● AI ACTIVE";
@@ -128,8 +128,7 @@ async function waitAndSwitchRaw(video, meta, idx, box, badge) {
             const r = await fetch(meta.hls_raw + "?t=" + Date.now());
             if (r.ok) {
                 const text = await r.text();
-                const tsCount = (text.match(/\.ts/g) || []).length;
-                if (tsCount >= 1) {
+                if (text.includes(".ts")) {
                     if (box.classList.contains("detecting")) return;
                     playHLS(video, meta.hls_raw, idx);
                     if (badge) badge.textContent = "○ RAW";

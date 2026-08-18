@@ -363,7 +363,7 @@ class DetectorWorker:
                 
                 retry_count = 0
                 while not cap.isOpened() and retry_count < 10:
-                    time.sleep(0.2)
+                    time.sleep(0.5)
                     cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
                     retry_count += 1
                 
@@ -371,10 +371,10 @@ class DetectorWorker:
                     cap_t = threading.Thread(target=self._capture_thread, args=(cap,), daemon=True)
                     cap_t.start()
 
-                # Wait for the first real frame from camera before starting FFmpeg
+                # Wait up to 5s for the first real frame from camera before starting FFmpeg
                 t0 = time.time()
-                while time.time() - t0 < 3.0 and self._latest_raw_frame is None:
-                    time.sleep(0.02)
+                while time.time() - t0 < 5.0 and self._latest_raw_frame is None:
+                    time.sleep(0.05)
                 
                 ffmpeg = self._create_ffmpeg()
                 inf_t = threading.Thread(target=self._inference_thread, daemon=True)
