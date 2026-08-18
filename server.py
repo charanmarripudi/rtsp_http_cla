@@ -693,8 +693,8 @@ def start_raw_stream(i, u):
         "-g", "40", "-keyint_min", "40", "-sc_threshold", "0",
         "-f", "hls",
         "-hls_time", "2",
-        "-hls_list_size", "8",
-        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
+        "-hls_list_size", "6",
+        "-hls_flags", "delete_segments+independent_segments+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
     ]

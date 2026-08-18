@@ -10,6 +10,7 @@ function playHLS(video, url, idx) {
     }
     video.dataset.currentUrl = url;
     if (hlsInstances[idx]) { hlsInstances[idx].destroy(); delete hlsInstances[idx]; }
+    if (video._catchupInterval) { clearInterval(video._catchupInterval); delete video._catchupInterval; }
     const fullUrl = url + "?t=" + Date.now();
     if (typeof Hls === "undefined" || !Hls.isSupported()) {
         video.src = fullUrl;
@@ -21,11 +22,13 @@ function playHLS(video, url, idx) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        liveSyncDurationCount: 3,        // 3 segments (6s cushion) - guarantees playhead never hits live edge
-        liveMaxLatencyDurationCount: 7,  // Auto-seek if latency drifts beyond 14s
-        liveBackBufferLength: 60,
-        maxBufferLength: 12,             // 12s in browser memory
-        maxMaxBufferLength: 20,
+        liveSyncDurationCount: 2,        // Targets 2 segments (4.0s) behind real-time
+        liveMaxLatencyDurationCount: 5,  // If stream drifts past 10s, auto-catches up
+        liveBackBufferLength: 0,
+        backBufferLength: 0,
+        maxBufferLength: 8,              // Keeps 8s buffer in memory
+        maxMaxBufferLength: 12,
+        startPosition: -1,               // Forces player to start directly at the newest LIVE edge!
         manifestLoadingTimeOut: 15000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,
@@ -50,8 +53,32 @@ function playHLS(video, url, idx) {
         }
         video.play().catch(() => {});
     });
+
+    hls.on(Hls.Events.LEVEL_LOADED, () => {
+        if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
+            const drift = hls.liveSyncPosition - video.currentTime;
+            // Snap to live if playhead lagged behind
+            if (drift > 6.0 && !video.seeking) {
+                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+            }
+        }
+    });
+
+    // Auto-Catchup Watchdog: Keeps the stream permanently live (4-5s from live edge)
+    video._catchupInterval = setInterval(() => {
+        if (hls && hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition) && !video.paused && !video.seeking) {
+            const drift = hls.liveSyncPosition - video.currentTime;
+            if (drift > 7.0) { // If drifted more than 7 seconds behind live edge
+                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+            }
+        }
+    }, 3000);
+
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
+            if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
+                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+            }
             if (video.paused) {
                 video.play().catch(() => {});
             }
@@ -64,6 +91,7 @@ function playHLS(video, url, idx) {
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
                 try { hls.startLoad(); return; } catch (_) {}
             }
+            if (video._catchupInterval) { clearInterval(video._catchupInterval); delete video._catchupInterval; }
             hls.destroy();
             delete hlsInstances[idx];
             setTimeout(() => playHLS(video, url, idx), 2000);
