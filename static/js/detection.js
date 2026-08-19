@@ -20,10 +20,13 @@ function playHLS(video, url, idx) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        liveSyncDurationCount: 3,
-        liveBackBufferLength: 0,  // Don't keep old segments — prevents stale video on page refresh
-        backBufferLength: 0,      // Clear back-buffer so switching streams always plays from live edge
-        maxBufferLength: 8,
+        startPosition: -1,               // Forces player to start at liveSyncPosition (exact 4-5s cushion)
+        liveSyncDurationCount: 2.5,      // 2.5 segments (5.0s cushion) — guarantees playhead never hits live edge (1.42/1.42)
+        liveMaxLatencyDurationCount: 6,  // Auto-catchup if delay drifts beyond 12s
+        liveBackBufferLength: 0,
+        backBufferLength: 0,
+        maxBufferLength: 10,
+        maxMaxBufferLength: 15,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,
@@ -32,15 +35,30 @@ function playHLS(video, url, idx) {
         fragLoadingRetryDelay: 500
     });
     hlsInstances[idx] = hls;
+
+    hls.attachMedia(video);
     hls.loadSource(fullUrl);
+
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
         stopSimulatedCanvas(idx, video);
         video.muted = true;
         video.playsInline = true;
-        hls.attachMedia(video);
+        if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
+            try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+        }
         video.play().catch(() => {});
     });
+
     hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.details === 'bufferStalledError') {
+            if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
+                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+            }
+            if (video.paused) {
+                video.play().catch(() => {});
+            }
+            return;
+        }
         if (data.fatal) { 
             hls.destroy(); 
             delete hlsInstances[idx]; 
