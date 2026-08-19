@@ -23,6 +23,7 @@ function playHLS(video, url, idx) {
         startPosition: -1,               // Forces player to start at liveSyncPosition (exact 4-5s cushion)
         liveSyncDurationCount: 2.5,      // 2.5 segments (5.0s cushion) — guarantees playhead never hits live edge (1.42/1.42)
         liveMaxLatencyDurationCount: 6,  // Auto-catchup if delay drifts beyond 12s
+        liveDurationInfinity: true,      // Continuous rolling live stream across all devices
         liveBackBufferLength: 0,
         backBufferLength: 0,
         maxBufferLength: 10,
