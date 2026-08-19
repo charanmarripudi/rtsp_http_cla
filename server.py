@@ -677,25 +677,25 @@ def start_raw_stream(i, u):
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
         "-rtsp_transport", "tcp",
-        "-probesize", "1M", "-analyzeduration", "1M",
+        "-probesize", "10M", "-analyzeduration", "10M",
+        "-rtsp_flags", "prefer_tcp",
+        "-timeout", "5000000",
         "-i", u,
         "-an",
-        "-r", "20",
-        "-vf", "scale=1280:-2",
+        "-vf", "scale=854:-2",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-profile:v", "main", "-level:v", "4.0",
-        "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
-        "-threads", "1", "-pix_fmt", "yuv420p",
-        "-g", "40", "-keyint_min", "40", "-sc_threshold", "0",
+        "-b:v", "800k", "-maxrate", "1M", "-bufsize", "2M",
+        "-threads", "2", "-pix_fmt", "yuv420p",
+        "-g", "30", "-keyint_min", "30",
         "-f", "hls",
         "-hls_time", "2",
-        "-hls_list_size", "10",
-        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
+        "-hls_list_size", "8",
+        "-hls_flags", "delete_segments+independent_segments+discont_start+append_list+temp_file",
         "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started with resolution: 1280x720 (720p HD), FPS: 20.0, Speed: 1.4x real-time (GOP 40), Bitrate: 600k (max 800k)")
+    print(f"[LOG] Camera {cid} raw stream started with resolution: 854x480 (480p SD), FPS: 15-20, Speed: 1.4x real-time (GOP 30), Bitrate: 800k (max 1000k)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd}
     # Also, symlink any other cids already mapped to this rtsp

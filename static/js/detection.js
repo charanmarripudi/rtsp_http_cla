@@ -10,91 +10,41 @@ function playHLS(video, url, idx) {
     }
     video.dataset.currentUrl = url;
     if (hlsInstances[idx]) { hlsInstances[idx].destroy(); delete hlsInstances[idx]; }
-    if (video._catchupInterval) { clearInterval(video._catchupInterval); delete video._catchupInterval; }
     const fullUrl = url + "?t=" + Date.now();
-    if (typeof Hls === "undefined" || !Hls.isSupported()) {
-        video.src = fullUrl;
-        video.load();
-        video.play().catch(() => {});
-        return;
+    if (typeof Hls === "undefined" || !Hls.isSupported()) { 
+        video.src = fullUrl; 
+        video.play().catch(() => {}); 
+        return; 
     }
-
+    
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        liveSyncDurationCount: 3,        // 3 segments (6.0s) cushion - rock-solid for remote/public network streaming
-        liveMaxLatencyDurationCount: 7,  // Auto-seek if network lag drifts past 14s
-        liveBackBufferLength: 30,
-        backBufferLength: 30,
-        maxBufferLength: 30,             // Keeps 30s buffer in memory to absorb any internet dips
-        maxMaxBufferLength: 60,
-        startPosition: -1,               // Start directly at the newest LIVE edge!
+        liveSyncDurationCount: 3,
+        liveBackBufferLength: 0,  // Don't keep old segments — prevents stale video on page refresh
+        backBufferLength: 0,      // Clear back-buffer so switching streams always plays from live edge
+        maxBufferLength: 8,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,
         fragLoadingTimeOut: 20000,
         fragLoadingMaxRetry: 10,
-        fragLoadingRetryDelay: 500,
+        fragLoadingRetryDelay: 500
     });
     hlsInstances[idx] = hls;
-
-    /* Correct hls.js order: attachMedia first, then loadSource.
-       This wires the video element immediately so the first decoded
-       frame renders without any black-screen gap. */
-    hls.attachMedia(video);
     hls.loadSource(fullUrl);
-
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
         stopSimulatedCanvas(idx, video);
         video.muted = true;
         video.playsInline = true;
-        if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
-            try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
-        }
+        hls.attachMedia(video);
         video.play().catch(() => {});
     });
-
-    hls.on(Hls.Events.LEVEL_LOADED, () => {
-        if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
-            const drift = hls.liveSyncPosition - video.currentTime;
-            // Snap to live if playhead lagged behind significantly
-            if (drift > 8.0 && !video.seeking) {
-                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
-            }
-        }
-    });
-
-    // Auto-Catchup Watchdog: Keeps the stream permanently live (4-6s from live edge)
-    video._catchupInterval = setInterval(() => {
-        if (hls && hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition) && !video.paused && !video.seeking) {
-            const drift = hls.liveSyncPosition - video.currentTime;
-            if (drift > 10.0) { // If drifted more than 10 seconds behind live edge
-                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
-            }
-        }
-    }, 4000);
-
     hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.details === 'bufferStalledError') {
-            if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
-                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
-            }
-            if (video.paused) {
-                video.play().catch(() => {});
-            }
-            return;
-        }
-        if (data.fatal) {
-            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-                try { hls.recoverMediaError(); return; } catch (_) {}
-            }
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                try { hls.startLoad(); return; } catch (_) {}
-            }
-            if (video._catchupInterval) { clearInterval(video._catchupInterval); delete video._catchupInterval; }
-            hls.destroy();
-            delete hlsInstances[idx];
-            setTimeout(() => playHLS(video, url, idx), 2000);
+        if (data.fatal) { 
+            hls.destroy(); 
+            delete hlsInstances[idx]; 
+            setTimeout(() => playHLS(video, url, idx), 2000); 
         }
     });
 }
