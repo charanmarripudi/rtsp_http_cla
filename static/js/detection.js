@@ -23,11 +23,11 @@ function playHLS(video, url, idx) {
         enableWorker: true,
         lowLatencyMode: true,
         liveSyncDurationCount: 3,        // 3 segments (6.0s) cushion - rock-solid for remote/public network streaming
-        liveMaxLatencyDurationCount: 6,  // Auto-seek if network lag drifts past 12s
-        liveBackBufferLength: 0,
-        backBufferLength: 0,
-        maxBufferLength: 10,             // Keeps 10s buffer in memory
-        maxMaxBufferLength: 15,
+        liveMaxLatencyDurationCount: 7,  // Auto-seek if network lag drifts past 14s
+        liveBackBufferLength: 30,
+        backBufferLength: 30,
+        maxBufferLength: 30,             // Keeps 30s buffer in memory to absorb any internet dips
+        maxMaxBufferLength: 60,
         startPosition: -1,               // Start directly at the newest LIVE edge!
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
