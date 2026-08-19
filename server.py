@@ -811,6 +811,26 @@ async def serve_hls(path: str):
     }
     return FileResponse(fp, media_type=mt, headers=headers)
 
+@app.post("/api/update-thresholds")
+async def update_thresholds(req: Request):
+    try:
+        d = await req.json()
+        cid = str(d.get("camera", ""))
+        conf = float(d.get("conf", 0.40))
+        iou = float(d.get("iou", 0.45))
+        entries = read_streams_metadata()
+        for idx, entry in enumerate(entries):
+            if str(entry.get("id", idx)) == cid or str(idx) == cid:
+                entry["conf"] = conf
+                entry["iou"] = iou
+        save_streams_metadata(entries)
+        if cid in running:
+            running[cid]["conf"] = conf
+            running[cid]["iou"] = iou
+        return {"status": "ok", "conf": conf, "iou": iou}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.get("/api/models")
 def get_models(): return {"models": [f for f in os.listdir(MODEL_DIR) if f.endswith(".pt")]} if os.path.exists(MODEL_DIR) else {"models": []}
 

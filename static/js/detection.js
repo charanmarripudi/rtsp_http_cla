@@ -77,7 +77,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
             if (r.ok) {
                 const text = await r.text();
                 const tsCount = (text.match(/\.ts/g) || []).length;
-                if (tsCount >= 2) {
+                if (tsCount >= 3) {
                     if (!box.classList.contains("detecting")) return;
                     playHLS(video, meta.hls_detected, idx);
                     if (badge) badge.textContent = "● AI ACTIVE";
@@ -85,7 +85,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
                 }
             }
         } catch (_) {}
-        await new Promise(res => setTimeout(res, 500));
+        await new Promise(res => setTimeout(res, 400));
     }
 }
 
@@ -105,7 +105,7 @@ async function waitAndSwitchRaw(video, meta, idx, box, badge) {
                 }
             }
         } catch (_) {}
-        await new Promise(res => setTimeout(res, 500));
+        await new Promise(res => setTimeout(res, 400));
     }
 }
 
@@ -128,11 +128,12 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
     };
 
     // Restore state
-    if (status.active.includes(camStr)) {
+    if (status.active && status.active.includes(camStr)) {
         box.classList.add("detecting");
         updateBadge(true);
         playHLS(video, meta.hls_detected, i);
     } else {
+        box.classList.remove("detecting");
         updateBadge(false);
         playHLS(video, meta.hls_raw, i);
     }
@@ -149,7 +150,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         });
     }
 
-    // Restore Sliders
+    // Restore Sliders & Synchronize Across Clients
     const confSlider = box.querySelector(".conf-slider");
     const iouSlider = box.querySelector(".iou-slider");
     if (meta.conf !== undefined && confSlider) {
@@ -162,11 +163,34 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         const valSpan = box.querySelector(".iou-val");
         if (valSpan) valSpan.textContent = parseFloat(meta.iou).toFixed(2);
     }
+
+    let thresholdSyncTimer = null;
+    const sendThresholdSync = () => {
+        clearTimeout(thresholdSyncTimer);
+        thresholdSyncTimer = setTimeout(() => {
+            const conf = confSlider ? parseFloat(confSlider.value) : (meta.conf || 0.40);
+            const iou = iouSlider ? parseFloat(iouSlider.value) : (meta.iou || 0.45);
+            fetch("/api/update-thresholds", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ camera: i, conf, iou })
+            }).catch(() => {});
+        }, 350);
+    };
+
     if (confSlider) {
-        confSlider.oninput = () => box.querySelector(".conf-val").textContent = parseFloat(confSlider.value).toFixed(2);
+        confSlider.oninput = () => {
+            const span = box.querySelector(".conf-val");
+            if (span) span.textContent = parseFloat(confSlider.value).toFixed(2);
+            sendThresholdSync();
+        };
     }
     if (iouSlider) {
-        iouSlider.oninput = () => box.querySelector(".iou-val").textContent = parseFloat(iouSlider.value).toFixed(2);
+        iouSlider.oninput = () => {
+            const span = box.querySelector(".iou-val");
+            if (span) span.textContent = parseFloat(iouSlider.value).toFixed(2);
+            sendThresholdSync();
+        };
     }
 
     box.querySelector(".start").onclick = async () => {
@@ -216,9 +240,69 @@ async function init() {
     });
 }
 
+// Background sync for thresholds and status across all client devices
+let pollInterval = null;
+function startClientSync() {
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(async () => {
+        try {
+            const [streams, status] = await Promise.all([
+                fetch("/api/streams").then(r => r.json()),
+                fetch("/api/status").then(r => r.json())
+            ]);
+            const streamsById = new Map(streams.map(s => [String(s.id), s]));
+            document.querySelectorAll(".box").forEach((box) => {
+                const camId = box.dataset.cameraId;
+                const meta = streamsById.get(String(camId));
+                if (!meta) return;
+                
+                const confSlider = box.querySelector(".conf-slider");
+                const iouSlider = box.querySelector(".iou-slider");
+                
+                // Update sliders only if user is not actively dragging them
+                if (confSlider && document.activeElement !== confSlider && meta.conf !== undefined) {
+                    if (Math.abs(parseFloat(confSlider.value) - parseFloat(meta.conf)) > 0.005) {
+                        confSlider.value = meta.conf;
+                        const span = box.querySelector(".conf-val");
+                        if (span) span.textContent = parseFloat(meta.conf).toFixed(2);
+                    }
+                }
+                if (iouSlider && document.activeElement !== iouSlider && meta.iou !== undefined) {
+                    if (Math.abs(parseFloat(iouSlider.value) - parseFloat(meta.iou)) > 0.005) {
+                        iouSlider.value = meta.iou;
+                        const span = box.querySelector(".iou-val");
+                        if (span) span.textContent = parseFloat(meta.iou).toFixed(2);
+                    }
+                }
+
+                // Synchronize detection state across different browser tabs without restarting video
+                const isDetecting = status.active && status.active.includes(String(camId));
+                const badge = box.querySelector(".mode-badge");
+                const video = box.querySelector("video");
+                
+                if (isDetecting && !box.classList.contains("detecting")) {
+                    box.classList.add("detecting");
+                    if (badge) { badge.className = "mode-badge active"; badge.textContent = "● AI ACTIVE"; }
+                    playHLS(video, meta.hls_detected, Number(camId));
+                } else if (!isDetecting && box.classList.contains("detecting")) {
+                    box.classList.remove("detecting");
+                    if (badge) { badge.className = "mode-badge raw"; badge.textContent = "○ RAW"; }
+                    playHLS(video, meta.hls_raw, Number(camId));
+                }
+            });
+        } catch (_) {}
+    }, 4000);
+}
+
 window.RtspDetection = { init };
-window.addEventListener("load", init);
-window.addEventListener("rtsp-dashboard-ready", init);
+window.addEventListener("load", () => {
+    init();
+    startClientSync();
+});
+window.addEventListener("rtsp-dashboard-ready", () => {
+    init();
+    startClientSync();
+});
 
 
 
