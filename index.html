@@ -161,10 +161,35 @@
       overflow: hidden;
     }
 
+    .fullscreen-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.6);
+      color: var(--accent, #00f0ff);
+      border: 1px solid rgba(0, 240, 255, 0.4);
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .fullscreen-btn:hover {
+      background: rgba(0, 240, 255, 0.25);
+      border-color: var(--accent, #00f0ff);
+      transform: scale(1.1);
+    }
+
     video {
       width: 100%;
       height: 100%;
-      object-fit: contain;
+      object-fit: fill;
       display: block;
     }
 
@@ -1439,7 +1464,8 @@
         box.innerHTML = `
           <div class="video-wrap">
             <div class="mode-badge raw" id="badge-${i}">RAW</div>
-            <video id="v${i}" controls autoplay muted playsinline data-src="${escapeHtml(s.hls_live)}"></video>
+            <button class="fullscreen-btn" title="Toggle Fullscreen" onclick="toggleBoxFullscreen('v${i}')">⛶</button>
+            <video id="v${i}" controls autoplay muted playsinline data-src="${escapeHtml(s.hls_live)}" ondblclick="toggleBoxFullscreen('v${i}')"></video>
             <div class="cam-label">${escapeHtml(s.label)} - ${escapeHtml(s.location || `Location ${i + 1}`)}</div>
           </div>
           <div class="controls">
@@ -1874,6 +1900,18 @@
         refreshDevicesBtn.onclick = () => loadDevicesWidget();
       }
     });
+
+    window.toggleBoxFullscreen = function(videoId) {
+      const video = document.getElementById(videoId);
+      if (!video) return;
+      if (!document.fullscreenElement) {
+        if (video.requestFullscreen) { video.requestFullscreen(); }
+        else if (video.webkitRequestFullscreen) { video.webkitRequestFullscreen(); }
+        else if (video.msRequestFullscreen) { video.msRequestFullscreen(); }
+      } else {
+        if (document.exitFullscreen) { document.exitFullscreen(); }
+      }
+    };
   </script>
 
 </body>
