@@ -143,22 +143,68 @@ class DetectorWorker:
             elif any(k in cls_lower for k in ["boot", "shoe"]):
                 if bw > pw * 1.3 or bh > ph * 0.55: continue
 
-            # 2. Overlap constraint with human body region
-            exp_px1 = px1 - pw * 0.25
-            exp_px2 = px2 + pw * 0.25
-            exp_py1 = py1 - ph * 0.30
-            exp_py2 = py2 + ph * 0.30
-            
-            ix1 = max(bx1, exp_px1)
-            iy1 = max(by1, exp_py1)
-            ix2 = min(bx2, exp_px2)
-            iy2 = min(by2, exp_py2)
-            
-            if ix2 > ix1 and iy2 > iy1:
-                inter_area = (ix2 - ix1) * (iy2 - iy1)
-                # If at least 15% of the box overlaps with the person area, it is valid
-                if inter_area / b_area >= 0.15:
-                    return True
+    def _is_gear_on_person(self, box, cls_lower, person_boxes):
+        if not person_boxes:
+            # Wearable safety gear cannot float in mid-air if no person is detected
+            return False
+        bx1, by1, bx2, by2 = box
+        bw, bh = max(0, bx2 - bx1), max(0, by2 - by1)
+        b_area = bw * bh
+        if b_area <= 0: return False
+        
+        for px1, py1, px2, py2 in person_boxes:
+            pw, ph = max(0, px2 - px1), max(0, py2 - py1)
+            if pw <= 0 or ph <= 0: continue
+
+            # Head gear (helmet, hard-hat, mask, goggle, cap, head) MUST align with top 35% head region
+            if any(k in cls_lower for k in ["helmet", "hat", "mask", "goggle", "cap", "head"]):
+                head_y1 = py1 - ph * 0.20
+                head_y2 = py1 + ph * 0.40
+                head_x1 = px1 - pw * 0.25
+                head_x2 = px2 + pw * 0.25
+                
+                ix1 = max(bx1, head_x1)
+                iy1 = max(by1, head_y1)
+                ix2 = min(bx2, head_x2)
+                iy2 = min(by2, head_y2)
+                
+                if ix2 > ix1 and iy2 > iy1:
+                    inter_area = (ix2 - ix1) * (iy2 - iy1)
+                    if inter_area / b_area >= 0.20:
+                        return True
+
+            # Torso gear (vest, belt, harness, jacket, shirt) MUST align with middle 10%-85% torso region
+            elif any(k in cls_lower for k in ["vest", "belt", "harness", "jacket", "shirt"]):
+                torso_y1 = py1 + ph * 0.05
+                torso_y2 = py1 + ph * 0.85
+                torso_x1 = px1 - pw * 0.30
+                torso_x2 = px2 + pw * 0.30
+                
+                ix1 = max(bx1, torso_x1)
+                iy1 = max(by1, torso_y1)
+                ix2 = min(bx2, torso_x2)
+                iy2 = min(by2, torso_y2)
+                
+                if ix2 > ix1 and iy2 > iy1:
+                    inter_area = (ix2 - ix1) * (iy2 - iy1)
+                    if inter_area / b_area >= 0.20:
+                        return True
+            else:
+                # General overlap with human body
+                exp_px1 = px1 - pw * 0.25
+                exp_px2 = px2 + pw * 0.25
+                exp_py1 = py1 - ph * 0.30
+                exp_py2 = py2 + ph * 0.30
+                
+                ix1 = max(bx1, exp_px1)
+                iy1 = max(by1, exp_py1)
+                ix2 = min(bx2, exp_px2)
+                iy2 = min(by2, exp_py2)
+                
+                if ix2 > ix1 and iy2 > iy1:
+                    inter_area = (ix2 - ix1) * (iy2 - iy1)
+                    if inter_area / b_area >= 0.15:
+                        return True
         return False
 
     def _is_valid_box(self, cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop_img=None):
@@ -198,11 +244,11 @@ class DetectorWorker:
             if bw > 0.75 * f_w or bh > 0.95 * f_h or box_area > 0.50 * f_area:
                 return False
 
-        # 7. Flat-Space / Empty Background Filter (Only rejects completely uniform flat textures)
+        # 7. Flat-Space / Empty Background Filter (Rejects uniform flat walls, doors, ceilings, tables)
         if crop_img is not None and crop_img.size > 0:
             try:
                 import numpy as np
-                if np.std(crop_img) < 8.0:
+                if np.std(crop_img) < 14.0:
                     return False
             except:
                 pass
@@ -212,7 +258,7 @@ class DetectorWorker:
     def _run_all_models(self, f):
         try:
             cur_cls, now = set(), time.time()
-            boxes_data = []
+            raw_boxes = []
             f_h, f_w = f.shape[:2]
             f_area = f_w * f_h
 
@@ -259,10 +305,57 @@ class DetectorWorker:
                             if not self._is_valid_box(cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop):
                                 continue
 
-                            cur_cls.add(cls)
                             label_text = f"{cls} {conf_val:.2f}"
                             color_val = colors(int(b.cls[0])+midx*50, True)
-                            boxes_data.append((box_xyxy, label_text, color_val))
+                            raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls))
+
+            # Apply Cross-Class Non-Maximum Suppression (NMS) to eliminate duplicate overlapping boxes
+            # (e.g. Saftey-Vest vs No-Saftey-Vest on the exact same person/place)
+            boxes_data = []
+            if raw_boxes:
+                raw_boxes.sort(key=lambda x: x[3], reverse=True)
+                kept_items = []
+                
+                for item in raw_boxes:
+                    b1_xyxy, l1_text, c1_color, conf1_val, cls1_name = item
+                    x1_1, y1_1, x2_1, y2_1 = b1_xyxy
+                    area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
+                    
+                    suppress = False
+                    for k_item in kept_items:
+                        b2_xyxy, l2_text, c2_color, conf2_val, cls2_name = k_item
+                        x1_2, y1_2, x2_2, y2_2 = b2_xyxy
+                        area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
+                        
+                        # Compute Intersection over Union (IoU)
+                        ix1 = max(x1_1, x1_2)
+                        iy1 = max(y1_1, y1_2)
+                        ix2 = min(x2_1, x2_2)
+                        iy2 = min(y2_1, y2_2)
+                        
+                        if ix2 > ix1 and iy2 > iy1:
+                            inter = (ix2 - ix1) * (iy2 - iy1)
+                            union = area1 + area2 - inter
+                            iou = inter / max(1.0, union)
+                            
+                            c1_clean = cls1_name.lower().replace("_", "-")
+                            c2_clean = cls2_name.lower().replace("_", "-")
+                            
+                            is_opposing = ("no-" in c1_clean or "no-" in c2_clean or 
+                                          ("vest" in c1_clean and "vest" in c2_clean) or
+                                          ("helmet" in c1_clean and "helmet" in c2_clean) or
+                                          ("hat" in c1_clean and "hat" in c2_clean) or
+                                          ("mask" in c1_clean and "mask" in c2_clean))
+                            
+                            thresh = 0.35 if is_opposing else 0.50
+                            if iou >= thresh:
+                                suppress = True
+                                break
+                                
+                    if not suppress:
+                        kept_items.append(item)
+                        boxes_data.append((b1_xyxy, l1_text, c1_color))
+                        cur_cls.add(cls1_name)
 
             # Render alert image snapshot with bounding boxes
             ann = Annotator(f.copy(), line_width=2)
