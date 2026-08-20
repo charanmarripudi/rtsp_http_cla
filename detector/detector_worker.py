@@ -145,106 +145,52 @@ class DetectorWorker:
 
     def _is_gear_on_person(self, box, cls_lower, person_boxes):
         if not person_boxes:
-            # Wearable safety gear cannot float in mid-air if no person is detected
+            # Small sub-object or wearable gear cannot float in empty air if no human body is detected
             return False
         bx1, by1, bx2, by2 = box
         bw, bh = max(0, bx2 - bx1), max(0, by2 - by1)
         b_area = bw * bh
         if b_area <= 0: return False
         
+        # Universal Proximity Check: Small objects must overlap or be near at least one human body in the frame
         for px1, py1, px2, py2 in person_boxes:
             pw, ph = max(0, px2 - px1), max(0, py2 - py1)
             if pw <= 0 or ph <= 0: continue
 
-            # Head gear (helmet, hard-hat, mask, goggle, cap, head) MUST align with top 35% head region
-            if any(k in cls_lower for k in ["helmet", "hat", "mask", "goggle", "cap", "head"]):
-                head_y1 = py1 - ph * 0.20
-                head_y2 = py1 + ph * 0.40
-                head_x1 = px1 - pw * 0.25
-                head_x2 = px2 + pw * 0.25
-                
-                ix1 = max(bx1, head_x1)
-                iy1 = max(by1, head_y1)
-                ix2 = min(bx2, head_x2)
-                iy2 = min(by2, head_y2)
-                
-                if ix2 > ix1 and iy2 > iy1:
-                    inter_area = (ix2 - ix1) * (iy2 - iy1)
-                    if inter_area / b_area >= 0.20:
-                        return True
-
-            # Torso gear (vest, belt, harness, jacket, shirt) MUST align with middle 10%-85% torso region
-            elif any(k in cls_lower for k in ["vest", "belt", "harness", "jacket", "shirt"]):
-                torso_y1 = py1 + ph * 0.05
-                torso_y2 = py1 + ph * 0.85
-                torso_x1 = px1 - pw * 0.30
-                torso_x2 = px2 + pw * 0.30
-                
-                ix1 = max(bx1, torso_x1)
-                iy1 = max(by1, torso_y1)
-                ix2 = min(bx2, torso_x2)
-                iy2 = min(by2, torso_y2)
-                
-                if ix2 > ix1 and iy2 > iy1:
-                    inter_area = (ix2 - ix1) * (iy2 - iy1)
-                    if inter_area / b_area >= 0.20:
-                        return True
-            else:
-                # General overlap with human body
-                exp_px1 = px1 - pw * 0.25
-                exp_px2 = px2 + pw * 0.25
-                exp_py1 = py1 - ph * 0.30
-                exp_py2 = py2 + ph * 0.30
-                
-                ix1 = max(bx1, exp_px1)
-                iy1 = max(by1, exp_py1)
-                ix2 = min(bx2, exp_px2)
-                iy2 = min(by2, exp_py2)
-                
-                if ix2 > ix1 and iy2 > iy1:
-                    inter_area = (ix2 - ix1) * (iy2 - iy1)
-                    if inter_area / b_area >= 0.15:
-                        return True
+            # Expanded human body bounding area (25% margin)
+            exp_px1 = px1 - pw * 0.25
+            exp_px2 = px2 + pw * 0.25
+            exp_py1 = py1 - ph * 0.25
+            exp_py2 = py2 + ph * 0.25
+            
+            ix1 = max(bx1, exp_px1)
+            iy1 = max(by1, exp_py1)
+            ix2 = min(bx2, exp_px2)
+            iy2 = min(by2, exp_py2)
+            
+            if ix2 > ix1 and iy2 > iy1:
+                inter_area = (ix2 - ix1) * (iy2 - iy1)
+                if inter_area / b_area >= 0.15:
+                    return True
         return False
 
     def _is_valid_box(self, cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop_img=None):
-        # Respect user confidence setting
-        if conf_val < self.conf:
+        # Enforce universal minimum confidence cutoff (max 0.35) to eliminate statistical neural network noise
+        effective_min_conf = max(0.35, self.conf)
+        if conf_val < effective_min_conf:
             return False
 
-        # 1. Absolute Minimum Size (Rejects micro-noise and single-pixel compression artifacts)
-        if bw < 15 or bh < 15 or box_area < 300:
+        # 1. Absolute Minimum & Maximum Size Bounds (Universal for all classes)
+        if bw < 15 or bh < 15 or box_area < 300 or box_area > 0.55 * f_area:
             return False
 
-        # 2. Aspect Ratios
+        # 2. Universal Aspect Ratio Bounds (0.20 to 4.5)
         aspect_w_to_h = bw / max(1.0, bh)
         aspect_h_to_w = bh / max(1.0, bw)
+        if aspect_w_to_h > 4.5 or aspect_h_to_w > 4.5:
+            return False
 
-        # 3. Small Gear (Helmets, Masks, Boots, Gloves, Goggles, Caps)
-        if any(k in cls_lower for k in ["boot", "glove", "helmet", "hat", "mask", "goggle", "lamp", "choke", "bucket"]):
-            if bw > 0.25 * f_w or bh > 0.35 * f_h or box_area > 0.06 * f_area:
-                return False
-            if aspect_w_to_h > 3.0 or aspect_h_to_w > 3.5:
-                return False
-
-        # 4. Torso Gear (Safety Vests, Harnesses, Belts)
-        elif any(k in cls_lower for k in ["vest", "belt", "harness"]):
-            if bw > 0.35 * f_w or bh > 0.50 * f_h or box_area > 0.12 * f_area:
-                return False
-            if aspect_w_to_h > 2.8 or aspect_h_to_w > 4.0:
-                return False
-
-        # 5. Fire & Smoke
-        elif "fire" in cls_lower or "smoke" in cls_lower:
-            if box_area < 500:
-                return False
-
-        # 6. General / Full-Body Classes (Person, Vehicle, etc.)
-        else:
-            if bw > 0.75 * f_w or bh > 0.95 * f_h or box_area > 0.50 * f_area:
-                return False
-
-        # 7. Flat-Space / Empty Background Filter (Rejects uniform flat walls, doors, ceilings, tables)
+        # 3. Flat Background / Empty Space Filter (Rejects uniform flat walls, doors, ceilings, tables)
         if crop_img is not None and crop_img.size > 0:
             try:
                 import numpy as np
@@ -261,21 +207,20 @@ class DetectorWorker:
             raw_boxes = []
             f_h, f_w = f.shape[:2]
             f_area = f_w * f_h
+            effective_min_conf = max(0.35, self.conf)
 
-            # Detect persons in frame to anchor human-dependent PPE classes
+            # Detect persons in frame to anchor human-dependent sub-objects
             person_boxes = []
             if self.person_detector is not None:
                 try:
-                    p_res = self.person_detector.predict(f, classes=[0], conf=min(0.25, self.conf), imgsz=640, verbose=False)
+                    p_res = self.person_detector.predict(f, classes=[0], conf=0.25, imgsz=640, verbose=False)
                     if p_res and p_res[0].boxes:
                         for pb in p_res[0].boxes:
                             person_boxes.append(pb.xyxy[0].cpu().numpy().tolist())
                 except: pass
 
-            ppe_keywords = ["vest", "helmet", "hat", "boot", "glove", "mask", "goggle", "belt", "harness", "lamp", "fall"]
-
             for midx, model in enumerate(self.models):
-                for r in model.predict(f, conf=self.conf, iou=self.iou, imgsz=640, verbose=False):
+                for r in model.predict(f, conf=effective_min_conf, iou=self.iou, imgsz=640, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
@@ -287,10 +232,9 @@ class DetectorWorker:
                             cls_lower = str(cls).strip().lower().replace("_", "-")
                             conf_val = float(b.conf[0])
 
-                            # Anchor PPE and Violation classes to an actual human body
-                            is_ppe = any(k in cls_lower for k in ppe_keywords)
-                            if is_ppe:
-                                if self.person_detector is not None and not self._is_gear_on_person(box_xyxy, cls_lower, person_boxes):
+                            # Universal Proximity Check: Small sub-objects (area <= 8% of frame) anchor to human body if people exist
+                            if box_area <= 0.08 * f_area and self.person_detector is not None:
+                                if person_boxes and not self._is_gear_on_person(box_xyxy, cls_lower, person_boxes):
                                     continue
 
                             # Crop the detected region for texture verification
@@ -301,7 +245,7 @@ class DetectorWorker:
                                     crop = f[iy1:iy2, ix1:ix2]
                             except: pass
 
-                            # Dynamic validation across all models
+                            # Universal Dynamic Validation
                             if not self._is_valid_box(cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop):
                                 continue
 
@@ -309,8 +253,7 @@ class DetectorWorker:
                             color_val = colors(int(b.cls[0])+midx*50, True)
                             raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls))
 
-            # Apply Cross-Class Non-Maximum Suppression (NMS) to eliminate duplicate overlapping boxes
-            # (e.g. Saftey-Vest vs No-Saftey-Vest on the exact same person/place)
+            # Universal Cross-Class Non-Maximum Suppression (NMS) across ALL models and ALL classes
             boxes_data = []
             if raw_boxes:
                 raw_boxes.sort(key=lambda x: x[3], reverse=True)
@@ -338,17 +281,8 @@ class DetectorWorker:
                             union = area1 + area2 - inter
                             iou = inter / max(1.0, union)
                             
-                            c1_clean = cls1_name.lower().replace("_", "-")
-                            c2_clean = cls2_name.lower().replace("_", "-")
-                            
-                            is_opposing = ("no-" in c1_clean or "no-" in c2_clean or 
-                                          ("vest" in c1_clean and "vest" in c2_clean) or
-                                          ("helmet" in c1_clean and "helmet" in c2_clean) or
-                                          ("hat" in c1_clean and "hat" in c2_clean) or
-                                          ("mask" in c1_clean and "mask" in c2_clean))
-                            
-                            thresh = 0.35 if is_opposing else 0.50
-                            if iou >= thresh:
+                            # Universal IoU Threshold (0.35 overlap suppresses duplicate/conflicting boxes)
+                            if iou >= 0.35:
                                 suppress = True
                                 break
                                 
