@@ -175,26 +175,25 @@ class DetectorWorker:
         return False
 
     def _is_valid_box(self, cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop_img=None):
-        # Enforce universal minimum confidence cutoff (max 0.35) to eliminate statistical neural network noise
-        effective_min_conf = max(0.35, self.conf)
-        if conf_val < effective_min_conf:
+        # Respect user confidence setting dynamically
+        if conf_val < self.conf:
             return False
 
         # 1. Absolute Minimum & Maximum Size Bounds (Universal for all classes)
-        if bw < 15 or bh < 15 or box_area < 300 or box_area > 0.55 * f_area:
+        if bw < 12 or bh < 12 or box_area < 200 or box_area > 0.65 * f_area:
             return False
 
-        # 2. Universal Aspect Ratio Bounds (0.20 to 4.5)
+        # 2. Universal Aspect Ratio Bounds (0.15 to 5.0)
         aspect_w_to_h = bw / max(1.0, bh)
         aspect_h_to_w = bh / max(1.0, bw)
-        if aspect_w_to_h > 4.5 or aspect_h_to_w > 4.5:
+        if aspect_w_to_h > 5.0 or aspect_h_to_w > 5.0:
             return False
 
         # 3. Flat Background / Empty Space Filter (Rejects uniform flat walls, doors, ceilings, tables)
         if crop_img is not None and crop_img.size > 0:
             try:
                 import numpy as np
-                if np.std(crop_img) < 14.0:
+                if np.std(crop_img) < 10.0:
                     return False
             except:
                 pass
@@ -207,20 +206,19 @@ class DetectorWorker:
             raw_boxes = []
             f_h, f_w = f.shape[:2]
             f_area = f_w * f_h
-            effective_min_conf = max(0.35, self.conf)
 
             # Detect persons in frame to anchor human-dependent sub-objects
             person_boxes = []
             if self.person_detector is not None:
                 try:
-                    p_res = self.person_detector.predict(f, classes=[0], conf=0.25, imgsz=640, verbose=False)
+                    p_res = self.person_detector.predict(f, classes=[0], conf=min(0.25, self.conf), imgsz=640, verbose=False)
                     if p_res and p_res[0].boxes:
                         for pb in p_res[0].boxes:
                             person_boxes.append(pb.xyxy[0].cpu().numpy().tolist())
                 except: pass
 
             for midx, model in enumerate(self.models):
-                for r in model.predict(f, conf=effective_min_conf, iou=self.iou, imgsz=640, verbose=False):
+                for r in model.predict(f, conf=self.conf, iou=self.iou, imgsz=640, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
