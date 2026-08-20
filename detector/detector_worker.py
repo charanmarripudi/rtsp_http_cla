@@ -180,13 +180,13 @@ class DetectorWorker:
             return False
 
         # 1. Absolute Minimum & Maximum Size Bounds (Universal for all classes)
-        if bw < 12 or bh < 12 or box_area < 200 or box_area > 0.65 * f_area:
+        if bw < 12 or bh < 12 or box_area < 200 or box_area > 0.40 * f_area or bh > 0.72 * f_h or bw > 0.75 * f_w:
             return False
 
-        # 2. Universal Aspect Ratio Bounds (0.15 to 5.0)
+        # 2. Universal Aspect Ratio Bounds (0.15 to 3.8)
         aspect_w_to_h = bw / max(1.0, bh)
         aspect_h_to_w = bh / max(1.0, bw)
-        if aspect_w_to_h > 5.0 or aspect_h_to_w > 5.0:
+        if aspect_w_to_h > 3.8 or aspect_h_to_w > 3.8:
             return False
 
         # 3. Flat Background / Empty Space Filter (Rejects uniform flat walls, doors, ceilings, tables)
