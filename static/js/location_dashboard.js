@@ -9,7 +9,7 @@ class LocationDashboardTemplates {
             .replace(/'/g, "&#039;");
     }
 
-    static locationCard(loc, locIdx, cameras, cameraModels = {}) {
+    static locationCard(loc, locIdx, cameras) {
         const deviceStatus = loc.device_status || "offline";
         return `
             <div class="widget-header clickable">
@@ -31,47 +31,14 @@ class LocationDashboardTemplates {
                     <button class="btn-secondary add-camera">+ Add Camera</button>
                     <button class="btn-primary save-cameras">Save Cameras</button>
                 </div>
-                <div class="camera-live-grid">${cameras.map(stream => this.cameraBox(stream, cameraModels)).join("")}</div>
+                <div class="camera-live-grid">${cameras.map(stream => this.cameraBox(stream)).join("")}</div>
             </div>`;
     }
 
-    static buildAssignedModelCards(stream, cameraModels) {
-        const id = String(stream.id);
-        const assignedModels = cameraModels[id] || [];
-        const modelConfigs = stream.model_configs || {};
-
-        if (!assignedModels.length) {
-            return `<div style="font-size:0.7rem;color:var(--muted);font-style:italic;padding:4px 0;">No models assigned</div>`;
-        }
-
-        return assignedModels.map(mName => {
-            const cleanName = mName.replace(".pt", "");
-            const cfg = modelConfigs[mName] || modelConfigs[cleanName] || modelConfigs[cleanName + ".pt"] || {};
-            const confVal = cfg.conf !== undefined && cfg.conf !== null ? parseFloat(cfg.conf).toFixed(2) : (stream.conf !== undefined && stream.conf !== null ? parseFloat(stream.conf).toFixed(2) : "0.40");
-            const iouVal = cfg.iou !== undefined && cfg.iou !== null ? parseFloat(cfg.iou).toFixed(2) : (stream.iou !== undefined && stream.iou !== null ? parseFloat(stream.iou).toFixed(2) : "0.45");
-
-            return `
-                <div class="model-card-box" data-model="${this.text(mName)}" style="background:rgba(18,26,26,0.85);border:1px solid rgba(0,230,153,0.25);border-radius:8px;padding:8px 10px;margin-bottom:6px;">
-                    <div class="model-badge-row" style="margin-bottom:6px;">
-                        <span class="model-chip checked" style="margin:0;"><span class="chip-icon">🟧</span> ${this.text(cleanName)}</span>
-                    </div>
-                    <div class="model-sliders-row" style="display:flex;gap:12px;align-items:center;">
-                        <div class="thresh-item" style="flex:1;display:flex;flex-direction:column;gap:2px;">
-                            <label style="font-size:0.68rem;color:var(--muted);font-family:var(--mono);display:flex;justify-content:space-between;">Conf <span class="model-conf-val" style="color:var(--accent);font-weight:600;">${confVal}</span></label>
-                            <input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${confVal}" style="width:100%;accent-color:var(--accent);">
-                        </div>
-                        <div class="thresh-item" style="flex:1;display:flex;flex-direction:column;gap:2px;">
-                            <label style="font-size:0.68rem;color:var(--muted);font-family:var(--mono);display:flex;justify-content:space-between;">IoU <span class="model-iou-val" style="color:var(--accent);font-weight:600;">${iouVal}</span></label>
-                            <input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iouVal}" style="width:100%;accent-color:var(--accent);">
-                        </div>
-                    </div>
-                </div>`;
-        }).join("");
-    }
-
-    static cameraBox(stream, cameraModels = {}) {
+    static cameraBox(stream) {
         const id = Number(stream.id);
-        const cardsHtml = this.buildAssignedModelCards(stream, cameraModels);
+        const confVal = stream.conf !== undefined && stream.conf !== null ? Number(stream.conf).toFixed(2) : "0.40";
+        const iouVal = stream.iou !== undefined && stream.iou !== null ? Number(stream.iou).toFixed(2) : "0.45";
         return `
             <div class="box" id="cam-box-${id}" data-camera-id="${id}">
                 <div class="video-wrap">
@@ -80,12 +47,11 @@ class LocationDashboardTemplates {
                     <div class="cam-label">${this.text(stream.location || stream.label || `Camera ${id + 1}`)}</div>
                 </div>
                 <div class="controls">
-                    <div class="assignment-panel" style="display:flex;flex-direction:column;gap:6px;">
-                        <div>
-                            <span style="font-size:0.65rem;color:var(--muted);display:block;margin-bottom:6px;font-weight:600;letter-spacing:0.5px;">ASSIGNED MODELS</span>
-                            <div class="assigned-cards-list" id="chips-${id}" style="display:flex;flex-direction:column;gap:6px;">
-                                ${cardsHtml}
-                            </div>
+                    <div class="assignment-panel">
+                        <div><span style="font-size:0.65rem;color:var(--muted);display:block;margin-bottom:4px;font-weight:600;">ASSIGNED MODELS</span><div class="assigned-chips-list" id="chips-${id}" style="display:flex;flex-wrap:wrap;gap:4px;"></div></div>
+                        <div class="thresholds compact">
+                            <div class="thresh-row"><label>Conf <span class="conf-val">${confVal}</span></label><input class="conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${confVal}"></div>
+                            <div class="thresh-row"><label>IoU <span class="iou-val">${iouVal}</span></label><input class="iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iouVal}"></div>
                         </div>
                     </div>
                     <div class="btn-row">
@@ -264,8 +230,7 @@ class LocationDashboardStore {
             device_ip: loc.device_ip || item.device_ip || "",
             device_status: loc.device_status || item.device_status || "offline",
             conf: item.conf !== undefined && item.conf !== null ? parseFloat(item.conf) : 0.40,
-            iou: item.iou !== undefined && item.iou !== null ? parseFloat(item.iou) : 0.45,
-            model_configs: item.model_configs || {}
+            iou: item.iou !== undefined && item.iou !== null ? parseFloat(item.iou) : 0.45
         };
     }
 }
@@ -370,33 +335,7 @@ class LocationDashboard {
     async saveCameras(shouldReload = true) {
         const payload = this.streams
             .filter(item => (item.rtsp || "").trim())
-            .map((item, idx) => {
-                const camBox = document.getElementById(`cam-box-${item.id}`);
-                let modelConfigs = item.model_configs || {};
-                if (camBox) {
-                    const domConfigs = {};
-                    camBox.querySelectorAll(".model-card-box").forEach(card => {
-                        const mName = card.getAttribute("data-model");
-                        const cSlider = card.querySelector(".model-conf-slider");
-                        const iSlider = card.querySelector(".model-iou-slider");
-                        if (mName && cSlider && iSlider) {
-                            const cVal = parseFloat(cSlider.value);
-                            const iVal = parseFloat(iSlider.value);
-                            const clean = mName.replace(".pt", "");
-                            domConfigs[mName] = { conf: cVal, iou: iVal };
-                            domConfigs[clean] = { conf: cVal, iou: iVal };
-                            domConfigs[clean + ".pt"] = { conf: cVal, iou: iVal };
-                        }
-                    });
-                    if (Object.keys(domConfigs).length) {
-                        modelConfigs = domConfigs;
-                        item.model_configs = modelConfigs;
-                    }
-                }
-                const p = this.store.cameraPayload(item, idx);
-                p.model_configs = modelConfigs;
-                return p;
-            });
+            .map((item, idx) => this.store.cameraPayload(item, idx));
         localStorage.setItem("offline_streams", JSON.stringify(payload));
         localStorage.setItem("offline_camera_models", JSON.stringify(this.cameraModels));
         await this.api.saveCameras(payload, this.cameraModels);
@@ -465,80 +404,12 @@ class LocationDashboard {
         window.dispatchEvent(new CustomEvent("rtsp-dashboard-ready"));
     }
 
-    bindPerModelSlidersForBox(camBox, stream) {
-        if (!camBox) return;
-        const getModelConfigs = () => {
-            const configs = {};
-            camBox.querySelectorAll(".model-card-box").forEach(card => {
-                const mName = card.getAttribute("data-model");
-                const cSlider = card.querySelector(".model-conf-slider");
-                const iSlider = card.querySelector(".model-iou-slider");
-                if (mName && cSlider && iSlider) {
-                    configs[mName] = {
-                        conf: parseFloat(cSlider.value),
-                        iou: parseFloat(iSlider.value)
-                    };
-                }
-            });
-            return configs;
-        };
-
-        let syncTimer = null;
-        const sendSync = (targetModel = null, mConf = null, mIou = null) => {
-            clearTimeout(syncTimer);
-            syncTimer = setTimeout(() => {
-                const modelConfigs = getModelConfigs();
-                stream.model_configs = modelConfigs;
-                const payload = { camera: Number(stream.id), model_configs: modelConfigs };
-                if (targetModel && mConf !== null && mIou !== null) {
-                    payload.model = targetModel;
-                    payload.conf = mConf;
-                    payload.iou = mIou;
-                }
-                fetch("/api/update-thresholds", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
-                }).catch(() => {});
-            }, 350);
-        };
-
-        camBox.querySelectorAll(".model-card-box").forEach(card => {
-            const mName = card.getAttribute("data-model");
-            const cSlider = card.querySelector(".model-conf-slider");
-            const iSlider = card.querySelector(".model-iou-slider");
-            const cValSpan = card.querySelector(".model-conf-val");
-            const iValSpan = card.querySelector(".model-iou-val");
-
-            if (cSlider) {
-                cSlider.oninput = (e) => {
-                    const val = parseFloat(e.target.value);
-                    if (cValSpan) cValSpan.textContent = val.toFixed(2);
-                    stream.model_configs = stream.model_configs || {};
-                    stream.model_configs[mName] = stream.model_configs[mName] || {};
-                    stream.model_configs[mName].conf = val;
-                    sendSync(mName, val, iSlider ? parseFloat(iSlider.value) : 0.45);
-                };
-            }
-            if (iSlider) {
-                iSlider.oninput = (e) => {
-                    const val = parseFloat(e.target.value);
-                    if (iValSpan) iValSpan.textContent = val.toFixed(2);
-                    stream.model_configs = stream.model_configs || {};
-                    stream.model_configs[mName] = stream.model_configs[mName] || {};
-                    stream.model_configs[mName].iou = val;
-                    sendSync(mName, cSlider ? parseFloat(cSlider.value) : 0.40, val);
-                };
-            }
-        });
-    }
-
     locationCard(loc, locIdx) {
         const locId = this.locationId(locIdx, loc);
         const cameras = this.streams.filter(stream => stream.location_id === locId || stream.location === loc.location);
         const card = document.createElement("div");
         card.className = "widget-card collapsed";
-        card.innerHTML = LocationDashboardTemplates.locationCard(loc, locIdx, cameras, this.cameraModels);
+        card.innerHTML = LocationDashboardTemplates.locationCard(loc, locIdx, cameras);
         const editor = card.querySelector(".camera-editor");
         cameras.forEach(stream => editor.appendChild(this.cameraEditorRow(stream)));
         card.querySelector(".widget-header").addEventListener("click", () => {
@@ -565,7 +436,22 @@ class LocationDashboard {
             const camId = Number(camBox.getAttribute("data-camera-id"));
             const stream = this.streams.find(s => Number(s.id) === camId);
             if (!stream) return;
-            this.bindPerModelSlidersForBox(camBox, stream);
+            const confSlider = camBox.querySelector(".conf-slider");
+            const iouSlider = camBox.querySelector(".iou-slider");
+            if (confSlider) {
+                confSlider.addEventListener("input", e => {
+                    stream.conf = parseFloat(e.target.value);
+                    const valSpan = camBox.querySelector(".conf-val");
+                    if (valSpan) valSpan.textContent = parseFloat(e.target.value).toFixed(2);
+                });
+            }
+            if (iouSlider) {
+                iouSlider.addEventListener("input", e => {
+                    stream.iou = parseFloat(e.target.value);
+                    const valSpan = camBox.querySelector(".iou-val");
+                    if (valSpan) valSpan.textContent = parseFloat(e.target.value).toFixed(2);
+                });
+            }
         });
 
         card.querySelector(".save-cameras").addEventListener("click", () => this.saveCameras(true));
