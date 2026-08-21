@@ -1040,6 +1040,16 @@ def save_streams(
         # Fallback to current state
         entries = read_streams_metadata()
 
+    # 4. Strict RTSP URL Deduplication to prevent duplicate RTSP entries on restart
+    seen_rtsps = set()
+    deduped_entries = []
+    for entry in entries:
+        r_url = str(entry.get("rtsp") or "").strip()
+        if r_url and r_url not in seen_rtsps:
+            seen_rtsps.add(r_url)
+            deduped_entries.append(entry)
+    entries = deduped_entries
+
     # Common persistence logic
     old_metadata = read_streams_metadata()
     old_cid_to_rtsp = dict(cid_to_rtsp)  # Snapshot of current state
