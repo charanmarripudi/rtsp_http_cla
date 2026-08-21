@@ -55,13 +55,16 @@ def get_alerts_base_url():
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 class DetectorWorker:
-    def __init__(self, rtsp_url, output_dir, model_paths, fps=15, conf=0.40, iou=0.45, location=None):
-        self.rtsp_url, self.output_dir, self.fps, self.conf, self.iou = rtsp_url, output_dir, fps, conf, iou
-        self.location = location or f"Camera {os.path.basename(output_dir).replace('stream', '').replace('_detected', '')}"
-        self.width, self.height = 1280, 720
-        self._stop_event, self._frame_queue, self._result_queue = threading.Event(), queue.Queue(maxsize=2), queue.Queue(maxsize=2)
-        self._latest_raw_frame, self._frame_lock, self._cap_ok, self._last_frame_time = None, threading.Lock(), True, time.time()
-        self._latest_boxes, self._box_lock = [], threading.Lock()
+    def __init__(self, rtsp_url, output_dir, model_paths, conf=0.40, iou=0.45, location="Camera", model_configs=None):
+        self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
+        self.model_configs = model_configs or {}
+        self.fps, self.width, self.height = 12.0, 1280, 720
+        self._latest_raw_frame = None
+        self._latest_boxes = []
+        self._frame_lock, self._box_lock = threading.Lock(), threading.Lock()
+        self._stop_event = threading.Event()
+        self._frame_queue, self._result_queue = queue.Queue(maxsize=1), queue.Queue(maxsize=1)
+        self._last_frame_time, self._cap_ok = time.time(), True
         self.alert_timers, self.alert_triggered = {}, set()
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         self.models = [YOLO(mp) for mp in (model_paths if isinstance(model_paths, list) else [model_paths])]
@@ -218,7 +221,19 @@ class DetectorWorker:
                 except: pass
 
             for midx, model in enumerate(self.models):
-                for r in model.predict(f, conf=self.conf, iou=self.iou, imgsz=640, verbose=False):
+                m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
+                m_name = os.path.basename(m_path)
+                m_clean = m_name.replace(".pt", "")
+                
+                m_conf = self.conf
+                m_iou = self.iou
+                if isinstance(self.model_configs, dict):
+                    cfg = self.model_configs.get(m_name) or self.model_configs.get(m_clean) or self.model_configs.get(m_name.lower())
+                    if cfg and isinstance(cfg, dict):
+                        m_conf = float(cfg.get("conf", self.conf))
+                        m_iou = float(cfg.get("iou", self.iou))
+
+                for r in model.predict(f, conf=m_conf, iou=m_iou, imgsz=640, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()

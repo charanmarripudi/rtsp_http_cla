@@ -138,59 +138,67 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         playHLS(video, meta.hls_raw, i);
     }
 
-    // Render Assigned Models
+    // Render Assigned Models with Per-Model Conf & IoU Sliders (Matching UI Screenshot, Clean Badges!)
     const chipsList = box.querySelector(".assigned-chips-list");
+    let thresholdSyncTimer = null;
     if (chipsList) {
         chipsList.innerHTML = "";
+        const modelConfigs = meta.model_configs || {};
         assigned.forEach(m => {
-            const chip = document.createElement("span");
-            chip.className = "model-chip checked";
-            chip.textContent = m.replace(".pt", "");
-            chipsList.appendChild(chip);
+            const cleanName = m.replace(".pt", "");
+            const mCfg = modelConfigs[m] || modelConfigs[cleanName] || {};
+            const cVal = mCfg.conf !== undefined ? parseFloat(mCfg.conf).toFixed(2) : (meta.conf !== undefined ? parseFloat(meta.conf).toFixed(2) : "0.40");
+            const iVal = mCfg.iou !== undefined ? parseFloat(mCfg.iou).toFixed(2) : (meta.iou !== undefined ? parseFloat(meta.iou).toFixed(2) : "0.45");
+
+            const card = document.createElement("div");
+            card.className = "model-card-box";
+            card.setAttribute("data-model", m);
+            card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
+            card.innerHTML = `
+                <div class="model-chip-header" style="margin-bottom:6px;">
+                    <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;">${cleanName}</span>
+                </div>
+                <div class="thresholds compact" style="display:flex;gap:12px;">
+                    <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
+                    <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
+                </div>`;
+            chipsList.appendChild(card);
+
+            const cSlider = card.querySelector(".model-conf-slider");
+            const iSlider = card.querySelector(".model-iou-slider");
+            const cSpan = card.querySelector(".model-conf-val");
+            const iSpan = card.querySelector(".model-iou-val");
+
+            const syncModelThreshold = () => {
+                clearTimeout(thresholdSyncTimer);
+                thresholdSyncTimer = setTimeout(() => {
+                    const cNum = parseFloat(cSlider.value);
+                    const iNum = parseFloat(iSlider.value);
+                    meta.model_configs = meta.model_configs || {};
+                    meta.model_configs[m] = { conf: cNum, iou: iNum };
+                    meta.model_configs[cleanName] = { conf: cNum, iou: iNum };
+
+                    fetch("/api/update-thresholds", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ camera: i, model: m, conf: cNum, iou: iNum, model_configs: meta.model_configs })
+                    }).catch(() => {});
+                }, 150);
+            };
+
+            if (cSlider) {
+                cSlider.oninput = () => {
+                    if (cSpan) cSpan.textContent = parseFloat(cSlider.value).toFixed(2);
+                    syncModelThreshold();
+                };
+            }
+            if (iSlider) {
+                iSlider.oninput = () => {
+                    if (iSpan) iSpan.textContent = parseFloat(iSlider.value).toFixed(2);
+                    syncModelThreshold();
+                };
+            }
         });
-    }
-
-    // Restore Sliders & Synchronize Across Clients
-    const confSlider = box.querySelector(".conf-slider");
-    const iouSlider = box.querySelector(".iou-slider");
-    if (meta.conf !== undefined && confSlider) {
-        confSlider.value = meta.conf;
-        const valSpan = box.querySelector(".conf-val");
-        if (valSpan) valSpan.textContent = parseFloat(meta.conf).toFixed(2);
-    }
-    if (meta.iou !== undefined && iouSlider) {
-        iouSlider.value = meta.iou;
-        const valSpan = box.querySelector(".iou-val");
-        if (valSpan) valSpan.textContent = parseFloat(meta.iou).toFixed(2);
-    }
-
-    let thresholdSyncTimer = null;
-    const sendThresholdSync = () => {
-        clearTimeout(thresholdSyncTimer);
-        thresholdSyncTimer = setTimeout(() => {
-            const conf = confSlider ? parseFloat(confSlider.value) : (meta.conf || 0.40);
-            const iou = iouSlider ? parseFloat(iouSlider.value) : (meta.iou || 0.45);
-            fetch("/api/update-thresholds", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ camera: i, conf, iou })
-            }).catch(() => {});
-        }, 350);
-    };
-
-    if (confSlider) {
-        confSlider.oninput = () => {
-            const span = box.querySelector(".conf-val");
-            if (span) span.textContent = parseFloat(confSlider.value).toFixed(2);
-            sendThresholdSync();
-        };
-    }
-    if (iouSlider) {
-        iouSlider.oninput = () => {
-            const span = box.querySelector(".iou-val");
-            if (span) span.textContent = parseFloat(iouSlider.value).toFixed(2);
-            sendThresholdSync();
-        };
     }
 
     box.querySelector(".start").onclick = async () => {
@@ -198,8 +206,21 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         const models = cm[camStr] || [];
         if (!models.length) return alert("No models assigned");
         
-        const conf = confSlider ? parseFloat(confSlider.value) : (meta.conf || 0.40);
-        const iou = iouSlider ? parseFloat(iouSlider.value) : (meta.iou || 0.45);
+        const domModelConfigs = {};
+        box.querySelectorAll(".model-card-box").forEach(card => {
+            const mName = card.getAttribute("data-model");
+            const cSlider = card.querySelector(".model-conf-slider");
+            const iSlider = card.querySelector(".model-iou-slider");
+            if (mName && cSlider && iSlider) {
+                const cVal = parseFloat(cSlider.value);
+                const iVal = parseFloat(iSlider.value);
+                domModelConfigs[mName] = { conf: cVal, iou: iVal };
+                domModelConfigs[mName.replace(".pt", "")] = { conf: cVal, iou: iVal };
+            }
+        });
+
+        const conf = meta.conf || 0.40;
+        const iou = meta.iou || 0.45;
         const location = meta.location || meta.label || "Camera " + (i+1);
         
         box.classList.add("detecting");
@@ -209,7 +230,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         await fetch("/api/start", { 
             method: "POST", 
             headers: { "Content-Type": "application/json" }, 
-            body: JSON.stringify({ camera: i, models, rtsp: meta.rtsp, conf, iou, location }) 
+            body: JSON.stringify({ camera: i, models, rtsp: meta.rtsp, conf, iou, location, model_configs: domModelConfigs }) 
         });
         waitAndSwitch(video, meta, i, box, badge);
     };

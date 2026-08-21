@@ -816,18 +816,34 @@ async def update_thresholds(req: Request):
     try:
         d = await req.json()
         cid = str(d.get("camera", ""))
-        conf = float(d.get("conf", 0.40))
-        iou = float(d.get("iou", 0.45))
+        conf = float(d.get("conf", 0.40)) if "conf" in d else None
+        iou = float(d.get("iou", 0.45)) if "iou" in d else None
+        model_configs = d.get("model_configs")
+        target_model = d.get("model")
+        
         entries = read_streams_metadata()
         for idx, entry in enumerate(entries):
             if str(entry.get("id", idx)) == cid or str(idx) == cid:
-                entry["conf"] = conf
-                entry["iou"] = iou
-        save_streams_metadata(entries)
+                if conf is not None: entry["conf"] = conf
+                if iou is not None: entry["iou"] = iou
+                if model_configs and isinstance(model_configs, dict):
+                    entry["model_configs"] = model_configs
+                elif target_model and conf is not None and iou is not None:
+                    mc = entry.get("model_configs") or {}
+                    clean_m = target_model.replace(".pt", "")
+                    mc[target_model] = {"conf": conf, "iou": iou}
+                    mc[clean_m] = {"conf": conf, "iou": iou}
+                    mc[clean_m + ".pt"] = {"conf": conf, "iou": iou}
+                    entry["model_configs"] = mc
+        write_json_atomic(STREAMS_JSON, entries)
+        with config_cache_lock:
+            global _streams_metadata_cache
+            _streams_metadata_cache = [dict(e) for e in entries]
         if cid in running:
-            running[cid]["conf"] = conf
-            running[cid]["iou"] = iou
-        return {"status": "ok", "conf": conf, "iou": iou}
+            if conf is not None: running[cid]["conf"] = conf
+            if iou is not None: running[cid]["iou"] = iou
+            if model_configs: running[cid]["model_configs"] = model_configs
+        return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -1167,10 +1183,22 @@ def start_detection(d: dict):
             shutil.rmtree(det_dir)
     os.makedirs(det_dir, exist_ok=True)
 
-    # Start detector worker
-    cmd = [sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc]
+    # Save model_configs if provided
+    model_configs = d.get("model_configs") or {}
+    if model_configs:
+        try:
+            entries = read_streams_metadata()
+            for idx, entry in enumerate(entries):
+                if str(entry.get("id", idx)) == cid or str(idx) == cid:
+                    entry["model_configs"] = model_configs
+            write_json_atomic(STREAMS_JSON, entries)
+        except Exception as e:
+            print(f"[ERROR] Failed to save model_configs: {e}")
+
+    # Start detector worker with model_configs JSON argument
+    cmd = [sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc, json.dumps(model_configs)]
     log = open(os.path.join(HLS_DIR, f"stream{cid}_detected/worker.log"), "a")
-    running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc}
+    running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs}
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
 
 @app.post("/api/stop")

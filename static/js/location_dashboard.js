@@ -220,17 +220,18 @@ class LocationDashboardStore {
     }
 
     cameraPayload(item, idx) {
-        const loc = this.locations.find(l => this.locationId(idx, l) === item.location_id) ||
-            this.locations.find(l => l.location === item.location) || {};
+        const loc = this.locations.find(l => l.id === item.location_id || l.location === item.location) || {};
         return {
-            rtsp: item.rtsp.trim(),
-            location_id: item.location_id || this.locationId(idx, loc),
+            id: idx,
+            rtsp: item.rtsp || "",
             location: loc.location || item.location || `Location ${idx + 1}`,
+            location_id: loc.id || item.location_id || `loc-${idx + 1}`,
             device_id: loc.device_id || item.device_id || "",
             device_ip: loc.device_ip || item.device_ip || "",
             device_status: loc.device_status || item.device_status || "offline",
             conf: item.conf !== undefined && item.conf !== null ? parseFloat(item.conf) : 0.40,
-            iou: item.iou !== undefined && item.iou !== null ? parseFloat(item.iou) : 0.45
+            iou: item.iou !== undefined && item.iou !== null ? parseFloat(item.iou) : 0.45,
+            model_configs: item.model_configs || {}
         };
     }
 }
@@ -335,7 +336,32 @@ class LocationDashboard {
     async saveCameras(shouldReload = true) {
         const payload = this.streams
             .filter(item => (item.rtsp || "").trim())
-            .map((item, idx) => this.store.cameraPayload(item, idx));
+            .map((item, idx) => {
+                const camBox = document.getElementById(`cam-box-${item.id}`);
+                let modelConfigs = item.model_configs || {};
+                if (camBox) {
+                    const domConfigs = {};
+                    camBox.querySelectorAll(".model-card-box").forEach(card => {
+                        const mName = card.getAttribute("data-model");
+                        const cSlider = card.querySelector(".model-conf-slider");
+                        const iSlider = card.querySelector(".model-iou-slider");
+                        if (mName && cSlider && iSlider) {
+                            const cVal = parseFloat(cSlider.value);
+                            const iVal = parseFloat(iSlider.value);
+                            const clean = mName.replace(".pt", "");
+                            domConfigs[mName] = { conf: cVal, iou: iVal };
+                            domConfigs[clean] = { conf: cVal, iou: iVal };
+                        }
+                    });
+                    if (Object.keys(domConfigs).length) {
+                        modelConfigs = domConfigs;
+                        item.model_configs = modelConfigs;
+                    }
+                }
+                const p = this.store.cameraPayload(item, idx);
+                p.model_configs = modelConfigs;
+                return p;
+            });
         localStorage.setItem("offline_streams", JSON.stringify(payload));
         localStorage.setItem("offline_camera_models", JSON.stringify(this.cameraModels));
         await this.api.saveCameras(payload, this.cameraModels);
