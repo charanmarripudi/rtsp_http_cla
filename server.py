@@ -421,6 +421,7 @@ def normalize_stream_entry(item, idx):
         location = str(item.get("location", "")).strip()
         location_id = str(item.get("location_id", "")).strip()
         device_fields = normalize_device_fields(item)
+        model_configs = item.get("model_configs", {})
         try: conf = float(item.get("conf", 0.40))
         except: conf = 0.40
         try: iou = float(item.get("iou", 0.45))
@@ -430,6 +431,7 @@ def normalize_stream_entry(item, idx):
         location = f"Location {idx + 1}"
         location_id = f"loc-{idx + 1}"
         device_fields = normalize_device_fields({})
+        model_configs = {}
         conf = 0.40
         iou = 0.45
     data = {
@@ -437,7 +439,8 @@ def normalize_stream_entry(item, idx):
         "location": location,
         "location_id": location_id,
         "conf": conf,
-        "iou": iou
+        "iou": iou,
+        "model_configs": model_configs
     }
     data.update(device_fields)
     return data
@@ -889,6 +892,7 @@ def get_streams(
             "rtsp": meta.get("rtsp", ""),
             "conf": float(meta.get("conf", 0.40)),
             "iou": float(meta.get("iou", 0.45)),
+            "model_configs": meta.get("model_configs", {}),
             "hls_live": f"/hls/camera/{i}/playlist.m3u8",
             "hls_raw": f"/hls/stream{i}_raw/playlist.m3u8",
             "hls_detected": f"/hls/stream{i}_detected/playlist.m3u8"
