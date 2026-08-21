@@ -37,8 +37,6 @@ class LocationDashboardTemplates {
 
     static cameraBox(stream) {
         const id = Number(stream.id);
-        const confVal = stream.conf !== undefined && stream.conf !== null ? Number(stream.conf).toFixed(2) : "0.40";
-        const iouVal = stream.iou !== undefined && stream.iou !== null ? Number(stream.iou).toFixed(2) : "0.45";
         return `
             <div class="box" id="cam-box-${id}" data-camera-id="${id}">
                 <div class="video-wrap">
@@ -48,13 +46,9 @@ class LocationDashboardTemplates {
                 </div>
                 <div class="controls">
                     <div class="assignment-panel">
-                        <div><span style="font-size:0.65rem;color:var(--muted);display:block;margin-bottom:4px;font-weight:600;">ASSIGNED MODELS</span><div class="assigned-chips-list" id="chips-${id}" style="display:flex;flex-wrap:wrap;gap:4px;"></div></div>
-                        <div class="thresholds compact">
-                            <div class="thresh-row"><label>Conf <span class="conf-val">${confVal}</span></label><input class="conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${confVal}"></div>
-                            <div class="thresh-row"><label>IoU <span class="iou-val">${iouVal}</span></label><input class="iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iouVal}"></div>
-                        </div>
+                        <div><span style="font-size:0.65rem;color:var(--muted);display:block;margin-bottom:6px;font-weight:600;letter-spacing:0.5px;">ASSIGNED MODELS</span><div class="assigned-chips-list" id="chips-${id}" style="display:flex;flex-direction:column;gap:8px;"></div></div>
                     </div>
-                    <div class="btn-row">
+                    <div class="btn-row" style="margin-top:10px;">
                         <button class="start">Start</button>
                         <button class="stop">Stop</button>
                     </div>
