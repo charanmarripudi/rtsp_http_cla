@@ -96,6 +96,10 @@ class DetectorWorker:
 
     def _create_ffmpeg(self):
         os.makedirs(self.output_dir, exist_ok=True)
+        for f in os.listdir(self.output_dir):
+            if f.endswith(".ts") or f.endswith(".m3u8"):
+                try: os.remove(os.path.join(self.output_dir, f))
+                except: pass
         # Software encoder (libx264 ultrafast) — 100% reliable on both Mac and Raspberry Pi
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
