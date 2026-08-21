@@ -70,25 +70,6 @@ class DetectorWorker:
         self.models = [YOLO(mp) for mp in (model_paths if isinstance(model_paths, list) else [model_paths])]
         self._db_conn = None
 
-        # Check if any model requires person body anchoring (PPE / Violation models)
-        self.person_detector = None
-        has_ppe = False
-        ppe_keywords = ["vest", "helmet", "hat", "boot", "glove", "mask", "goggle", "belt", "harness", "lamp", "fall"]
-        for m in self.models:
-            for cname in m.names.values():
-                if any(k in str(cname).lower() for k in ppe_keywords):
-                    has_ppe = True
-                    break
-        if has_ppe:
-            person_model_path = os.path.join(str(BASE_DIR), "models", "yolov8n.pt")
-            if not os.path.exists(person_model_path):
-                person_model_path = "yolov8n.pt"
-            try:
-                self.person_detector = YOLO(person_model_path)
-                print(f"[LOG] Camera {self.cam_id}: Loaded Human Body Anchor model (yolov8n.pt) for high-precision PPE validation", flush=True)
-            except Exception as e:
-                print(f"[WARN] Could not load person detector: {e}", flush=True)
-
     def _get_db_conn(self):
         if not PSYCOPG2_AVAILABLE: return None
         if self._db_conn is None or self._db_conn.closed:
@@ -107,7 +88,7 @@ class DetectorWorker:
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "main", "-level:v", "4.0",
             "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
-            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS (24 frames)
+            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS (30 frames)
             "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
@@ -115,7 +96,7 @@ class DetectorWorker:
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Speed: 1.4x real-time (GOP 24), Bitrate: 800k (max 1000k)", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Speed: 1.4x real-time (GOP 30), Bitrate: 800k (max 1000k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):
@@ -125,82 +106,15 @@ class DetectorWorker:
         res = cv2.resize(f, (nw, nh))
         return cv2.copyMakeBorder(res, (self.height-nh)//2, (self.height-nh+1)//2, (self.width-nw)//2, (self.width-nw+1)//2, cv2.BORDER_CONSTANT, value=[0,0,0])
 
-    def _is_gear_on_person(self, box, cls_lower, person_boxes):
-        if not person_boxes:
-            # If no persons detected at all in the entire room, wearable gear cannot float in empty air
+    def _is_valid_box(self, conf_val, m_conf, bw, bh, box_area, f_w, f_h, f_area):
+        if conf_val < m_conf:
             return False
-        bx1, by1, bx2, by2 = box
-        bw, bh = max(0, bx2 - bx1), max(0, by2 - by1)
-        b_area = bw * bh
-        if b_area <= 0: return False
-        
-        for px1, py1, px2, py2 in person_boxes:
-            pw, ph = max(0, px2 - px1), max(0, py2 - py1)
-            if pw <= 0 or ph <= 0: continue
-
-            # 1. Scale constraint: gear cannot be 2x larger than the person wearing it
-            if any(k in cls_lower for k in ["helmet", "hat", "mask", "goggle", "lamp"]):
-                if bw > pw * 1.3 or bh > ph * 0.65: continue
-            elif any(k in cls_lower for k in ["vest", "belt", "harness"]):
-                if bw > pw * 1.5 or bh > ph * 1.1: continue
-            elif any(k in cls_lower for k in ["boot", "shoe"]):
-                if bw > pw * 1.3 or bh > ph * 0.55: continue
-
-    def _is_gear_on_person(self, box, cls_lower, person_boxes):
-        if not person_boxes:
-            # Small sub-object or wearable gear cannot float in empty air if no human body is detected
+        # 1. Absolute Minimum Size Bounds (Rejects 1-pixel noise)
+        if bw < 10 or bh < 10 or box_area < 150:
             return False
-        bx1, by1, bx2, by2 = box
-        bw, bh = max(0, bx2 - bx1), max(0, by2 - by1)
-        b_area = bw * bh
-        if b_area <= 0: return False
-        
-        # Universal Proximity Check: Small objects must overlap or be near at least one human body in the frame
-        for px1, py1, px2, py2 in person_boxes:
-            pw, ph = max(0, px2 - px1), max(0, py2 - py1)
-            if pw <= 0 or ph <= 0: continue
-
-            # Expanded human body bounding area (25% margin)
-            exp_px1 = px1 - pw * 0.25
-            exp_px2 = px2 + pw * 0.25
-            exp_py1 = py1 - ph * 0.25
-            exp_py2 = py2 + ph * 0.25
-            
-            ix1 = max(bx1, exp_px1)
-            iy1 = max(by1, exp_py1)
-            ix2 = min(bx2, exp_px2)
-            iy2 = min(by2, exp_py2)
-            
-            if ix2 > ix1 and iy2 > iy1:
-                inter_area = (ix2 - ix1) * (iy2 - iy1)
-                if inter_area / b_area >= 0.15:
-                    return True
-        return False
-
-    def _is_valid_box(self, cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop_img=None):
-        # Respect user confidence setting dynamically
-        if conf_val < self.conf:
+        # 2. Maximum Size Bounds (Rejects 80% full-screen hallucinations)
+        if box_area > 0.65 * f_area or bh > 0.90 * f_h or bw > 0.90 * f_w:
             return False
-
-        # 1. Absolute Minimum & Maximum Size Bounds (Universal for all classes)
-        if bw < 12 or bh < 12 or box_area < 200 or box_area > 0.40 * f_area or bh > 0.72 * f_h or bw > 0.75 * f_w:
-            return False
-
-        # 2. Universal Aspect Ratio Bounds (0.15 to 3.8)
-        aspect_w_to_h = bw / max(1.0, bh)
-        aspect_h_to_w = bh / max(1.0, bw)
-        if aspect_w_to_h > 3.8 or aspect_h_to_w > 3.8:
-            return False
-
-        # 3. Flat Background / Empty Space Filter (Rejects uniform flat walls, doors, ceilings, tables)
-        if crop_img is not None and crop_img.size > 0:
-            try:
-                import numpy as np
-                if np.std(crop_img) < 10.0:
-                    return False
-            except:
-                pass
-
         return True
 
     def _run_all_models(self, f):
@@ -209,16 +123,6 @@ class DetectorWorker:
             raw_boxes = []
             f_h, f_w = f.shape[:2]
             f_area = f_w * f_h
-
-            # Detect persons in frame to anchor human-dependent sub-objects
-            person_boxes = []
-            if self.person_detector is not None:
-                try:
-                    p_res = self.person_detector.predict(f, classes=[0], conf=min(0.25, self.conf), imgsz=640, verbose=False)
-                    if p_res and p_res[0].boxes:
-                        for pb in p_res[0].boxes:
-                            person_boxes.append(pb.xyxy[0].cpu().numpy().tolist())
-                except: pass
 
             for midx, model in enumerate(self.models):
                 m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
@@ -242,24 +146,10 @@ class DetectorWorker:
                             bh = max(0, y2 - y1)
                             box_area = bw * bh
                             cls = r.names[int(b.cls[0])]
-                            cls_lower = str(cls).strip().lower().replace("_", "-")
                             conf_val = float(b.conf[0])
 
-                            # Universal Proximity Check: Small sub-objects (area <= 8% of frame) anchor to human body if people exist
-                            if box_area <= 0.08 * f_area and self.person_detector is not None:
-                                if person_boxes and not self._is_gear_on_person(box_xyxy, cls_lower, person_boxes):
-                                    continue
-
-                            # Crop the detected region for texture verification
-                            crop = None
-                            try:
-                                ix1, iy1, ix2, iy2 = max(0, int(x1)), max(0, int(y1)), min(f_w, int(x2)), min(f_h, int(y2))
-                                if ix2 > ix1 and iy2 > iy1:
-                                    crop = f[iy1:iy2, ix1:ix2]
-                            except: pass
-
-                            # Universal Dynamic Validation
-                            if not self._is_valid_box(cls_lower, conf_val, bw, bh, box_area, f_w, f_h, f_area, crop):
+                            # Validate Box
+                            if not self._is_valid_box(conf_val, m_conf, bw, bh, box_area, f_w, f_h, f_area):
                                 continue
 
                             label_text = f"{cls} {conf_val:.2f}"
