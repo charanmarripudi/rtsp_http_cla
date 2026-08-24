@@ -15,11 +15,6 @@ stream*_detected/
 logs/
 *.log
 
-# Persistent local runtime state (prevents git reset from wiping user added cameras & assigned models)
-streams.json
-streams.conf
-camera_models.json
-
 # PID files
 *.pid
 
