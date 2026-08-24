@@ -136,15 +136,27 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         }
     };
 
+    // Direct real-time MJPEG stream image for zero-latency, zero-seek, zero-loop playback
+    let mjpegImg = box.querySelector(".realtime-mjpeg-stream");
+    if (!mjpegImg) {
+        mjpegImg = document.createElement("img");
+        mjpegImg.className = "realtime-mjpeg-stream";
+        mjpegImg.src = `/api/mjpeg/${i}`;
+        mjpegImg.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill;z-index:2;background:#000;";
+        const vWrap = box.querySelector(".video-wrapper") || box.querySelector(".video-box") || box;
+        vWrap.style.position = "relative";
+        vWrap.appendChild(mjpegImg);
+    } else {
+        mjpegImg.src = `/api/mjpeg/${i}?t=` + Date.now();
+    }
+
     // Restore state
     if (status.active && status.active.includes(camStr)) {
         box.classList.add("detecting");
         updateBadge(true);
-        playHLS(video, meta.hls_detected, i);
     } else {
         box.classList.remove("detecting");
         updateBadge(false);
-        playHLS(video, meta.hls_raw, i);
     }
 
     // Render Assigned Models with Per-Model Conf & IoU Sliders (Matching UI Screenshot, Smooth Dragging!)
@@ -240,23 +252,20 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         
         box.classList.add("detecting");
         updateBadge(true);
-        if (badge) badge.textContent = "● AI: STARTING...";
+        if (badge) badge.textContent = assignedText ? "● AI: " + assignedText : "● AI ACTIVE";
         
         await fetch("/api/start", { 
             method: "POST", 
             headers: { "Content-Type": "application/json" }, 
             body: JSON.stringify({ camera: i, models, rtsp: meta.rtsp, conf, iou, location, model_configs: domModelConfigs }) 
         });
-        waitAndSwitch(video, meta, i, box, badge);
     };
 
     box.querySelector(".stop").onclick = async () => {
         box.classList.remove("detecting");
         updateBadge(false);
-        if (badge) badge.textContent = "○ RAW: SWITCHING...";
 
         await fetch("/api/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ camera: i }) });
-        waitAndSwitchRaw(video, meta, i, box, badge);
     };
 }
 

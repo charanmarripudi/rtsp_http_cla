@@ -676,15 +676,13 @@ def start_raw_stream(i, u):
     except: pass
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
-        "-fflags", "+genpts+discardcorrupt",
         "-rtsp_transport", "tcp",
         "-max_delay", "500000",
         "-probesize", "2M", "-analyzeduration", "2M",
         "-i", u,
-        "-avoid_negative_ts", "make_zero",
         "-an",
         "-r", "20",
-        "-vf", "scale=1280:720,setdar=16/9,setpts=N/FRAME_RATE/TB",
+        "-vf", "scale=1280:720,setdar=16/9",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
         "-profile:v", "main", "-level:v", "4.0",
         "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
@@ -1225,6 +1223,59 @@ def start_detection(d: dict):
     log = open(os.path.join(HLS_DIR, f"stream{cid}_detected/worker.log"), "a")
     running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs}
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
+
+_raw_readers = {}
+_raw_reader_locks = {}
+
+def _bg_raw_mjpeg_worker(cid, rtsp_url):
+    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    while True:
+        try:
+            if cid in running and running[cid].get("proc") and running[cid]["proc"].poll() is None:
+                time.sleep(0.2)
+                continue
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                cap.release()
+                time.sleep(1.0)
+                cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                continue
+            rf = cv2.resize(frame, (1280, 720))
+            ret_jpg, jpeg_b = cv2.imencode('.jpg', rf, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            if ret_jpg:
+                tmp_p = f"/tmp/cam_{cid}_live.tmp"
+                final_p = f"/tmp/cam_{cid}_live.jpg"
+                with open(tmp_p, "wb") as f_out:
+                    f_out.write(jpeg_b.tobytes())
+                os.replace(tmp_p, final_p)
+        except:
+            time.sleep(0.5)
+
+@app.get("/api/mjpeg/{cam_id}")
+async def mjpeg_stream(cam_id: str):
+    urls = read_streams_conf()
+    try:
+        idx = int(cam_id)
+        if idx < len(urls) and cam_id not in _raw_readers:
+            _raw_readers[cam_id] = True
+            threading.Thread(target=_bg_raw_mjpeg_worker, args=[cam_id, urls[idx]], daemon=True).start()
+    except: pass
+
+    async def frame_generator():
+        live_p = f"/tmp/cam_{cam_id}_live.jpg"
+        while True:
+            if os.path.exists(live_p):
+                try:
+                    with open(live_p, "rb") as f:
+                        frame_bytes = f.read()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                except: pass
+            await asyncio.sleep(0.04) # ~25 FPS
+
+    return StreamingResponse(frame_generator(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 @app.post("/api/stop-raw")
 def stop_raw_for_camera(d: dict):

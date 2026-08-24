@@ -39,9 +39,10 @@ class LocationDashboardTemplates {
         const id = Number(stream.id);
         return `
             <div class="box" id="cam-box-${id}" data-camera-id="${id}">
-                <div class="video-wrap">
+                <div class="video-wrap" style="position:relative;">
                     <div class="mode-badge raw" id="badge-${id}">RAW</div>
-                    <video id="v${id}" controls autoplay muted playsinline data-src="${this.text(stream.hls_live)}"></video>
+                    <img class="realtime-mjpeg-stream" src="/api/mjpeg/${id}" style="width:100%;height:100%;object-fit:fill;position:absolute;top:0;left:0;z-index:2;background:#000;">
+                    <video id="v${id}" controls autoplay muted playsinline data-src="${this.text(stream.hls_live)}" style="display:none;"></video>
                     <div class="cam-label">${this.text(stream.location || stream.label || `Camera ${id + 1}`)}</div>
                 </div>
                 <div class="controls">
