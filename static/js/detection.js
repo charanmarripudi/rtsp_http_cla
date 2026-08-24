@@ -22,7 +22,7 @@ function playHLS(video, url, idx) {
         enableWorker: true,
         lowLatencyMode: true,
         startPosition: -1,               // Forces player to start at liveSyncPosition (exact 4-5s cushion)
-        liveSyncDurationCount: 3.5,      // 3.5 segments (7.0s cushion) — prevents playhead from hitting live edge and stalling
+        liveSyncDurationCount: 2.5,      // 2.5 segments (5.0s cushion) — guarantees playhead never hits live edge (1.42/1.42)
         liveMaxLatencyDurationCount: 6,  // Auto-catchup if delay drifts beyond 12s
         liveDurationInfinity: true,      // Continuous rolling live stream across all devices
         liveBackBufferLength: 0,
@@ -249,6 +249,11 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         if (badge) badge.textContent = "● AI: STARTING...";
         
         window.cameraTransitioning[camStr] = true;
+        if (hlsInstances[i]) {
+            hlsInstances[i].destroy();
+            delete hlsInstances[i];
+        }
+        video.src = ""; // Clear source to prevent black screens/timeouts during model load
         await fetch("/api/start", { 
             method: "POST", 
             headers: { "Content-Type": "application/json" }, 
@@ -263,6 +268,11 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         if (badge) badge.textContent = "○ RAW: SWITCHING...";
 
         window.cameraTransitioning[camStr] = true;
+        if (hlsInstances[i]) {
+            hlsInstances[i].destroy();
+            delete hlsInstances[i];
+        }
+        video.src = ""; // Clear source to prevent black screens/timeouts during raw switch
         await fetch("/api/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ camera: i }) });
         waitAndSwitchRaw(video, meta, i, box, badge);
     };
