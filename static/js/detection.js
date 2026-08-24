@@ -296,23 +296,9 @@ function startClientSync() {
                     }
                 }
 
-                // Synchronize detection state across different browser tabs without restarting video
-                const isDetecting = status.active && status.active.includes(String(camId));
-                const badge = box.querySelector(".mode-badge");
-                const video = box.querySelector("video");
-                
-                if (isDetecting && !box.classList.contains("detecting")) {
-                    box.classList.add("detecting");
-                    if (badge) { badge.className = "mode-badge active"; badge.textContent = "● AI ACTIVE"; }
-                    playHLS(video, meta.hls_detected, Number(camId));
-                } else if (!isDetecting && box.classList.contains("detecting")) {
-                    box.classList.remove("detecting");
-                    if (badge) { badge.className = "mode-badge raw"; badge.textContent = "○ RAW"; }
-                    playHLS(video, meta.hls_raw, Number(camId));
-                }
             });
         } catch (_) {}
-    }, 4000);
+    }, 5000);
 }
 
 window.RtspDetection = { init };
