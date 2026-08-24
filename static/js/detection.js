@@ -20,14 +20,14 @@ function playHLS(video, url, idx) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        startPosition: -1,               // Forces player to start at liveSyncPosition (exact 4-5s cushion)
-        liveSyncDurationCount: 2.5,      // 2.5 segments (5.0s cushion) — guarantees playhead never hits live edge (1.42/1.42)
-        liveMaxLatencyDurationCount: 6,  // Auto-catchup if delay drifts beyond 12s
+        startPosition: -1,               // Forces player to start at liveSyncPosition
+        liveSyncDurationCount: 1.5,      // 1.5 segments (3.0s cushion) — ultra-low live delay!
+        liveMaxLatencyDurationCount: 3.5, // Auto-catchup if delay drifts beyond 7s
         liveDurationInfinity: true,      // Continuous rolling live stream across all devices
         liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 10,
-        maxMaxBufferLength: 15,
+        maxBufferLength: 6,
+        maxMaxBufferLength: 10,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,
@@ -45,7 +45,7 @@ function playHLS(video, url, idx) {
         video.muted = true;
         video.playsInline = true;
         if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
-            try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+            try { video.currentTime = Math.max(0, hls.liveSyncPosition - 1.0); } catch (_) {}
         }
         video.play().catch(() => {});
     });
@@ -53,7 +53,7 @@ function playHLS(video, url, idx) {
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
             if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
-                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+                try { video.currentTime = Math.max(0, hls.liveSyncPosition - 1.0); } catch (_) {}
             }
             if (video.paused) {
                 video.play().catch(() => {});
@@ -67,6 +67,37 @@ function playHLS(video, url, idx) {
         }
     });
 }
+
+// Multi-Camera Synchronous Live Edge Catchup Loop (Eliminates timing gaps between cameras)
+setInterval(() => {
+    const activeHls = Object.values(hlsInstances).filter(h => h && h.media && !h.media.paused && h.liveSyncPosition);
+    if (activeHls.length > 1) {
+        const maxLivePos = Math.max(...activeHls.map(h => h.liveSyncPosition || 0));
+        activeHls.forEach(h => {
+            const v = h.media;
+            if (v && Number.isFinite(h.liveSyncPosition)) {
+                const diff = h.liveSyncPosition - v.currentTime;
+                // If trailing live edge by > 2.5s or trailing sibling camera by > 1.2s, auto catchup!
+                if (diff > 2.5 || (maxLivePos - (v.currentTime || 0)) > 1.2) {
+                    try {
+                        v.currentTime = Math.max(0, h.liveSyncPosition - 1.0);
+                    } catch (_) {}
+                }
+            }
+        });
+    } else if (activeHls.length === 1) {
+        const h = activeHls[0];
+        const v = h.media;
+        if (v && Number.isFinite(h.liveSyncPosition)) {
+            const diff = h.liveSyncPosition - v.currentTime;
+            if (diff > 3.0) {
+                try {
+                    v.currentTime = Math.max(0, h.liveSyncPosition - 1.0);
+                } catch (_) {}
+            }
+        }
+    }
+}, 3000);
 
 async function waitAndSwitch(video, meta, idx, box, badge) {
     const start = Date.now();
