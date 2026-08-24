@@ -261,10 +261,24 @@ class DetectorWorker:
 
     def _capture_thread(self, cap):
         while not self._stop_event.is_set():
-            ret, f = cap.read()
-            if not ret:
-                time.sleep(0.1)
+            t_start = time.time()
+            if not cap.grab():
+                time.sleep(0.01)
                 continue
+            
+            # Flush queue: if the grab was instant, keep discarding old frames to catch up to live edge
+            grab_count = 0
+            while (time.time() - t_start) < 0.004 and grab_count < 15:
+                t_start = time.time()
+                if not cap.grab():
+                    break
+                grab_count += 1
+            
+            ret, f = cap.retrieve()
+            if not ret or f is None:
+                time.sleep(0.01)
+                continue
+                
             with self._frame_lock:
                 self._latest_raw_frame = f
                 self._cap_ok = True
