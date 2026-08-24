@@ -24,8 +24,8 @@ function playHLS(video, url, idx) {
         liveSyncDurationCount: 3,        // 3 segments (6.0s cushion) — smooth continuous playback without jumping
         liveMaxLatencyDurationCount: 12, // High cap prevents auto-seek backward jumps
         liveDurationInfinity: true,
-        liveBackBufferLength: 0,
-        backBufferLength: 0,
+        liveBackBufferLength: 30,
+        backBufferLength: 30,
         maxBufferLength: 10,
         maxMaxBufferLength: 20,
         manifestLoadingTimeOut: 20000,
