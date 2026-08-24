@@ -64,14 +64,14 @@ function playHLS(video, url, idx) {
 
 async function waitAndSwitch(video, meta, idx, box, badge) {
     const start = Date.now();
-    while (Date.now() - start < 35000) {
+    while (Date.now() - start < 45000) {
         if (!box.classList.contains("detecting")) return;
         try {
             const r = await fetch(meta.hls_detected + "?t=" + Date.now());
             if (r.ok) {
                 const text = await r.text();
                 const tsCount = (text.match(/\.ts/g) || []).length;
-                if (tsCount >= 2) {
+                if (tsCount >= 3) {
                     if (!box.classList.contains("detecting")) return;
                     playHLS(video, meta.hls_detected, idx);
                     if (badge) badge.textContent = "● AI ACTIVE";
@@ -84,7 +84,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
                 }
             }
         } catch (_) {}
-        await new Promise(res => setTimeout(res, 300));
+        await new Promise(res => setTimeout(res, 400));
     }
 }
 
