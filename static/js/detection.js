@@ -20,15 +20,15 @@ function playHLS(video, url, idx) {
     
     const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: false,
-        startPosition: -1,
-        liveSyncDurationCount: 2.2,
-        liveMaxLatencyDurationCount: 8,
-        liveDurationInfinity: true,
-        liveBackBufferLength: 15,
-        backBufferLength: 15,
-        maxBufferLength: 6,
-        maxMaxBufferLength: 12,
+        lowLatencyMode: true,
+        startPosition: -1,               // Forces player to start at liveSyncPosition (exact 4-5s cushion)
+        liveSyncDurationCount: 2.5,      // 2.5 segments (5.0s cushion) — guarantees playhead never hits live edge (1.42/1.42)
+        liveMaxLatencyDurationCount: 6,  // Auto-catchup if delay drifts beyond 12s
+        liveDurationInfinity: true,      // Continuous rolling live stream across all devices
+        liveBackBufferLength: 0,
+        backBufferLength: 0,
+        maxBufferLength: 10,
+        maxMaxBufferLength: 15,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,

@@ -700,10 +700,10 @@ def start_raw_stream(i, u):
         "-profile:v", "main", "-level:v", "4.0",
         "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
         "-threads", "1", "-pix_fmt", "yuv420p",
-        "-g", "20", "-keyint_min", "20", "-sc_threshold", "0",
+        "-g", "40", "-keyint_min", "40", "-sc_threshold", "0",
         "-f", "hls",
-        "-hls_time", "1.2",
-        "-hls_list_size", "10",
+        "-hls_time", "2",
+        "-hls_list_size", "8",
         "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(sd, f"segment_{session_id}_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
