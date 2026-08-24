@@ -249,11 +249,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         if (badge) badge.textContent = "● AI: STARTING...";
         
         window.cameraTransitioning[camStr] = true;
-        if (hlsInstances[i]) {
-            hlsInstances[i].destroy();
-            delete hlsInstances[i];
-        }
-        video.src = ""; // Clear source to prevent black screens/timeouts during model load
         await fetch("/api/start", { 
             method: "POST", 
             headers: { "Content-Type": "application/json" }, 
@@ -268,11 +263,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         if (badge) badge.textContent = "○ RAW: SWITCHING...";
 
         window.cameraTransitioning[camStr] = true;
-        if (hlsInstances[i]) {
-            hlsInstances[i].destroy();
-            delete hlsInstances[i];
-        }
-        video.src = ""; // Clear source to prevent black screens/timeouts during raw switch
         await fetch("/api/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ camera: i }) });
         waitAndSwitchRaw(video, meta, i, box, badge);
     };
