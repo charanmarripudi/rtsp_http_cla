@@ -680,6 +680,7 @@ def start_raw_stream(i, u):
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
         "-rtsp_transport", "tcp",
+        "-max_delay", "500000",
         "-probesize", "2M", "-analyzeduration", "2M",
         "-i", u,
         "-an",

@@ -357,9 +357,10 @@ class DetectorWorker:
                             except: pass
                     
                     if ffmpeg.poll() is not None: break
-                    try:
-                        ffmpeg.stdin.write(pf)
-                    except: break
+                    if pf is not None and pf.size == self.width * self.height * 3:
+                        try:
+                            ffmpeg.stdin.write(pf.tobytes())
+                        except: break
             except:
                 import traceback
                 traceback.print_exc()
