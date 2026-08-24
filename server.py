@@ -797,10 +797,6 @@ async def smart_hls_playlist(cam_id: str): return await serve_camera_virtual_fil
 
 @app.get("/hls/{path:path}")
 async def serve_hls(path: str):
-    if path.endswith("playlist.m3u8") and "_raw" in path:
-        cid = path.split("_raw")[0].replace("stream", "")
-        if cid in running and os.path.exists(os.path.join(HLS_DIR, f"stream{cid}_detected/playlist.m3u8")):
-            return await serve_hls(f"stream{cid}_detected/playlist.m3u8")
     fp = os.path.join(HLS_DIR, path)
     if not os.path.exists(fp): return Response(status_code=404)
     mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
