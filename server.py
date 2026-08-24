@@ -684,7 +684,7 @@ def start_raw_stream(i, u):
         "-avoid_negative_ts", "make_zero",
         "-an",
         "-r", "20",
-        "-vf", "scale=1280:720,setdar=16/9",
+        "-vf", "scale=1280:720,setdar=16/9,setpts=N/FRAME_RATE/TB",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
         "-profile:v", "main", "-level:v", "4.0",
         "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
