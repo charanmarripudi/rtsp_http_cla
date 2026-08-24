@@ -19,15 +19,15 @@ function playHLS(video, url, idx) {
     
     const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
+        lowLatencyMode: false,           // Disables Hls.js micro-seeks that cause 1-2 second backward jumps
         startPosition: -1,               // Native HLS live edge position (no manual seeking needed!)
-        liveSyncDurationCount: 2.5,      // 2.5 segments (5.0s cushion) — smooth playback without jumping
-        liveMaxLatencyDurationCount: 6,
+        liveSyncDurationCount: 3,        // 3 segments (6.0s cushion) — smooth continuous playback without jumping
+        liveMaxLatencyDurationCount: 12, // High cap prevents auto-seek backward jumps
         liveDurationInfinity: true,
         liveBackBufferLength: 0,
         backBufferLength: 0,
         maxBufferLength: 10,
-        maxMaxBufferLength: 15,
+        maxMaxBufferLength: 20,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,
@@ -71,7 +71,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
             if (r.ok) {
                 const text = await r.text();
                 const tsCount = (text.match(/\.ts/g) || []).length;
-                if (tsCount >= 3) {
+                if (tsCount >= 1) {
                     if (!box.classList.contains("detecting")) return;
                     playHLS(video, meta.hls_detected, idx);
                     if (badge) badge.textContent = "● AI ACTIVE";
@@ -79,7 +79,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
                 }
             }
         } catch (_) {}
-        await new Promise(res => setTimeout(res, 400));
+        await new Promise(res => setTimeout(res, 300));
     }
 }
 
