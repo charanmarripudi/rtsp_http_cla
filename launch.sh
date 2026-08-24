@@ -14,7 +14,9 @@ mkdir -p "$HLS_DIR"
 ###########################################################
 
 read_streams() {
-    grep -v '^\s*#' "$STREAMS_CONF" | grep -v '^\s*$'
+    if [ -f "$STREAMS_CONF" ]; then
+        grep -v '^\s*#' "$STREAMS_CONF" 2>/dev/null | grep -v '^\s*$' 2>/dev/null
+    fi
 }
 
 ###########################################################
