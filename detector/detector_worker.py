@@ -93,8 +93,11 @@ class DetectorWorker:
         # Software encoder (libx264 ultrafast) — 100% reliable on both Mac and Raspberry Pi
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+            "-fflags", "+genpts+discardcorrupt",
             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
-            "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
+            "-r", str(self.fps), "-i", "-",
+            "-avoid_negative_ts", "make_zero",
+            "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "main", "-level:v", "4.0",
             "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",

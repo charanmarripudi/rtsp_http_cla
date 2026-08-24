@@ -676,10 +676,12 @@ def start_raw_stream(i, u):
     except: pass
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+        "-fflags", "+genpts+discardcorrupt",
         "-rtsp_transport", "tcp",
         "-max_delay", "500000",
         "-probesize", "2M", "-analyzeduration", "2M",
         "-i", u,
+        "-avoid_negative_ts", "make_zero",
         "-an",
         "-r", "20",
         "-vf", "scale=1280:720,setdar=16/9",
