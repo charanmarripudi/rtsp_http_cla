@@ -20,10 +20,10 @@ function playHLS(video, url, idx) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        startPosition: -1,               // Forces player to start at liveSyncPosition (exact 4-5s cushion)
-        liveSyncDurationCount: 2.5,      // 2.5 segments (5.0s cushion) — guarantees playhead never hits live edge (1.42/1.42)
-        liveMaxLatencyDurationCount: 6,  // Auto-catchup if delay drifts beyond 12s
-        liveDurationInfinity: true,      // Continuous rolling live stream across all devices
+        startPosition: -1,               // Native HLS live edge position (no manual seeking needed!)
+        liveSyncDurationCount: 2.5,      // 2.5 segments (5.0s cushion) — smooth playback without jumping
+        liveMaxLatencyDurationCount: 6,
+        liveDurationInfinity: true,
         liveBackBufferLength: 0,
         backBufferLength: 0,
         maxBufferLength: 10,
@@ -44,17 +44,11 @@ function playHLS(video, url, idx) {
         stopSimulatedCanvas(idx, video);
         video.muted = true;
         video.playsInline = true;
-        if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
-            try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
-        }
         video.play().catch(() => {});
     });
 
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
-            if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
-                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
-            }
             if (video.paused) {
                 video.play().catch(() => {});
             }
