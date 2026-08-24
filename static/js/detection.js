@@ -19,15 +19,15 @@ function playHLS(video, url, idx) {
     
     const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: false,           // Disables Hls.js micro-seeks that cause 1-2 second backward jumps
-        startPosition: -1,               // Native HLS live edge position (no manual seeking needed!)
-        liveSyncDurationCount: 3,        // 3 segments (6.0s cushion) — smooth continuous playback without jumping
-        liveMaxLatencyDurationCount: 12, // High cap prevents auto-seek backward jumps
-        liveDurationInfinity: true,
-        liveBackBufferLength: 30,
-        backBufferLength: 30,
+        lowLatencyMode: true,
+        startPosition: -1,               // Forces player to start at liveSyncPosition (exact 4-5s cushion)
+        liveSyncDurationCount: 2.5,      // 2.5 segments (5.0s cushion) — guarantees playhead never hits live edge (1.42/1.42)
+        liveMaxLatencyDurationCount: 6,  // Auto-catchup if delay drifts beyond 12s
+        liveDurationInfinity: true,      // Continuous rolling live stream across all devices
+        liveBackBufferLength: 0,
+        backBufferLength: 0,
         maxBufferLength: 10,
-        maxMaxBufferLength: 20,
+        maxMaxBufferLength: 15,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,
@@ -37,28 +37,24 @@ function playHLS(video, url, idx) {
     });
     hlsInstances[idx] = hls;
 
-    let maxTime = 0;
-    video.ontimeupdate = () => {
-        if (video.currentTime > maxTime) {
-            maxTime = video.currentTime;
-        } else if (maxTime - video.currentTime > 0.4 && maxTime - video.currentTime < 15.0) {
-            video.currentTime = maxTime;
-        }
-    };
-
     hls.attachMedia(video);
     hls.loadSource(fullUrl);
 
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        maxTime = 0;
         stopSimulatedCanvas(idx, video);
         video.muted = true;
         video.playsInline = true;
+        if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
+            try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+        }
         video.play().catch(() => {});
     });
 
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
+            if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
+                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+            }
             if (video.paused) {
                 video.play().catch(() => {});
             }
@@ -74,7 +70,7 @@ function playHLS(video, url, idx) {
 
 async function waitAndSwitch(video, meta, idx, box, badge) {
     const start = Date.now();
-    while (Date.now() - start < 45000) {
+    while (Date.now() - start < 35000) {
         if (!box.classList.contains("detecting")) return;
         try {
             const r = await fetch(meta.hls_detected + "?t=" + Date.now());
@@ -85,11 +81,6 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
                     if (!box.classList.contains("detecting")) return;
                     playHLS(video, meta.hls_detected, idx);
                     if (badge) badge.textContent = "● AI ACTIVE";
-                    fetch("/api/stop-raw", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ camera: idx })
-                    }).catch(() => {});
                     return;
                 }
             }
@@ -136,27 +127,15 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         }
     };
 
-    // Direct real-time MJPEG stream image for zero-latency, zero-seek, zero-loop playback
-    let mjpegImg = box.querySelector(".realtime-mjpeg-stream");
-    if (!mjpegImg) {
-        mjpegImg = document.createElement("img");
-        mjpegImg.className = "realtime-mjpeg-stream";
-        mjpegImg.src = `/api/mjpeg/${i}`;
-        mjpegImg.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;object-fit:fill;z-index:2;background:#000;";
-        const vWrap = box.querySelector(".video-wrapper") || box.querySelector(".video-box") || box;
-        vWrap.style.position = "relative";
-        vWrap.appendChild(mjpegImg);
-    } else {
-        mjpegImg.src = `/api/mjpeg/${i}?t=` + Date.now();
-    }
-
     // Restore state
     if (status.active && status.active.includes(camStr)) {
         box.classList.add("detecting");
         updateBadge(true);
+        playHLS(video, meta.hls_detected, i);
     } else {
         box.classList.remove("detecting");
         updateBadge(false);
+        playHLS(video, meta.hls_raw, i);
     }
 
     // Render Assigned Models with Per-Model Conf & IoU Sliders (Matching UI Screenshot, Smooth Dragging!)
@@ -252,20 +231,23 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         
         box.classList.add("detecting");
         updateBadge(true);
-        if (badge) badge.textContent = assignedText ? "● AI: " + assignedText : "● AI ACTIVE";
+        if (badge) badge.textContent = "● AI: STARTING...";
         
         await fetch("/api/start", { 
             method: "POST", 
             headers: { "Content-Type": "application/json" }, 
             body: JSON.stringify({ camera: i, models, rtsp: meta.rtsp, conf, iou, location, model_configs: domModelConfigs }) 
         });
+        waitAndSwitch(video, meta, i, box, badge);
     };
 
     box.querySelector(".stop").onclick = async () => {
         box.classList.remove("detecting");
         updateBadge(false);
+        if (badge) badge.textContent = "○ RAW: SWITCHING...";
 
         await fetch("/api/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ camera: i }) });
+        waitAndSwitchRaw(video, meta, i, box, badge);
     };
 }
 
@@ -320,9 +302,23 @@ function startClientSync() {
                     }
                 }
 
+                // Synchronize detection state across different browser tabs without restarting video
+                const isDetecting = status.active && status.active.includes(String(camId));
+                const badge = box.querySelector(".mode-badge");
+                const video = box.querySelector("video");
+                
+                if (isDetecting && !box.classList.contains("detecting")) {
+                    box.classList.add("detecting");
+                    if (badge) { badge.className = "mode-badge active"; badge.textContent = "● AI ACTIVE"; }
+                    playHLS(video, meta.hls_detected, Number(camId));
+                } else if (!isDetecting && box.classList.contains("detecting")) {
+                    box.classList.remove("detecting");
+                    if (badge) { badge.className = "mode-badge raw"; badge.textContent = "○ RAW"; }
+                    playHLS(video, meta.hls_raw, Number(camId));
+                }
             });
         } catch (_) {}
-    }, 5000);
+    }, 4000);
 }
 
 window.RtspDetection = { init };

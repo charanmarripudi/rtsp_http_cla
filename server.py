@@ -36,8 +36,8 @@ class DeviceHeartbeat(BaseModel):
 DEVICE_STATUS = {}
 
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response, FileResponse, StreamingResponse
-import os, glob, subprocess, mimetypes, signal, json, socket, time, threading, sys, cv2
+from fastapi.responses import Response, FileResponse
+import os, glob, subprocess, mimetypes, signal, json, socket, time, threading, sys
 
 def get_alerts_base_url():
     try:
@@ -664,20 +664,23 @@ def start_raw_stream(i, u):
                 except: pass
     else:
         os.makedirs(sd, exist_ok=True)
-
-    # Step 1: Clean old files in raw stream dir
+    # Step 1: Create placeholder playlist
+    placeholder_playlist = os.path.join(sd, "playlist.m3u8")
+    with open(placeholder_playlist, "w") as f:
+        f.write("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:0\n")
+    # Step2: Clean old files (just in case)
     for f in glob.glob(os.path.join(sd, "*")):
-        try: os.remove(f)
-        except: pass
-
-    # Step 2: Log file
+        if f != placeholder_playlist:
+            try: os.remove(f)
+            except: pass
+    # Step3: Log file
     log_file = os.path.join(sd, "ffmpeg.log")
     try: os.remove(log_file)
     except: pass
+    session_id = int(time.time())
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
         "-rtsp_transport", "tcp",
-        "-max_delay", "500000",
         "-probesize", "2M", "-analyzeduration", "2M",
         "-i", u,
         "-an",
@@ -691,8 +694,8 @@ def start_raw_stream(i, u):
         "-f", "hls",
         "-hls_time", "2",
         "-hls_list_size", "8",
-        "-hls_flags", "delete_segments+independent_segments+omit_endlist+temp_file",
-        "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
+        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
+        "-hls_segment_filename", os.path.join(sd, f"segment_{session_id}_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
@@ -795,6 +798,10 @@ async def smart_hls_playlist(cam_id: str): return await serve_camera_virtual_fil
 
 @app.get("/hls/{path:path}")
 async def serve_hls(path: str):
+    if path.endswith("playlist.m3u8") and "_raw" in path:
+        cid = path.split("_raw")[0].replace("stream", "")
+        if cid in running and os.path.exists(os.path.join(HLS_DIR, f"stream{cid}_detected/playlist.m3u8")):
+            return await serve_hls(f"stream{cid}_detected/playlist.m3u8")
     fp = os.path.join(HLS_DIR, path)
     if not os.path.exists(fp): return Response(status_code=404)
     mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
@@ -1178,23 +1185,8 @@ def start_detection(d: dict):
         _async_kill(running[cid].get("proc")); 
         del running[cid]
 
-    def _watch_and_kill_raw_when_detected_ready(camera_id):
-        det_playlist = os.path.join(HLS_DIR, f"stream{camera_id}_detected/playlist.m3u8")
-        t0 = time.time()
-        while time.time() - t0 < 60.0:
-            if os.path.exists(det_playlist):
-                try:
-                    with open(det_playlist) as f:
-                        text = f.read()
-                        if text.count(".ts") >= 2:
-                            time.sleep(1.0)
-                            _kill_raw_ffmpeg_for_camera(camera_id)
-                            return
-                except: pass
-            time.sleep(0.5)
-        _kill_raw_ffmpeg_for_camera(camera_id)
-
-    threading.Thread(target=_watch_and_kill_raw_when_detected_ready, args=[cid], daemon=True).start()
+    # Immediately kill raw stream for this camera so camera RTSP socket is 100% dedicated to detector
+    _kill_raw_ffmpeg_for_camera(cid)
 
     # Clean only detected dir
     det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
@@ -1223,65 +1215,6 @@ def start_detection(d: dict):
     log = open(os.path.join(HLS_DIR, f"stream{cid}_detected/worker.log"), "a")
     running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs}
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
-
-_raw_readers = {}
-_raw_reader_locks = {}
-
-def _bg_raw_mjpeg_worker(cid, rtsp_url):
-    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    while True:
-        try:
-            if cid in running and running[cid].get("proc") and running[cid]["proc"].poll() is None:
-                time.sleep(0.2)
-                continue
-            ret, frame = cap.read()
-            if not ret or frame is None:
-                cap.release()
-                time.sleep(1.0)
-                cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                continue
-            rf = cv2.resize(frame, (1280, 720))
-            ret_jpg, jpeg_b = cv2.imencode('.jpg', rf, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-            if ret_jpg:
-                tmp_p = f"/tmp/cam_{cid}_live.tmp"
-                final_p = f"/tmp/cam_{cid}_live.jpg"
-                with open(tmp_p, "wb") as f_out:
-                    f_out.write(jpeg_b.tobytes())
-                os.replace(tmp_p, final_p)
-        except:
-            time.sleep(0.5)
-
-@app.get("/api/mjpeg/{cam_id}")
-async def mjpeg_stream(cam_id: str):
-    urls = read_streams_conf()
-    try:
-        idx = int(cam_id)
-        if idx < len(urls) and cam_id not in _raw_readers:
-            _raw_readers[cam_id] = True
-            threading.Thread(target=_bg_raw_mjpeg_worker, args=[cam_id, urls[idx]], daemon=True).start()
-    except: pass
-
-    async def frame_generator():
-        live_p = f"/tmp/cam_{cam_id}_live.jpg"
-        while True:
-            if os.path.exists(live_p):
-                try:
-                    with open(live_p, "rb") as f:
-                        frame_bytes = f.read()
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                except: pass
-            await asyncio.sleep(0.04) # ~25 FPS
-
-    return StreamingResponse(frame_generator(), media_type="multipart/x-mixed-replace; boundary=frame")
-
-@app.post("/api/stop-raw")
-def stop_raw_for_camera(d: dict):
-    cid = str(d.get("camera", ""))
-    _kill_raw_ffmpeg_for_camera(cid)
-    return {"status": "ok", "camera": cid}
 
 @app.post("/api/stop")
 def stop_detection(d: dict):
