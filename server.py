@@ -664,16 +664,13 @@ def start_raw_stream(i, u):
                 except: pass
     else:
         os.makedirs(sd, exist_ok=True)
-    # Step 1: Create placeholder playlist
-    placeholder_playlist = os.path.join(sd, "playlist.m3u8")
-    with open(placeholder_playlist, "w") as f:
-        f.write("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:0\n")
-    # Step2: Clean old files (just in case)
+
+    # Step 1: Clean old files in raw stream dir
     for f in glob.glob(os.path.join(sd, "*")):
-        if f != placeholder_playlist:
-            try: os.remove(f)
-            except: pass
-    # Step3: Log file
+        try: os.remove(f)
+        except: pass
+
+    # Step 2: Log file
     log_file = os.path.join(sd, "ffmpeg.log")
     try: os.remove(log_file)
     except: pass
@@ -693,8 +690,8 @@ def start_raw_stream(i, u):
         "-g", "40", "-keyint_min", "40", "-sc_threshold", "0",
         "-f", "hls",
         "-hls_time", "2",
-        "-hls_list_size", "10",
-        "-hls_flags", "independent_segments+discont_start+omit_endlist+temp_file",
+        "-hls_list_size", "8",
+        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
     ]
@@ -1181,7 +1178,23 @@ def start_detection(d: dict):
         _async_kill(running[cid].get("proc")); 
         del running[cid]
 
-    # Keep raw stream serving continuous live video to browser player until client handshake /api/stop-raw
+    def _watch_and_kill_raw_when_detected_ready(camera_id):
+        det_playlist = os.path.join(HLS_DIR, f"stream{camera_id}_detected/playlist.m3u8")
+        t0 = time.time()
+        while time.time() - t0 < 60.0:
+            if os.path.exists(det_playlist):
+                try:
+                    with open(det_playlist) as f:
+                        text = f.read()
+                        if text.count(".ts") >= 2:
+                            time.sleep(1.0)
+                            _kill_raw_ffmpeg_for_camera(camera_id)
+                            return
+                except: pass
+            time.sleep(0.5)
+        _kill_raw_ffmpeg_for_camera(camera_id)
+
+    threading.Thread(target=_watch_and_kill_raw_when_detected_ready, args=[cid], daemon=True).start()
 
     # Clean only detected dir
     det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
