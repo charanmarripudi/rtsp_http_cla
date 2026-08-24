@@ -19,15 +19,15 @@ function playHLS(video, url, idx) {
     
     const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
-        startPosition: -1,               // Forces player to start at liveSyncPosition (exact 4-5s cushion)
-        liveSyncDurationCount: 2.5,      // 2.5 segments (5.0s cushion) — guarantees playhead never hits live edge (1.42/1.42)
-        liveMaxLatencyDurationCount: 6,  // Auto-catchup if delay drifts beyond 12s
-        liveDurationInfinity: true,      // Continuous rolling live stream across all devices
-        liveBackBufferLength: 0,
-        backBufferLength: 0,
+        lowLatencyMode: false,
+        startPosition: -1,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 12,
+        liveDurationInfinity: true,
+        liveBackBufferLength: 30,
+        backBufferLength: 30,
         maxBufferLength: 10,
-        maxMaxBufferLength: 15,
+        maxMaxBufferLength: 20,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,
@@ -96,7 +96,8 @@ async function waitAndSwitchRaw(video, meta, idx, box, badge) {
             const r = await fetch(meta.hls_raw + "?t=" + Date.now());
             if (r.ok) {
                 const text = await r.text();
-                if (text.includes(".ts")) {
+                const tsCount = (text.match(/\.ts/g) || []).length;
+                if (tsCount >= 3) {
                     if (box.classList.contains("detecting")) return;
                     playHLS(video, meta.hls_raw, idx);
                     if (badge) badge.textContent = "○ RAW";
