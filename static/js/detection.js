@@ -49,6 +49,25 @@ function playHLS(video, url, idx) {
             try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
         }
         video.play().catch(() => {});
+        
+        // Active real-time latency catchup loop to prevent playhead drift
+        const catchupInterval = setInterval(() => {
+            if (!hlsInstances[idx] || hlsInstances[idx] !== hls || video.paused) {
+                clearInterval(catchupInterval);
+                return;
+            }
+            if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
+                const delay = hls.liveSyncPosition - video.currentTime;
+                if (delay > 10.0) {
+                    try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+                    video.playbackRate = 1.0;
+                } else if (delay > 6.0) {
+                    video.playbackRate = 1.15;
+                } else if (delay <= 4.0) {
+                    video.playbackRate = 1.0;
+                }
+            }
+        }, 3000);
     });
 
     hls.on(Hls.Events.ERROR, (_, data) => {
