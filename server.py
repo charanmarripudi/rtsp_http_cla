@@ -1184,8 +1184,11 @@ def start_detection(d: dict):
         _async_kill(running[cid].get("proc")); 
         del running[cid]
 
-    # Immediately kill raw stream for this camera so camera RTSP socket is 100% dedicated to detector
-    _kill_raw_ffmpeg_for_camera(cid)
+    # Kill raw stream after 6s to give browser player smooth transition window while detector starts
+    def _delayed_kill_raw(c_id):
+        time.sleep(6.0)
+        _kill_raw_ffmpeg_for_camera(c_id)
+    threading.Thread(target=_delayed_kill_raw, args=(cid,), daemon=True).start()
 
     # Clean only detected dir
     det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
