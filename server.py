@@ -251,20 +251,11 @@ STREAMS_JSON = os.path.join(BASE_DIR, "streams.json")
 LOCATIONS_JSON = os.path.join(BASE_DIR, "locations.json")
 MODEL_DIR    = os.path.join(BASE_DIR, "models")
 HLS_DIR      = os.path.join(BASE_DIR, "hls")
-# Redirect HLS directory to RAM disk (/tmp/hls) to eliminate SD card latency stutters
-tmp_hls = "/tmp/hls"
-if not os.path.islink(HLS_DIR):
-    if os.path.exists(HLS_DIR):
-        import shutil
-        try: shutil.rmtree(HLS_DIR)
-        except: pass
-    os.makedirs(tmp_hls, exist_ok=True)
-    os.makedirs(os.path.join(tmp_hls, "alerts"), exist_ok=True)
-    try: os.symlink(tmp_hls, HLS_DIR)
+if os.path.islink(HLS_DIR):
+    try: os.unlink(HLS_DIR)
     except: pass
-else:
-    os.makedirs(tmp_hls, exist_ok=True)
-    os.makedirs(os.path.join(tmp_hls, "alerts"), exist_ok=True)
+os.makedirs(HLS_DIR, exist_ok=True)
+os.makedirs(os.path.join(HLS_DIR, "alerts"), exist_ok=True)
 
 ALERTS_DIR   = os.path.join(HLS_DIR, "alerts")
 ALERTS_JSON  = os.path.join(ALERTS_DIR, "alerts.json")

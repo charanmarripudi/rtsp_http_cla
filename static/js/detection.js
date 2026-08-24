@@ -71,8 +71,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
             const r = await fetch(meta.hls_detected + "?t=" + Date.now());
             if (r.ok) {
                 const text = await r.text();
-                const tsCount = (text.match(/\.ts/g) || []).length;
-                if (tsCount >= 3) {
+                if (text.includes(".ts")) {
                     if (!box.classList.contains("detecting")) {
                         window.cameraTransitioning[idx] = false;
                         return;
@@ -105,8 +104,7 @@ async function waitAndSwitchRaw(video, meta, idx, box, badge) {
             const r = await fetch(meta.hls_raw + "?t=" + Date.now());
             if (r.ok) {
                 const text = await r.text();
-                const tsCount = (text.match(/\.ts/g) || []).length;
-                if (tsCount >= 3) {
+                if (text.includes(".ts")) {
                     if (box.classList.contains("detecting")) {
                         window.cameraTransitioning[idx] = false;
                         return;
