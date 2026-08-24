@@ -693,8 +693,8 @@ def start_raw_stream(i, u):
         "-g", "40", "-keyint_min", "40", "-sc_threshold", "0",
         "-f", "hls",
         "-hls_time", "2",
-        "-hls_list_size", "8",
-        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
+        "-hls_list_size", "10",
+        "-hls_flags", "independent_segments+discont_start+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
     ]
@@ -1181,8 +1181,7 @@ def start_detection(d: dict):
         _async_kill(running[cid].get("proc")); 
         del running[cid]
 
-    # Delay raw stream termination by 6.0s so raw stream keeps serving live video to the browser while AI detector starts up
-    threading.Timer(6.0, _kill_raw_ffmpeg_for_camera, args=[cid]).start()
+    # Keep raw stream serving continuous live video to browser player until client handshake /api/stop-raw
 
     # Clean only detected dir
     det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
