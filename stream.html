@@ -140,8 +140,6 @@ function initHls() {
   const hls = new Hls({
     /* ── Buffer ────────────────────────────────── */
     lowLatencyMode: false,
-    liveSyncDurationCount: 3,
-    liveMaxLatencyDurationCount: 12,
     liveBackBufferLength: 30,
     backBufferLength: 30,
     maxBufferLength: 10,
@@ -162,6 +160,15 @@ function initHls() {
     startPosition: -1,
   });
 
+  let maxTime = 0;
+  video.ontimeupdate = () => {
+    if (video.currentTime > maxTime) {
+      maxTime = video.currentTime;
+    } else if (maxTime - video.currentTime > 1.0 && maxTime - video.currentTime < 15.0) {
+      video.currentTime = maxTime;
+    }
+  };
+
   hls.loadSource(url);
   hls.attachMedia(video);
 
@@ -170,6 +177,7 @@ function initHls() {
 
   /* safety: unblock 2s after manifest arrives */
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
+    maxTime = 0;
     setTimeout(startPlayback, 2000);
   });
 
