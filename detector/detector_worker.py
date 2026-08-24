@@ -54,6 +54,16 @@ def get_alerts_base_url():
 
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
+_MODEL_CACHE = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+
+def _load_cached_yolo(mp):
+    with _MODEL_CACHE_LOCK:
+        if mp not in _MODEL_CACHE:
+            print(f"[LOG] Loading PyTorch YOLO model into RAM: {mp}", flush=True)
+            _MODEL_CACHE[mp] = YOLO(mp)
+        return _MODEL_CACHE[mp]
+
 class DetectorWorker:
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.40, iou=0.45, location="Camera", model_configs=None):
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
@@ -67,7 +77,7 @@ class DetectorWorker:
         self._last_frame_time, self._cap_ok = time.time(), True
         self.alert_timers, self.alert_triggered = {}, set()
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
-        self.models = [YOLO(mp) for mp in (model_paths if isinstance(model_paths, list) else [model_paths])]
+        self.models = [_load_cached_yolo(mp) for mp in (model_paths if isinstance(model_paths, list) else [model_paths])]
         self._db_conn = None
 
     def _get_db_conn(self):

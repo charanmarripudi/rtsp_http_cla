@@ -1212,6 +1212,12 @@ def start_detection(d: dict):
     running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs}
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
 
+@app.post("/api/stop-raw")
+def stop_raw_for_camera(d: dict):
+    cid = str(d.get("camera", ""))
+    _kill_raw_ffmpeg_for_camera(cid)
+    return {"status": "ok", "camera": cid}
+
 @app.post("/api/stop")
 def stop_detection(d: dict):
     cid = str(d["camera"])
