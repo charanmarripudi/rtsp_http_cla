@@ -1,4 +1,5 @@
 const hlsInstances = {};
+window.cameraTransitioning = window.cameraTransitioning || {};
 
 function stopSimulatedCanvas(idx, video) {
     if (video && video.srcObject) { video.srcObject = null; }
@@ -72,7 +73,10 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
                 const text = await r.text();
                 const tsCount = (text.match(/\.ts/g) || []).length;
                 if (tsCount >= 3) {
-                    if (!box.classList.contains("detecting")) return;
+                    if (!box.classList.contains("detecting")) {
+                        window.cameraTransitioning[idx] = false;
+                        return;
+                    }
                     playHLS(video, meta.hls_detected, idx);
                     if (badge) badge.textContent = "● AI ACTIVE";
                     fetch("/api/stop-raw", {
@@ -80,33 +84,43 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ camera: idx })
                     }).catch(() => {});
+                    window.cameraTransitioning[idx] = false;
                     return;
                 }
             }
         } catch (_) {}
         await new Promise(res => setTimeout(res, 400));
     }
+    window.cameraTransitioning[idx] = false;
 }
 
 async function waitAndSwitchRaw(video, meta, idx, box, badge) {
     const start = Date.now();
     while (Date.now() - start < 35000) {
-        if (box.classList.contains("detecting")) return;
+        if (box.classList.contains("detecting")) {
+            window.cameraTransitioning[idx] = false;
+            return;
+        }
         try {
             const r = await fetch(meta.hls_raw + "?t=" + Date.now());
             if (r.ok) {
                 const text = await r.text();
                 const tsCount = (text.match(/\.ts/g) || []).length;
                 if (tsCount >= 3) {
-                    if (box.classList.contains("detecting")) return;
+                    if (box.classList.contains("detecting")) {
+                        window.cameraTransitioning[idx] = false;
+                        return;
+                    }
                     playHLS(video, meta.hls_raw, idx);
                     if (badge) badge.textContent = "○ RAW";
+                    window.cameraTransitioning[idx] = false;
                     return;
                 }
             }
         } catch (_) {}
         await new Promise(res => setTimeout(res, 400));
     }
+    window.cameraTransitioning[idx] = false;
 }
 
 function renderUI(box, i, meta, status, cameraModelsMap) {
@@ -233,6 +247,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         updateBadge(true);
         if (badge) badge.textContent = "● AI: STARTING...";
         
+        window.cameraTransitioning[camStr] = true;
         await fetch("/api/start", { 
             method: "POST", 
             headers: { "Content-Type": "application/json" }, 
@@ -246,6 +261,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         updateBadge(false);
         if (badge) badge.textContent = "○ RAW: SWITCHING...";
 
+        window.cameraTransitioning[camStr] = true;
         await fetch("/api/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ camera: i }) });
         waitAndSwitchRaw(video, meta, i, box, badge);
     };
@@ -280,6 +296,7 @@ function startClientSync() {
             const streamsById = new Map(streams.map(s => [String(s.id), s]));
             document.querySelectorAll(".box").forEach((box) => {
                 const camId = box.dataset.cameraId;
+                if (window.cameraTransitioning[camId]) return;
                 const meta = streamsById.get(String(camId));
                 if (!meta) return;
                 
