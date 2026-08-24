@@ -36,8 +36,8 @@ class DeviceHeartbeat(BaseModel):
 DEVICE_STATUS = {}
 
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response, FileResponse
-import os, glob, subprocess, mimetypes, signal, json, socket, time, threading, sys
+from fastapi.responses import Response, FileResponse, StreamingResponse
+import os, glob, subprocess, mimetypes, signal, json, socket, time, threading, sys, cv2
 
 def get_alerts_base_url():
     try:
