@@ -664,16 +664,11 @@ def start_raw_stream(i, u):
                 except: pass
     else:
         os.makedirs(sd, exist_ok=True)
-    # Step 1: Create placeholder playlist
-    placeholder_playlist = os.path.join(sd, "playlist.m3u8")
-    with open(placeholder_playlist, "w") as f:
-        f.write("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:0\n")
-    # Step2: Clean old files (just in case)
+    # Step 1: Clean old files in raw stream dir
     for f in glob.glob(os.path.join(sd, "*")):
-        if f != placeholder_playlist:
-            try: os.remove(f)
-            except: pass
-    # Step3: Log file
+        try: os.remove(f)
+        except: pass
+    # Step 2: Log file
     log_file = os.path.join(sd, "ffmpeg.log")
     try: os.remove(log_file)
     except: pass
@@ -1185,9 +1180,6 @@ def start_detection(d: dict):
         _async_kill(running[cid].get("proc")); 
         del running[cid]
 
-    # Immediately kill raw stream for this camera so camera RTSP socket is 100% dedicated to detector
-    _kill_raw_ffmpeg_for_camera(cid)
-
     # Clean only detected dir
     det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
     if os.path.exists(det_dir):
@@ -1215,6 +1207,12 @@ def start_detection(d: dict):
     log = open(os.path.join(HLS_DIR, f"stream{cid}_detected/worker.log"), "a")
     running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs}
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
+
+@app.post("/api/stop-raw")
+def stop_raw_for_camera(d: dict):
+    cid = str(d.get("camera", ""))
+    _kill_raw_ffmpeg_for_camera(cid)
+    return {"status": "ok", "camera": cid}
 
 @app.post("/api/stop")
 def stop_detection(d: dict):
