@@ -139,12 +139,13 @@ function initHls() {
 
   const hls = new Hls({
     /* ── Buffer ────────────────────────────────── */
-    lowLatencyMode: true,
-    liveSyncDurationCount: 2,
+    lowLatencyMode: false,
+    liveSyncDurationCount: 3,
+    liveMaxLatencyDurationCount: 12,
     liveBackBufferLength: 0,
     backBufferLength: 0,
-    maxBufferLength: 5,
-    maxMaxBufferLength: 10,
+    maxBufferLength: 10,
+    maxMaxBufferLength: 20,
 
     /* ── Startup tolerance ─────────────────────── */
     manifestLoadingTimeOut:  15000,
