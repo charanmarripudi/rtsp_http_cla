@@ -19,8 +19,10 @@ function playHLS(video, url, idx) {
     
     const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: false,
-        startPosition: -1,
+        lowLatencyMode: false,           // Disables Hls.js micro-seeks that cause 1-2 second backward jumps
+        startPosition: -1,               // Native HLS live edge position (no manual seeking needed!)
+        liveSyncDurationCount: 3,        // 3 segments (6.0s cushion) — smooth continuous playback without jumping
+        liveMaxLatencyDurationCount: 12, // High cap prevents auto-seek backward jumps
         liveDurationInfinity: true,
         liveBackBufferLength: 30,
         backBufferLength: 30,
@@ -35,17 +37,17 @@ function playHLS(video, url, idx) {
     });
     hlsInstances[idx] = hls;
 
-    hls.attachMedia(video);
-    hls.loadSource(fullUrl);
-
     let maxTime = 0;
     video.ontimeupdate = () => {
         if (video.currentTime > maxTime) {
             maxTime = video.currentTime;
-        } else if (maxTime - video.currentTime > 1.0 && maxTime - video.currentTime < 15.0) {
+        } else if (maxTime - video.currentTime > 0.4 && maxTime - video.currentTime < 15.0) {
             video.currentTime = maxTime;
         }
     };
+
+    hls.attachMedia(video);
+    hls.loadSource(fullUrl);
 
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
         maxTime = 0;

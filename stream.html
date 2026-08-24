@@ -140,6 +140,8 @@ function initHls() {
   const hls = new Hls({
     /* ── Buffer ────────────────────────────────── */
     lowLatencyMode: false,
+    liveSyncDurationCount: 3,
+    liveMaxLatencyDurationCount: 12,
     liveBackBufferLength: 30,
     backBufferLength: 30,
     maxBufferLength: 10,
@@ -164,7 +166,7 @@ function initHls() {
   video.ontimeupdate = () => {
     if (video.currentTime > maxTime) {
       maxTime = video.currentTime;
-    } else if (maxTime - video.currentTime > 1.0 && maxTime - video.currentTime < 15.0) {
+    } else if (maxTime - video.currentTime > 0.4 && maxTime - video.currentTime < 15.0) {
       video.currentTime = maxTime;
     }
   };
