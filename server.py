@@ -1297,7 +1297,12 @@ def start_detection(d: dict):
     json.dump(cm, open(CAMERA_MODELS_JSON, "w"), indent=2)
     
     if cid in running: 
-        _async_kill(running[cid].get("proc")); 
+        proc = running[cid].get("proc")
+        if proc:
+            try:
+                proc.kill()
+                proc.wait(timeout=2.0)
+            except: pass
         del running[cid]
 
     # Clean only detected dir
@@ -1322,9 +1327,9 @@ def start_detection(d: dict):
         except Exception as e:
             print(f"[ERROR] Failed to save model_configs: {e}")
 
-    # Start detector worker with nice -n 19 to prevent AI inference from starving raw FFmpeg capture processes on RPi
+    # Start detector worker at standard priority to ensure instant subprocess startup (no OS starvation)
     print(f"[SERVER-TIMER] Spawning start_detection.py for Camera {cid} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    cmd = ["nice", "-n", "19", sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc, json.dumps(model_configs)]
+    cmd = [sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc, json.dumps(model_configs)]
     log = open(os.path.join(HLS_DIR, f"stream{cid}_detected/worker.log"), "a")
     proc_start = time.time()
     proc = subprocess.Popen(cmd, stdout=log, stderr=log)
