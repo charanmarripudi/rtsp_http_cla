@@ -685,7 +685,12 @@ def start_raw_stream(i, u):
         "-probesize", "2M", "-analyzeduration", "2M",
         "-i", u,
         "-an",
-        "-c:v", "copy",
+        "-r", "20",
+        "-vf", "scale=1280:720,setdar=16/9",
+        "-pix_fmt", "yuv420p",
+        "-c:v", "h264_v4l2m2m",
+        "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
+        "-g", "40", "-keyint_min", "40",
         "-f", "hls",
         "-hls_time", "2",
         "-hls_list_size", "8",
@@ -694,7 +699,7 @@ def start_raw_stream(i, u):
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started in copy passthrough mode (zero CPU)")
+    print(f"[LOG] Camera {cid} raw stream started using hardware acceleration h264_v4l2m2m (720p HD @ 20 FPS)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd, "start_time": int(time.time())}
     # Also, symlink any other cids already mapped to this rtsp
