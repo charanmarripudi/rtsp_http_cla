@@ -72,6 +72,9 @@ function playHLS(video, url, idx) {
 
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
+            if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
+                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+            }
             if (video.paused) {
                 video.play().catch(() => {});
             }
