@@ -67,15 +67,10 @@ class DetectorWorker:
         self._last_frame_time, self._cap_ok = time.time(), True
         self.alert_timers, self.alert_triggered = {}, set()
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
-        # Load YOLO models in a background thread so RTSP capture starts immediately
-        self.models = []
-        self._models_ready = threading.Event()
-        def _load_models():
-            paths = model_paths if isinstance(model_paths, list) else [model_paths]
-            self.models = [YOLO(mp) for mp in paths]
-            self._models_ready.set()
-            print(f"[LOG] Camera {self.cam_id} models loaded: {paths}", flush=True)
-        threading.Thread(target=_load_models, daemon=True).start()
+        # Load YOLO models synchronously during worker startup (runs in subprocess, doesn't block main server)
+        paths = model_paths if isinstance(model_paths, list) else [model_paths]
+        self.models = [YOLO(mp) for mp in paths]
+        print(f"[LOG] Camera {self.cam_id} models loaded: {paths}", flush=True)
         self._db_conn = None
 
     def _get_db_conn(self):
@@ -259,9 +254,6 @@ class DetectorWorker:
         return frame
 
     def _inference_thread(self):
-        # Wait for background model loading to complete before starting inference
-        print(f"[LOG] Camera {self.cam_id} inference thread waiting for models...", flush=True)
-        self._models_ready.wait()
         print(f"[LOG] Camera {self.cam_id} inference thread started", flush=True)
         while not self._stop_event.is_set():
             try:
