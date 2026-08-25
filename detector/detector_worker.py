@@ -58,7 +58,7 @@ class DetectorWorker:
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.40, iou=0.45, location="Camera", model_configs=None):
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
-        self.fps, self.width, self.height = 15.0, 854, 480
+        self.fps, self.width, self.height = 15.0, 1280, 720
         self._latest_raw_frame = None
         self._latest_boxes = []
         self._frame_lock, self._box_lock = threading.Lock(), threading.Lock()
@@ -96,10 +96,10 @@ class DetectorWorker:
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "main", "-level:v", "4.0",
-            "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
-            "-g", str(int(self.fps * 1.2)), # GOP = 1.2s * FPS (18 frames)
-            "-keyint_min", str(int(self.fps * 1.2)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "1.2", "-hls_list_size", "8",
+            "-b:v", "1400k", "-maxrate", "1800k", "-bufsize", "3M",
+            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
+            "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
+            "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
