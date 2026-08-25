@@ -685,13 +685,7 @@ def start_raw_stream(i, u):
         "-probesize", "2M", "-analyzeduration", "2M",
         "-i", u,
         "-an",
-        "-r", "20",
-        "-vf", "scale=1280:720,setdar=16/9",
-        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-profile:v", "main", "-level:v", "4.0",
-        "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.5M",
-        "-threads", "1", "-pix_fmt", "yuv420p",
-        "-g", "40", "-keyint_min", "40", "-sc_threshold", "0",
+        "-c:v", "copy",
         "-f", "hls",
         "-hls_time", "2",
         "-hls_list_size", "8",
@@ -700,7 +694,7 @@ def start_raw_stream(i, u):
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started with resolution: 1280x720 (720p HD), FPS: 20.0, Speed: 1.4x real-time (GOP 40), Bitrate: 600k (max 800k)")
+    print(f"[LOG] Camera {cid} raw stream started in copy passthrough mode (zero CPU)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd, "start_time": int(time.time())}
     # Also, symlink any other cids already mapped to this rtsp
@@ -808,30 +802,11 @@ class SafeFileResponse(FileResponse):
             else:
                 raise e
 
-def get_stream_start_time(path: str) -> int:
-    try:
-        parts = path.strip("/").split("/")
-        if parts:
-            folder = parts[0]
-            if folder.startswith("stream"):
-                cam_id = folder.replace("stream", "").split("_")[0]
-                if "_detected" in folder:
-                    if cam_id in running:
-                        return running[cam_id].get("start_time", 0)
-                else:
-                    if cam_id in cid_to_rtsp:
-                        rtsp = cid_to_rtsp[cam_id]
-                        if rtsp in rtsp_cache:
-                            return rtsp_cache[rtsp].get("start_time", 0)
-    except:
-        pass
-    return 0
-
 @app.get("/hls/{path:path}")
 async def serve_hls(path: str):
     fp = os.path.join(HLS_DIR, path)
     if not os.path.exists(fp): return Response(status_code=404)
-    
+    mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
     headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
@@ -840,33 +815,6 @@ async def serve_hls(path: str):
         "Pragma": "no-cache",
         "Expires": "0"
     }
-
-    if path.endswith(".m3u8"):
-        try:
-            t_val = get_stream_start_time(path) or int(os.path.getmtime(fp))
-            with open(fp, "r") as f:
-                content = f.read()
-            lines = []
-            for line in content.splitlines():
-                if line.strip().endswith(".ts"):
-                    base_line = line.strip()
-                    if "?" in base_line:
-                        lines.append(f"{base_line}&t={t_val}")
-                    else:
-                        lines.append(f"{base_line}?t={t_val}")
-                else:
-                    lines.append(line)
-            modified_content = "\n".join(lines)
-            return Response(
-                content=modified_content,
-                media_type="application/vnd.apple.mpegurl",
-                headers=headers
-            )
-        except Exception as e:
-            print(f"[ERROR] Failed to modify m3u8 playlist: {e}")
-            pass
-
-    mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
     return SafeFileResponse(fp, media_type=mt, headers=headers)
 
 @app.post("/api/update-thresholds")
