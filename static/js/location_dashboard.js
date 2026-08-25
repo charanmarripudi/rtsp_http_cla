@@ -244,6 +244,7 @@ class LocationDashboard {
         this.locationList = document.getElementById("locations-edit-list");
         this.locationWidgets = document.getElementById("location-widgets");
         this.alertList = document.getElementById("alert-list");
+        this.expandedLocs = new Set();
     }
 
     get locations() { return this.store.locations; }
@@ -428,13 +429,20 @@ class LocationDashboard {
         const locId = this.locationId(locIdx, loc);
         const cameras = this.streams.filter(stream => stream.location_id === locId || stream.location === loc.location);
         const card = document.createElement("div");
-        card.className = "widget-card collapsed";
+        const isExpanded = this.expandedLocs.has(locId);
+        card.className = isExpanded ? "widget-card expanded" : "widget-card collapsed";
         card.innerHTML = LocationDashboardTemplates.locationCard(loc, locIdx, cameras);
         const editor = card.querySelector(".camera-editor");
         cameras.forEach(stream => editor.appendChild(this.cameraEditorRow(stream)));
         card.querySelector(".widget-header").addEventListener("click", () => {
+            const isCollapsed = card.classList.contains("collapsed");
             card.classList.toggle("collapsed");
-            card.classList.toggle("expanded", !card.classList.contains("collapsed"));
+            card.classList.toggle("expanded", isCollapsed);
+            if (isCollapsed) {
+                this.expandedLocs.add(locId);
+            } else {
+                this.expandedLocs.delete(locId);
+            }
         });
         card.querySelector(".add-camera").addEventListener("click", () => this.addCamera(loc, locIdx));
 
@@ -533,8 +541,8 @@ class LocationDashboard {
             hls_raw: `/hls/stream${nextId}_raw/playlist.m3u8`,
             hls_detected: `/hls/stream${nextId}_detected/playlist.m3u8`
         });
+        this.expandedLocs.add(this.locationId(locIdx, loc));
         this.renderLocationWidgets(true);
-        this.saveCameras(false);
     }
 
     removeCamera(stream) {
