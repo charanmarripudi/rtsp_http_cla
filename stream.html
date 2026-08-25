@@ -138,24 +138,25 @@ function initHls() {
   }
 
   const hls = new Hls({
-    /* ── Buffer ────────────────────────────────── */
+    enableWorker: true,
     lowLatencyMode: true,
-    liveSyncDurationCount: 2,
+    liveSyncDurationCount: 4.0,       // 4 segments cushion (absorbs Tailscale Funnel network spikes)
+    liveMaxLatencyDurationCount: 8,   // catch up if latency > 8 segments
     liveBackBufferLength: 0,
     backBufferLength: 0,
-    maxBufferLength: 5,
-    maxMaxBufferLength: 10,
+    maxBufferLength: 10,
+    maxMaxBufferLength: 15,
 
     /* ── Startup tolerance ─────────────────────── */
-    manifestLoadingTimeOut:  15000,
-    manifestLoadingMaxRetry: 8,
-    manifestLoadingRetryDelay: 1000,
+    manifestLoadingTimeOut:  20000,
+    manifestLoadingMaxRetry: 10,
+    manifestLoadingRetryDelay: 500,
 
-    levelLoadingTimeOut:  15000,
-    levelLoadingMaxRetry: 6,
+    levelLoadingTimeOut:  20000,
+    levelLoadingMaxRetry: 10,
 
     fragLoadingTimeOut:  20000,
-    fragLoadingMaxRetry: 6,
+    fragLoadingMaxRetry: 10,
 
     /* ── Live edge ─────────────────────────────── */
     startPosition: -1,
