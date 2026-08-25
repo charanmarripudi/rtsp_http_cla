@@ -58,12 +58,12 @@ function playHLS(video, url, idx) {
             }
             if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
                 const delay = hls.liveSyncPosition - video.currentTime;
-                if (delay > 10.0) {
+                if (delay > 7.0) {
                     try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
                     video.playbackRate = 1.0;
-                } else if (delay > 6.0) {
-                    video.playbackRate = 1.15;
-                } else if (delay <= 4.0) {
+                } else if (delay > 4.5) {
+                    video.playbackRate = 1.25;
+                } else if (delay <= 3.0) {
                     video.playbackRate = 1.0;
                 }
             }
