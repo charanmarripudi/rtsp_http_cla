@@ -53,18 +53,28 @@ function playHLS(video, url, idx) {
 
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
-            if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
-                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
-            }
             if (video.paused) {
                 video.play().catch(() => {});
             }
             return;
         }
         if (data.fatal) { 
-            hls.destroy(); 
-            delete hlsInstances[idx]; 
-            setTimeout(() => playHLS(video, url, idx), 2000); 
+            switch(data.type) {
+                case Hls.ErrorTypes.NETWORK_ERROR:
+                    console.warn("HLS Network Error, attempting recovery...", data);
+                    hls.startLoad();
+                    break;
+                case Hls.ErrorTypes.MEDIA_ERROR:
+                    console.warn("HLS Media Error, attempting recovery...", data);
+                    hls.recoverMediaError();
+                    break;
+                default:
+                    console.error("Fatal HLS Error, restarting player...", data);
+                    hls.destroy(); 
+                    delete hlsInstances[idx]; 
+                    setTimeout(() => playHLS(video, url, idx), 2000); 
+                    break;
+            }
         }
     });
 }

@@ -88,24 +88,44 @@ class DetectorWorker:
 
     def _create_ffmpeg(self):
         os.makedirs(self.output_dir, exist_ok=True)
-        # Software encoder (libx264 ultrafast) — 100% reliable on both Mac and Raspberry Pi
         session_id = int(time.time())
-        cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
-            "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
-            "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
-            "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
-            "-profile:v", "main", "-level:v", "4.0",
-            "-b:v", "1400k", "-maxrate", "1800k", "-bufsize", "3M",
-            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS
-            "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
-            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
-            "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
-            os.path.join(self.output_dir, "playlist.m3u8")
-        ]
+        import platform
+        is_rpi_sys = platform.system() == "Linux" and platform.machine() in ["aarch64", "armv7l"]
+
+        if is_rpi_sys:
+            # Hardware-accelerated encoder wrapper for RPi to offload CPU
+            cmd = [
+                "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+                "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
+                "-r", str(self.fps), "-i", "-", "-an", 
+                "-vf", "format=yuv420p",
+                "-c:v", "h264_v4l2m2m",
+                "-b:v", "1400k", "-maxrate", "1800k", "-bufsize", "3M",
+                "-g", str(int(self.fps * 2)), 
+                "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
+                "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
+                "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
+                "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
+                os.path.join(self.output_dir, "playlist.m3u8")
+            ]
+        else:
+            # Software fallback wrapper for Mac/PC
+            cmd = [
+                "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+                "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
+                "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
+                "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
+                "-profile:v", "main", "-level:v", "4.0",
+                "-b:v", "1400k", "-maxrate", "1800k", "-bufsize", "3M",
+                "-g", str(int(self.fps * 2)), 
+                "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
+                "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
+                "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
+                "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
+                os.path.join(self.output_dir, "playlist.m3u8")
+            ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Speed: 1.4x real-time (GOP 30), Bitrate: 800k (max 1000k)", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 1400k (max 1800k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):

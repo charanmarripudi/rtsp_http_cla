@@ -694,26 +694,51 @@ def start_raw_stream(i, u):
     try: os.remove(log_file)
     except: pass
     session_id = int(time.time())
-    cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
-        "-rtsp_transport", "tcp",
-        "-probesize", "2M", "-analyzeduration", "2M",
-        "-i", u,
-        "-an",
-        "-r", "15",
-        "-vf", "scale=1280:720,setdar=16/9",
-        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-profile:v", "baseline", "-level:v", "4.0",
-        "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.6M",
-        "-threads", "1", "-pix_fmt", "yuv420p",
-        "-g", "30", "-keyint_min", "30", "-sc_threshold", "0",
-        "-f", "hls",
-        "-hls_time", "2",
-        "-hls_list_size", "5",
-        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
-        "-hls_segment_filename", os.path.join(sd, f"segment_{session_id}_%d.ts"),
-        os.path.join(sd, "playlist.m3u8")
-    ]
+    import platform
+    is_rpi_sys = platform.system() == "Linux" and platform.machine() in ["aarch64", "armv7l"]
+
+    if is_rpi_sys:
+        # Hardware H.264 encoder on Raspberry Pi to reduce CPU usage and prevent overheating
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+            "-rtsp_transport", "tcp",
+            "-probesize", "2M", "-analyzeduration", "2M",
+            "-i", u,
+            "-an",
+            "-vf", "scale=1280:720:flags=fast_bilinear,format=yuv420p,setdar=16/9",
+            "-c:v", "h264_v4l2m2m",
+            "-b:v", "1200k", "-maxrate", "1600k", "-bufsize", "3M",
+            "-r", "15",
+            "-g", "30", "-keyint_min", "30", "-sc_threshold", "0",
+            "-f", "hls",
+            "-hls_time", "2",
+            "-hls_list_size", "8",
+            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
+            "-hls_segment_filename", os.path.join(sd, f"segment_{session_id}_%d.ts"),
+            os.path.join(sd, "playlist.m3u8")
+        ]
+    else:
+        # Software fallback for development environments (Mac/PC)
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+            "-rtsp_transport", "tcp",
+            "-probesize", "2M", "-analyzeduration", "2M",
+            "-i", u,
+            "-an",
+            "-r", "15",
+            "-vf", "scale=1280:720,setdar=16/9",
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-profile:v", "baseline", "-level:v", "4.0",
+            "-b:v", "1200k", "-maxrate", "1600k", "-bufsize", "3M",
+            "-threads", "2", "-pix_fmt", "yuv420p",
+            "-g", "30", "-keyint_min", "30", "-sc_threshold", "0",
+            "-f", "hls",
+            "-hls_time", "2",
+            "-hls_list_size", "8",
+            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
+            "-hls_segment_filename", os.path.join(sd, f"segment_{session_id}_%d.ts"),
+            os.path.join(sd, "playlist.m3u8")
+        ]
     log_fh = open(log_file, "w")
     print(f"[LOG] Camera {cid} raw stream started at 854x480, 15 FPS, 300k bitrate (CPU-efficient for parallel detection)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
