@@ -75,6 +75,9 @@ class DetectorWorker:
         print(f"[WORKER-TIMER] Camera {self.cam_id} models loaded in {int((time.time() - t_load_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: {paths}", flush=True)
         self._db_conn = None
 
+    def stop(self):
+        self._stop_event.set()
+
     def _get_db_conn(self):
         if not PSYCOPG2_AVAILABLE: return None
         if self._db_conn is None or self._db_conn.closed:

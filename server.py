@@ -39,6 +39,30 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, FileResponse
 import os, glob, subprocess, mimetypes, signal, json, socket, time, threading, sys
 
+# Import DetectorWorker to pre-load PyTorch/YOLO libraries at server boot time (takes ~25s once on boot)
+# so that camera detection starts instantly (in under 3 seconds) when clicking Start in the browser.
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, os.path.join(BASE_DIR, "detector"))
+    from detector_worker import DetectorWorker
+except Exception as e:
+    print(f"[ERROR] Failed to pre-import DetectorWorker: {e}")
+
+class ThreadProcWrapper:
+    """Wrapper that mimics a subprocess.Popen object so that running worker threads
+    behave identically to separate processes in server.py (poll, kill, wait, pid)."""
+    def __init__(self, worker, thread):
+        self.worker = worker
+        self.thread = thread
+        self.pid = 99999  # Dummy PID for logs
+    def poll(self):
+        # Returns None if worker thread is running, or 0 if finished/stopped
+        return None if (self.thread.is_alive() and not self.worker._stop_event.is_set()) else 0
+    def kill(self):
+        self.worker.stop()
+    def wait(self, timeout=None):
+        self.thread.join(timeout=timeout)
+
 def get_alerts_base_url():
     try:
         BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1327,13 +1351,20 @@ def start_detection(d: dict):
         except Exception as e:
             print(f"[ERROR] Failed to save model_configs: {e}")
 
-    # Start detector worker at standard priority to ensure instant subprocess startup (no OS starvation)
-    print(f"[SERVER-TIMER] Spawning start_detection.py for Camera {cid} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    cmd = [sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc, json.dumps(model_configs)]
-    log = open(os.path.join(HLS_DIR, f"stream{cid}_detected/worker.log"), "a")
-    proc_start = time.time()
-    proc = subprocess.Popen(cmd, stdout=log, stderr=log)
-    print(f"[SERVER-TIMER] Spawned start_detection.py process (PID: {proc.pid}) for Camera {cid} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (duration: {int((time.time() - proc_start)*1000)}ms)")
+    # Start detector worker inside an inline thread (avoids subprocess boot overhead entirely)
+    print(f"[SERVER-TIMER] Initializing DetectorWorker thread for Camera {cid} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
+    t_start = time.time()
+    
+    model_paths = [os.path.join(BASE_DIR, "models", m) for m in mods]
+    worker = DetectorWorker(rtsp, det_dir, model_paths, conf=conf, iou=iou, location=loc, model_configs=model_configs)
+    
+    # Run the worker's run() loop in a daemon thread
+    thread = threading.Thread(target=worker.run, daemon=True)
+    thread.start()
+    
+    proc = ThreadProcWrapper(worker, thread)
+    print(f"[SERVER-TIMER] DetectorWorker thread started for Camera {cid} in {int((time.time() - t_start)*1000)}ms")
+    
     running[cid] = {"proc": proc, "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs, "start_time": int(time.time())}
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
 
