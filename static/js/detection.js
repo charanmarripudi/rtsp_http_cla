@@ -96,6 +96,7 @@ function playHLS(video, url, idx) {
 
 async function waitAndSwitch(video, meta, idx, box, badge) {
     const start = Date.now();
+    console.log(`[CLIENT-TIMER] waitAndSwitch started for Camera ${idx} at ${new Date().toLocaleTimeString()} (elapsed: 0ms)`);
     while (Date.now() - start < 90000) { // Keep waiting up to 90s for PyTorch loading
         if (!box.classList.contains("detecting")) return;
         try {
@@ -108,6 +109,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
                         window.cameraTransitioning[idx] = false;
                         return;
                     }
+                    console.log(`[CLIENT-TIMER] Camera ${idx} segments ready (tsCount: ${tsCount}) at ${new Date().toLocaleTimeString()} (elapsed: ${Date.now() - start}ms). Switching stream...`);
                     playHLS(video, meta.hls_detected, idx);
                     if (badge) badge.textContent = "● AI ACTIVE";
                     fetch("/api/stop-raw", {
@@ -122,6 +124,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
         } catch (_) {}
         await new Promise(res => setTimeout(res, 400));
     }
+    console.warn(`[CLIENT-TIMER] waitAndSwitch timed out for Camera ${idx} after ${Date.now() - start}ms`);
     window.cameraTransitioning[idx] = false;
 }
 
@@ -273,16 +276,20 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         const iou = meta.iou || 0.45;
         const location = meta.location || meta.label || "Camera " + (i+1);
         
+        console.log(`[CLIENT-TIMER] Start button clicked for Camera ${i} at ${new Date().toLocaleTimeString()}`);
         box.classList.add("detecting");
         updateBadge(true);
         if (badge) badge.textContent = "● AI: STARTING...";
         
         window.cameraTransitioning[camStr] = true;
+        const apiStart = Date.now();
+        console.log(`[CLIENT-TIMER] Sending /api/start for Camera ${i} at ${new Date().toLocaleTimeString()}...`);
         await fetch("/api/start", { 
             method: "POST", 
             headers: { "Content-Type": "application/json" }, 
             body: JSON.stringify({ camera: i, models, rtsp: meta.rtsp, conf, iou, location, model_configs: domModelConfigs }) 
         });
+        console.log(`[CLIENT-TIMER] /api/start response received for Camera ${i} at ${new Date().toLocaleTimeString()} (duration: ${Date.now() - apiStart}ms)`);
         waitAndSwitch(video, meta, i, box, badge);
     };
 

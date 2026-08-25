@@ -1323,9 +1323,13 @@ def start_detection(d: dict):
             print(f"[ERROR] Failed to save model_configs: {e}")
 
     # Start detector worker with nice -n 19 to prevent AI inference from starving raw FFmpeg capture processes on RPi
+    print(f"[SERVER-TIMER] Spawning start_detection.py for Camera {cid} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     cmd = ["nice", "-n", "19", sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc, json.dumps(model_configs)]
     log = open(os.path.join(HLS_DIR, f"stream{cid}_detected/worker.log"), "a")
-    running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs, "start_time": int(time.time())}
+    proc_start = time.time()
+    proc = subprocess.Popen(cmd, stdout=log, stderr=log)
+    print(f"[SERVER-TIMER] Spawned start_detection.py process (PID: {proc.pid}) for Camera {cid} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (duration: {int((time.time() - proc_start)*1000)}ms)")
+    running[cid] = {"proc": proc, "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs, "start_time": int(time.time())}
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
 
 @app.post("/api/stop-raw")

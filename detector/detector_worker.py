@@ -69,8 +69,10 @@ class DetectorWorker:
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         # Load YOLO models synchronously during worker startup (runs in subprocess, doesn't block main server)
         paths = model_paths if isinstance(model_paths, list) else [model_paths]
+        print(f"[WORKER-TIMER] Camera {self.cam_id} model loading started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+        t_load_start = time.time()
         self.models = [YOLO(mp) for mp in paths]
-        print(f"[LOG] Camera {self.cam_id} models loaded: {paths}", flush=True)
+        print(f"[WORKER-TIMER] Camera {self.cam_id} models loaded in {int((time.time() - t_load_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: {paths}", flush=True)
         self._db_conn = None
 
     def _get_db_conn(self):
@@ -307,7 +309,8 @@ class DetectorWorker:
             self._cap_ok = True
 
             try:
-                # Use resolution set in __init__ (854x480)
+                print(f"[WORKER-TIMER] Camera {self.cam_id} connecting to RTSP at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...", flush=True)
+                t_conn_start = time.time()
                 cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 
@@ -317,16 +320,25 @@ class DetectorWorker:
                     cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
                     retry_count += 1
                 
+                print(f"[WORKER-TIMER] Camera {self.cam_id} RTSP connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+                
                 if cap and cap.isOpened():
                     cap_t = threading.Thread(target=self._capture_thread, args=(cap,), daemon=True)
                     cap_t.start()
 
                 # Wait up to 5s for the first real frame from camera before starting FFmpeg
-                t0 = time.time()
-                while time.time() - t0 < 5.0 and self._latest_raw_frame is None:
+                print(f"[WORKER-TIMER] Camera {self.cam_id} waiting for first raw frame...", flush=True)
+                t_frame_start = time.time()
+                while time.time() - t_frame_start < 5.0 and self._latest_raw_frame is None:
                     time.sleep(0.05)
                 
+                print(f"[WORKER-TIMER] Camera {self.cam_id} first raw frame received in {int((time.time() - t_frame_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+                
+                print(f"[WORKER-TIMER] Camera {self.cam_id} creating FFmpeg process...", flush=True)
+                t_ff_start = time.time()
                 ffmpeg = self._create_ffmpeg()
+                print(f"[WORKER-TIMER] Camera {self.cam_id} FFmpeg process created in {int((time.time() - t_ff_start)*1000)}ms", flush=True)
+                
                 inf_t = threading.Thread(target=self._inference_thread, daemon=True)
                 inf_t.start()
                 
