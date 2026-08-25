@@ -956,9 +956,25 @@ def save_streams(
         
         # Find valid location
         valid_loc = get_valid_loc(location, location_id)
-        if not valid_loc and rtsp.strip():
-            # If we're adding a stream, require valid location
-            return {"error": "Location must be from your manually managed locations. Please use a valid location name or ID."}
+        if not valid_loc and rtsp.strip() and location:
+            # Auto-register location if not found
+            loc_id = location_id or f"loc-{int(time.time())}"
+            valid_loc = {
+                "id": loc_id,
+                "location": location,
+                "device_id": "RPI-001",
+                "serial_number": "",
+                "device_ip": "192.168.96.36",
+                "device_type": "rpi",
+                "device_status": "offline"
+            }
+            current_locations = read_locations()
+            current_locations.append(valid_loc)
+            write_json_atomic(LOCATIONS_JSON, current_locations)
+            valid_loc_map[location] = valid_loc
+            valid_loc_map[loc_id] = valid_loc
+        elif not valid_loc and rtsp.strip():
+            return {"error": "Location name is required to auto-register this new location."}
         
         # Find if this specific RTSP already exists
         exists_idx = -1
@@ -1008,8 +1024,25 @@ def save_streams(
             if entry.get("rtsp"):
                 # Validate location is from valid locations
                 valid_loc = get_valid_loc(entry.get("location"), entry.get("location_id"))
-                if not valid_loc:
-                    continue  # Skip invalid locations
+                if not valid_loc and entry.get("location"):
+                    # Auto-register location if not found
+                    loc_id = entry.get("location_id") or f"loc-{int(time.time() * 1000) + len(new_entries_to_add)}"
+                    valid_loc = {
+                        "id": loc_id,
+                        "location": entry["location"],
+                        "device_id": "RPI-001",
+                        "serial_number": "",
+                        "device_ip": "192.168.96.36",
+                        "device_type": "rpi",
+                        "device_status": "offline"
+                    }
+                    current_locations = read_locations()
+                    current_locations.append(valid_loc)
+                    write_json_atomic(LOCATIONS_JSON, current_locations)
+                    valid_loc_map[entry["location"]] = valid_loc
+                    valid_loc_map[loc_id] = valid_loc
+                elif not valid_loc:
+                    continue  # Skip if no location name is available to register
                 # Update entry with valid location data
                 entry["location"] = valid_loc["location"]
                 entry["location_id"] = valid_loc["id"]
