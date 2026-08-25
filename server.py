@@ -971,6 +971,8 @@ def save_streams(
             current_locations = read_locations()
             current_locations.append(valid_loc)
             write_json_atomic(LOCATIONS_JSON, current_locations)
+            with config_cache_lock:
+                _locations_cache = None
             valid_loc_map[location] = valid_loc
             valid_loc_map[loc_id] = valid_loc
         elif not valid_loc and rtsp.strip():
@@ -1039,6 +1041,8 @@ def save_streams(
                     current_locations = read_locations()
                     current_locations.append(valid_loc)
                     write_json_atomic(LOCATIONS_JSON, current_locations)
+                    with config_cache_lock:
+                        _locations_cache = None
                     valid_loc_map[entry["location"]] = valid_loc
                     valid_loc_map[loc_id] = valid_loc
                 elif not valid_loc:
