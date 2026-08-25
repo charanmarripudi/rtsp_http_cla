@@ -81,6 +81,7 @@ class DetectorWorker:
     def _create_ffmpeg(self):
         os.makedirs(self.output_dir, exist_ok=True)
         # Software encoder (libx264 ultrafast) — 100% reliable on both Mac and Raspberry Pi
+        session_id = int(time.time())
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
@@ -92,7 +93,7 @@ class DetectorWorker:
             "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
-            "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
+            "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
