@@ -369,14 +369,7 @@ class DetectorWorker:
                     # Ultra-fast in-place resize to 720p HD
                     pf = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
                     
-                    # Draw current local date and time in the top-left corner of the detected stream
-                    try:
-                        time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        t_size = cv2.getTextSize(time_str, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)[0]
-                        cv2.rectangle(pf, (15, 10), (15 + t_size[0] + 10, 10 + t_size[1] + 12), (0, 0, 0), -1)
-                        cv2.putText(pf, time_str, (20, 15 + t_size[1] + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-                    except:
-                        pass
+
 
                     # Send copy to inference thread if ready
                     if not self._frame_queue.full():
