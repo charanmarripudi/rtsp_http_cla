@@ -775,12 +775,16 @@ def monitor_raw_streams_loop():
             print(f"[MONITOR] Error: {e}")
         time.sleep(5)
 
-def stop_raw_stream(i):
+def stop_raw_stream(i, protect_rtsps=None):
     cid = str(i)
     if cid in running: _async_kill(running[cid].get("proc")); del running[cid]; _clean_camera_dirs(cid)
     # Check if it's in our cid_to_rtsp
     if cid in cid_to_rtsp:
         rtsp = cid_to_rtsp[cid]
+        if protect_rtsps and rtsp in protect_rtsps:
+            # Do NOT kill the FFmpeg process as this RTSP stream is still needed by other cameras
+            del cid_to_rtsp[cid]
+            return
         # Check if this is the last cid using this rtsp
         count = sum(1 for k, v in cid_to_rtsp.items() if v == rtsp)
         if count <= 1:
@@ -1161,7 +1165,7 @@ def save_streams(
         if old_u != u:  # If RTSP changed OR new stream
             # Stop old if it was running
             if old_u is not None:
-                stop_raw_stream(int(cid))
+                stop_raw_stream(int(cid), protect_rtsps=urls)
                 # Clean both detected/raw only if this cid had a different RTSP before
                 _clean_camera_dirs(str(cid))
             start_raw_stream(i, u)
@@ -1171,7 +1175,7 @@ def save_streams(
     for cid in list(old_cid_to_rtsp.keys()):
         idx = int(cid)
         if idx > max_new_idx:
-            stop_raw_stream(idx)
+            stop_raw_stream(idx, protect_rtsps=urls)
             _clean_camera_dirs(cid)
     
     return get_streams(location_id=location_id, location=location)
@@ -1207,8 +1211,9 @@ def delete_stream(
             break
             
     if exists_idx >= 0:
-        # Stop the FFmpeg process
-        stop_raw_stream(exists_idx)
+        # Snapshot of current state before removal
+        old_cid_to_rtsp = dict(cid_to_rtsp)
+
         # Remove from metadata
         current_metadata.pop(exists_idx)
         
@@ -1221,6 +1226,24 @@ def delete_stream(
             _streams_metadata_cache = [dict(entry) for entry in current_metadata]
             _streams_location_index_cache = build_stream_location_index(_streams_metadata_cache)
             
+        # Re-link/shift running streams to match new indices without disrupting active processes
+        for i, u in enumerate(urls):
+            cid = str(i)
+            old_u = old_cid_to_rtsp.get(cid)
+            if old_u != u:  # RTSP changed or shifted
+                if old_u is not None:
+                    stop_raw_stream(int(cid), protect_rtsps=urls)
+                    _clean_camera_dirs(str(cid))
+                start_raw_stream(i, u)
+        
+        # Stop any index that is now out of bounds
+        max_new_idx = len(urls) - 1
+        for cid in list(old_cid_to_rtsp.keys()):
+            idx = int(cid)
+            if idx > max_new_idx:
+                stop_raw_stream(idx, protect_rtsps=urls)
+                _clean_camera_dirs(cid)
+                
         return {"status": "deleted", "message": "Camera removed successfully."}
     
     return {
