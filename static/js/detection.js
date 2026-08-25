@@ -56,51 +56,15 @@ function playHLS(video, url, idx) {
     hls.attachMedia(video);
     hls.loadSource(fullUrl);
 
-    // Watchdog timer: If video is playing but playhead is frozen for 3 seconds, nudge it slightly
-    if (video.dataset.watchdogId) {
-        clearInterval(Number(video.dataset.watchdogId));
-    }
-    let lastTime = -1;
-    let freezeCount = 0;
-    const watchdogId = setInterval(() => {
-        if (video.paused || video.ended) {
-            lastTime = -1;
-            freezeCount = 0;
-            return;
-        }
-        if (video.currentTime === lastTime) {
-            freezeCount++;
-            if (freezeCount >= 3) { // 3 seconds of no timeline progress
-                console.warn(`[WATCHDOG] Camera ${idx} frozen at ${video.currentTime}s, nudging...`);
-                try {
-                    video.currentTime += 0.1;
-                    video.play().catch(() => {});
-                } catch (_) {}
-                freezeCount = 0;
-            }
-        } else {
-            lastTime = video.currentTime;
-            freezeCount = 0;
-        }
-    }, 1000);
-    video.dataset.watchdogId = watchdogId;
-
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
         stopSimulatedCanvas(idx, video);
         video.muted = true;
         video.playsInline = true;
-        if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
-            try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
-        }
         video.play().catch(() => {});
     });
 
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
-            try {
-                // Nudge playhead forward by 0.1s to force the browser to skip missing frame gaps
-                video.currentTime += 0.1;
-            } catch (_) {}
             if (video.paused) {
                 video.play().catch(() => {});
             }
@@ -137,7 +101,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
             if (r.ok) {
                 const text = await r.text();
                 const tsCount = (text.match(/\.ts/g) || []).length;
-                if (tsCount >= 2) {
+                if (tsCount >= 3) {
                     if (!box.classList.contains("detecting")) {
                         window.cameraTransitioning[idx] = false;
                         return;
