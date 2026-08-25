@@ -58,7 +58,7 @@ class DetectorWorker:
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.40, iou=0.45, location="Camera", model_configs=None):
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
-        self.fps, self.width, self.height = 15.0, 1280, 720
+        self.fps, self.width, self.height = 15.0, 854, 480
         self._latest_raw_frame = None
         self._latest_boxes = []
         self._frame_lock, self._box_lock = threading.Lock(), threading.Lock()
@@ -67,7 +67,15 @@ class DetectorWorker:
         self._last_frame_time, self._cap_ok = time.time(), True
         self.alert_timers, self.alert_triggered = {}, set()
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
-        self.models = [YOLO(mp) for mp in (model_paths if isinstance(model_paths, list) else [model_paths])]
+        # Load YOLO models in a background thread so RTSP capture starts immediately
+        self.models = []
+        self._models_ready = threading.Event()
+        def _load_models():
+            paths = model_paths if isinstance(model_paths, list) else [model_paths]
+            self.models = [YOLO(mp) for mp in paths]
+            self._models_ready.set()
+            print(f"[LOG] Camera {self.cam_id} models loaded: {paths}", flush=True)
+        threading.Thread(target=_load_models, daemon=True).start()
         self._db_conn = None
 
     def _get_db_conn(self):
@@ -250,6 +258,10 @@ class DetectorWorker:
         return frame
 
     def _inference_thread(self):
+        # Wait for background model loading to complete before starting inference
+        print(f"[LOG] Camera {self.cam_id} inference thread waiting for models...", flush=True)
+        self._models_ready.wait()
+        print(f"[LOG] Camera {self.cam_id} inference thread started", flush=True)
         while not self._stop_event.is_set():
             try:
                 f = self._frame_queue.get(timeout=0.2)
@@ -302,7 +314,7 @@ class DetectorWorker:
             self._cap_ok = True
 
             try:
-                self.width, self.height = 1280, 720
+                # Use resolution set in __init__ (854x480)
                 cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 

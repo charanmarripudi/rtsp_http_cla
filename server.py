@@ -700,13 +700,13 @@ def start_raw_stream(i, u):
         "-probesize", "2M", "-analyzeduration", "2M",
         "-i", u,
         "-an",
-        "-r", "20",
-        "-vf", "scale=1280:720,setdar=16/9,drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='%{localtime\\:%Y-%m-%d %H\\:%M\\:%S}':x=20:y=20:fontcolor=white:fontsize=32:box=1:boxcolor=black@0.4",
+        "-r", "15",
+        "-vf", "scale=854:480,setdar=16/9",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-profile:v", "main", "-level:v", "4.0",
-        "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.2M",
+        "-profile:v", "baseline", "-level:v", "3.1",
+        "-b:v", "300k", "-maxrate", "400k", "-bufsize", "600k",
         "-threads", "1", "-pix_fmt", "yuv420p",
-        "-g", "24", "-keyint_min", "24", "-sc_threshold", "0",
+        "-g", "30", "-keyint_min", "30", "-sc_threshold", "0",
         "-f", "hls",
         "-hls_time", "1.2",
         "-hls_list_size", "8",
@@ -715,7 +715,7 @@ def start_raw_stream(i, u):
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started at 1280x720, 20 FPS, 600k bitrate with date-time overlay")
+    print(f"[LOG] Camera {cid} raw stream started at 854x480, 15 FPS, 300k bitrate (CPU-efficient for parallel detection)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd, "start_time": int(time.time())}
     # Also, symlink any other cids already mapped to this rtsp
