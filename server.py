@@ -810,14 +810,9 @@ class SafeFileResponse(FileResponse):
 
 @app.get("/hls/{path:path}")
 async def serve_hls(path: str):
-    # Remove raw-to-detected playlist intercept to prevent segment 404 mismatches and buffering
-    # if path.endswith("playlist.m3u8") and "_raw" in path:
-    #     cid = path.split("_raw")[0].replace("stream", "")
-    #     if cid in running and os.path.exists(os.path.join(HLS_DIR, f"stream{cid}_detected/playlist.m3u8")):
-    #         return await serve_hls(f"stream{cid}_detected/playlist.m3u8")
     fp = os.path.join(HLS_DIR, path)
     if not os.path.exists(fp): return Response(status_code=404)
-    mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
+    
     headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
@@ -826,6 +821,33 @@ async def serve_hls(path: str):
         "Pragma": "no-cache",
         "Expires": "0"
     }
+
+    if path.endswith(".m3u8"):
+        try:
+            mtime = int(os.path.getmtime(fp))
+            with open(fp, "r") as f:
+                content = f.read()
+            lines = []
+            for line in content.splitlines():
+                if line.strip().endswith(".ts"):
+                    base_line = line.strip()
+                    if "?" in base_line:
+                        lines.append(f"{base_line}&t={mtime}")
+                    else:
+                        lines.append(f"{base_line}?t={mtime}")
+                else:
+                    lines.append(line)
+            modified_content = "\n".join(lines)
+            return Response(
+                content=modified_content,
+                media_type="application/vnd.apple.mpegurl",
+                headers=headers
+            )
+        except Exception as e:
+            print(f"[ERROR] Failed to modify m3u8 playlist: {e}")
+            pass
+
+    mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
     return SafeFileResponse(fp, media_type=mt, headers=headers)
 
 @app.post("/api/update-thresholds")
@@ -1250,8 +1272,8 @@ def start_detection(d: dict):
         except Exception as e:
             print(f"[ERROR] Failed to save model_configs: {e}")
 
-    # Start detector worker with model_configs JSON argument
-    cmd = [sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc, json.dumps(model_configs)]
+    # Start detector worker with nice -n 19 to prevent AI inference from starving raw FFmpeg capture processes on RPi
+    cmd = ["nice", "-n", "19", sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc, json.dumps(model_configs)]
     log = open(os.path.join(HLS_DIR, f"stream{cid}_detected/worker.log"), "a")
     running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs}
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
