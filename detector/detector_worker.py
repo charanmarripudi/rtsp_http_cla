@@ -92,7 +92,7 @@ class DetectorWorker:
             "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
-            "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{int(time.time())}_%d.ts"), 
+            "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")

@@ -696,7 +696,7 @@ def start_raw_stream(i, u):
         "-hls_time", "2",
         "-hls_list_size", "8",
         "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
-        "-hls_segment_filename", os.path.join(sd, f"segment_{session_id}_%d.ts"),
+        "-hls_segment_filename", os.path.join(sd, "segment_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
