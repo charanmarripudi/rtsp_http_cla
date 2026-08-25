@@ -702,7 +702,7 @@ def start_raw_stream(i, u):
     log_fh = open(log_file, "w")
     print(f"[LOG] Camera {cid} raw stream started with resolution: 1280x720 (720p HD), FPS: 20.0, Speed: 1.4x real-time (GOP 40), Bitrate: 600k (max 800k)")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
-    rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd}
+    rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd, "start_time": int(time.time())}
     # Also, symlink any other cids already mapped to this rtsp
     for other_cid, other_rtsp in list(cid_to_rtsp.items()):
         if other_rtsp == normalized_rtsp and other_cid != cid:
@@ -808,6 +808,25 @@ class SafeFileResponse(FileResponse):
             else:
                 raise e
 
+def get_stream_start_time(path: str) -> int:
+    try:
+        parts = path.strip("/").split("/")
+        if parts:
+            folder = parts[0]
+            if folder.startswith("stream"):
+                cam_id = folder.replace("stream", "").split("_")[0]
+                if "_detected" in folder:
+                    if cam_id in running:
+                        return running[cam_id].get("start_time", 0)
+                else:
+                    if cam_id in cid_to_rtsp:
+                        rtsp = cid_to_rtsp[cam_id]
+                        if rtsp in rtsp_cache:
+                            return rtsp_cache[rtsp].get("start_time", 0)
+    except:
+        pass
+    return 0
+
 @app.get("/hls/{path:path}")
 async def serve_hls(path: str):
     fp = os.path.join(HLS_DIR, path)
@@ -824,7 +843,7 @@ async def serve_hls(path: str):
 
     if path.endswith(".m3u8"):
         try:
-            mtime = int(os.path.getmtime(fp))
+            t_val = get_stream_start_time(path) or int(os.path.getmtime(fp))
             with open(fp, "r") as f:
                 content = f.read()
             lines = []
@@ -832,9 +851,9 @@ async def serve_hls(path: str):
                 if line.strip().endswith(".ts"):
                     base_line = line.strip()
                     if "?" in base_line:
-                        lines.append(f"{base_line}&t={mtime}")
+                        lines.append(f"{base_line}&t={t_val}")
                     else:
-                        lines.append(f"{base_line}?t={mtime}")
+                        lines.append(f"{base_line}?t={t_val}")
                 else:
                     lines.append(line)
             modified_content = "\n".join(lines)
@@ -1275,7 +1294,7 @@ def start_detection(d: dict):
     # Start detector worker with nice -n 19 to prevent AI inference from starving raw FFmpeg capture processes on RPi
     cmd = ["nice", "-n", "19", sys.executable, os.path.join(BASE_DIR, "detector/start_detection.py"), cid, rtsp, ",".join(mods), str(conf), str(iou), loc, json.dumps(model_configs)]
     log = open(os.path.join(HLS_DIR, f"stream{cid}_detected/worker.log"), "a")
-    running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs}
+    running[cid] = {"proc": subprocess.Popen(cmd, stdout=log, stderr=log), "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs, "start_time": int(time.time())}
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
 
 @app.post("/api/stop-raw")
