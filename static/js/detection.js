@@ -81,7 +81,7 @@ function playHLS(video, url, idx) {
 
 async function waitAndSwitch(video, meta, idx, box, badge) {
     const start = Date.now();
-    while (Date.now() - start < 35000) {
+    while (Date.now() - start < 90000) { // Keep waiting up to 90s for PyTorch loading
         if (!box.classList.contains("detecting")) return;
         try {
             const r = await fetch(meta.hls_detected + "?t=" + Date.now());
@@ -112,7 +112,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
 
 async function waitAndSwitchRaw(video, meta, idx, box, badge) {
     const start = Date.now();
-    while (Date.now() - start < 35000) {
+    while (Date.now() - start < 90000) { // Keep waiting up to 90s for raw stream to recover
         if (box.classList.contains("detecting")) {
             window.cameraTransitioning[idx] = false;
             return;
