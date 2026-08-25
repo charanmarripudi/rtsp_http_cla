@@ -1091,19 +1091,8 @@ def save_streams(
         # Fallback to current state
         entries = read_streams_metadata()
 
-    # 4. Strict RTSP URL Validation: Check for duplicates and return a clean error to prevent silent drop
-    from fastapi import HTTPException
-    seen_rtsps = {}
-    for entry in entries:
-        r_url = str(entry.get("rtsp") or "").strip()
-        if r_url:
-            if r_url in seen_rtsps:
-                duplicate_location = seen_rtsps[r_url].get("location", "another location")
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"RTSP URL is already configured under the location '{duplicate_location}'! Each camera must have a unique RTSP URL."
-                )
-            seen_rtsps[r_url] = entry
+    # 4. Duplicate RTSP URLs are permitted to allow testing identical streams in multiple locations
+    pass
 
     # Common persistence logic
     old_metadata = read_streams_metadata()
