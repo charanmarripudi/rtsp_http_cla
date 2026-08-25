@@ -22,8 +22,8 @@ function playHLS(video, url, idx) {
         enableWorker: true,
         lowLatencyMode: true,
         startPosition: -1,               // Forces player to start at liveSyncPosition
-        liveSyncDurationCount: 1.5,      // 1.5 segments (3.0s cushion) for lower latency
-        liveMaxLatencyDurationCount: 4,  // Auto-catchup if delay drifts beyond 8s
+        liveSyncDurationCount: 2.2,      // 2.2 segments cushion (standard CCTV real-time speed)
+        liveMaxLatencyDurationCount: 4.5, // Auto-catchup if delay drifts beyond 9s
         liveDurationInfinity: true,      // Continuous rolling live stream across all devices
         liveBackBufferLength: 0,
         backBufferLength: 0,
@@ -94,7 +94,8 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
             const r = await fetch(meta.hls_detected + "?t=" + Date.now());
             if (r.ok) {
                 const text = await r.text();
-                if (text.includes(".ts")) {
+                const tsCount = (text.match(/\.ts/g) || []).length;
+                if (tsCount >= 3) {
                     if (!box.classList.contains("detecting")) {
                         window.cameraTransitioning[idx] = false;
                         return;

@@ -251,12 +251,27 @@ STREAMS_JSON = os.path.join(BASE_DIR, "streams.json")
 LOCATIONS_JSON = os.path.join(BASE_DIR, "locations.json")
 MODEL_DIR    = os.path.join(BASE_DIR, "models")
 HLS_DIR      = os.path.join(BASE_DIR, "hls")
-if os.path.islink(HLS_DIR):
-    try: os.unlink(HLS_DIR)
-    except: pass
-os.makedirs(HLS_DIR, exist_ok=True)
-os.makedirs(os.path.join(HLS_DIR, "alerts"), exist_ok=True)
+RAM_DISK_DIR = "/tmp/hls"
+try:
+    os.makedirs(RAM_DISK_DIR, exist_ok=True)
+    if os.path.lexists(HLS_DIR):
+        if os.path.islink(HLS_DIR):
+            os.unlink(HLS_DIR)
+        elif os.path.isdir(HLS_DIR):
+            import shutil
+            shutil.rmtree(HLS_DIR)
+        else:
+            os.remove(HLS_DIR)
+    os.symlink(RAM_DISK_DIR, HLS_DIR)
+    print(f"[RAM DISK] Successfully symlinked {HLS_DIR} to RAM disk {RAM_DISK_DIR}")
+except Exception as e:
+    print(f"[RAM DISK WARNING] Failed to set up RAM disk: {e}. Falling back to standard filesystem.")
+    if os.path.lexists(HLS_DIR) and os.path.islink(HLS_DIR):
+        try: os.unlink(HLS_DIR)
+        except: pass
+    os.makedirs(HLS_DIR, exist_ok=True)
 
+os.makedirs(os.path.join(HLS_DIR, "alerts"), exist_ok=True)
 ALERTS_DIR   = os.path.join(HLS_DIR, "alerts")
 ALERTS_JSON  = os.path.join(ALERTS_DIR, "alerts.json")
 CAMERA_MODELS_JSON = os.path.join(BASE_DIR, "camera_models.json")
@@ -691,9 +706,9 @@ def start_raw_stream(i, u):
         "-profile:v", "main", "-level:v", "4.0",
         "-b:v", "600k", "-maxrate", "800k", "-bufsize", "1.2M",
         "-threads", "1", "-pix_fmt", "yuv420p",
-        "-g", "40", "-keyint_min", "40", "-sc_threshold", "0",
+        "-g", "24", "-keyint_min", "24", "-sc_threshold", "0",
         "-f", "hls",
-        "-hls_time", "2",
+        "-hls_time", "1.2",
         "-hls_list_size", "8",
         "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(sd, f"segment_{session_id}_%d.ts"),

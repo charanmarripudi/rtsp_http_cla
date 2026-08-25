@@ -89,9 +89,9 @@ class DetectorWorker:
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "main", "-level:v", "4.0",
             "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
-            "-g", str(int(self.fps * 2)), # GOP = 2s * FPS (30 frames)
-            "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
+            "-g", str(int(self.fps * 1.2)), # GOP = 1.2s * FPS (18 frames)
+            "-keyint_min", str(int(self.fps * 1.2)), "-sc_threshold", "0",
+            "-f", "hls", "-hls_time", "1.2", "-hls_list_size", "8",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
