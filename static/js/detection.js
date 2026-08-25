@@ -22,13 +22,13 @@ function playHLS(video, url, idx) {
         enableWorker: true,
         lowLatencyMode: true,
         startPosition: -1,
-        liveSyncDurationCount: 1.5,      // 1.5 × 2s = 3s behind live (near-real-time)
-        liveMaxLatencyDurationCount: 3,  // Auto-catchup if delay > 6s (3 segments)
+        liveSyncDurationCount: 3.0,      // 3.0 × 2s = 6s behind live (absorbs public network spikes)
+        liveMaxLatencyDurationCount: 7,  // Auto-catchup if delay > 14s (7 segments)
         liveDurationInfinity: true,
         liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 6,
-        maxMaxBufferLength: 10,
+        maxBufferLength: 8,
+        maxMaxBufferLength: 12,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,
