@@ -341,12 +341,14 @@ function startClientSync() {
                 
                 if (isDetecting && !box.classList.contains("detecting")) {
                     box.classList.add("detecting");
-                    if (badge) { badge.className = "mode-badge active"; badge.textContent = "● AI ACTIVE"; }
-                    playHLS(video, meta.hls_detected, Number(camId));
+                    if (badge) { badge.className = "mode-badge active"; badge.textContent = "● AI: STARTING..."; }
+                    window.cameraTransitioning[camId] = true;
+                    waitAndSwitch(video, meta, Number(camId), box, badge);
                 } else if (!isDetecting && box.classList.contains("detecting")) {
                     box.classList.remove("detecting");
-                    if (badge) { badge.className = "mode-badge raw"; badge.textContent = "○ RAW"; }
-                    playHLS(video, meta.hls_raw, Number(camId));
+                    if (badge) { badge.className = "mode-badge raw"; badge.textContent = "○ RAW: SWITCHING..."; }
+                    window.cameraTransitioning[camId] = true;
+                    waitAndSwitchRaw(video, meta, Number(camId), box, badge);
                 }
             });
         } catch (_) {}
