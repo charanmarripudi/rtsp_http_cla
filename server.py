@@ -812,16 +812,24 @@ async def serve_camera_virtual_file(cam_id: str, filename: str):
 @app.get("/hls/camera/{cam_id}/playlist.m3u8")
 async def smart_hls_playlist(cam_id: str): return await serve_camera_virtual_file(cam_id, "playlist.m3u8")
 
-class SafeFileResponse(FileResponse):
-    async def __call__(self, scope, receive, send):
-        try:
-            await super().__call__(scope, receive, send)
-        except (RuntimeError, FileNotFoundError) as e:
-            if "does not exist" in str(e) or isinstance(e, FileNotFoundError):
-                res = Response(status_code=404)
-                await res(scope, receive, send)
-            else:
-                raise e
+def get_stream_start_time(path: str) -> int:
+    try:
+        parts = path.strip("/").split("/")
+        if parts:
+            folder = parts[0]
+            if folder.startswith("stream"):
+                cam_id = folder.replace("stream", "").split("_")[0]
+                if "_detected" in folder:
+                    if cam_id in running:
+                        return running[cam_id].get("start_time", 0)
+                else:
+                    if cam_id in cid_to_rtsp:
+                        rtsp = cid_to_rtsp[cam_id]
+                        if rtsp in rtsp_cache:
+                            return rtsp_cache[rtsp].get("start_time", 0)
+    except:
+        pass
+    return 0
 
 @app.get("/hls/{path:path}")
 async def serve_hls(path: str):
@@ -836,7 +844,33 @@ async def serve_hls(path: str):
         "Pragma": "no-cache",
         "Expires": "0"
     }
-    return SafeFileResponse(fp, media_type=mt, headers=headers)
+    
+    try:
+        if path.endswith(".m3u8"):
+            # Apply start-time query prefix cache-buster to playlist segment URLs
+            t_val = get_stream_start_time(path) or int(os.path.getmtime(fp))
+            with open(fp, "r") as f:
+                content = f.read()
+            lines = []
+            for line in content.splitlines():
+                if line.strip().endswith(".ts"):
+                    base_line = line.strip()
+                    if "?" in base_line:
+                        lines.append(f"{base_line}&t={t_val}")
+                    else:
+                        lines.append(f"{base_line}?t={t_val}")
+                else:
+                    lines.append(line)
+            modified_content = "\n".join(lines)
+            return Response(content=modified_content, media_type=mt, headers=headers)
+        else:
+            # Memory-safe direct read of active .ts segments to prevent Content-Length mismatches
+            with open(fp, "rb") as f:
+                content = f.read()
+            return Response(content=content, media_type=mt, headers=headers)
+    except Exception as e:
+        print(f"[ERROR] Failed serving HLS path {path}: {e}")
+        return Response(status_code=404)
 
 @app.post("/api/update-thresholds")
 async def update_thresholds(req: Request):
