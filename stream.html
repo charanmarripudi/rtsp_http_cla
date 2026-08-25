@@ -175,6 +175,15 @@ function initHls() {
 
   /* fatal error → destroy + retry without page reload */
   hls.on(Hls.Events.ERROR, (_, data) => {
+    if (data.details === 'bufferStalledError') {
+      if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
+        try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
+      }
+      if (video.paused) {
+        video.play().catch(() => {});
+      }
+      return;
+    }
     if (!data.fatal) return;
     console.warn(`[stream${idx}] fatal error, retrying in 4s`);
     hls.destroy();
