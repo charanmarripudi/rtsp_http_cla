@@ -21,14 +21,14 @@ function playHLS(video, url, idx) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        startPosition: -1,               // Forces player to start at liveSyncPosition (exact 4-5s cushion)
-        liveSyncDurationCount: 2.5,      // 2.5 segments (5.0s cushion) — guarantees playhead never hits live edge (1.42/1.42)
-        liveMaxLatencyDurationCount: 6,  // Auto-catchup if delay drifts beyond 12s
+        startPosition: -1,               // Forces player to start at liveSyncPosition
+        liveSyncDurationCount: 1.5,      // 1.5 segments (3.0s cushion) for lower latency
+        liveMaxLatencyDurationCount: 4,  // Auto-catchup if delay drifts beyond 8s
         liveDurationInfinity: true,      // Continuous rolling live stream across all devices
         liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 10,
-        maxMaxBufferLength: 15,
+        maxBufferLength: 6,
+        maxMaxBufferLength: 10,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,
@@ -58,23 +58,21 @@ function playHLS(video, url, idx) {
             }
             if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
                 const delay = hls.liveSyncPosition - video.currentTime;
-                if (delay > 7.0) {
+                if (delay > 4.0) {
                     try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
                     video.playbackRate = 1.0;
-                } else if (delay > 4.5) {
-                    video.playbackRate = 1.25;
-                } else if (delay <= 3.0) {
+                } else if (delay > 2.0) {
+                    video.playbackRate = 1.15;
+                } else if (delay <= 1.0) {
                     video.playbackRate = 1.0;
                 }
             }
-        }, 3000);
+        }, 2000);
     });
 
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
-            if (hls.liveSyncPosition && Number.isFinite(hls.liveSyncPosition)) {
-                try { video.currentTime = hls.liveSyncPosition; } catch (_) {}
-            }
+            // Let HLS.js handle stall recovery naturally without seeking back
             if (video.paused) {
                 video.play().catch(() => {});
             }
