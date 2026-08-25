@@ -797,6 +797,17 @@ async def serve_camera_virtual_file(cam_id: str, filename: str):
 @app.get("/hls/camera/{cam_id}/playlist.m3u8")
 async def smart_hls_playlist(cam_id: str): return await serve_camera_virtual_file(cam_id, "playlist.m3u8")
 
+class SafeFileResponse(FileResponse):
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        except (RuntimeError, FileNotFoundError) as e:
+            if "does not exist" in str(e) or isinstance(e, FileNotFoundError):
+                res = Response(status_code=404)
+                await res(scope, receive, send)
+            else:
+                raise e
+
 @app.get("/hls/{path:path}")
 async def serve_hls(path: str):
     # Remove raw-to-detected playlist intercept to prevent segment 404 mismatches and buffering
@@ -815,7 +826,7 @@ async def serve_hls(path: str):
         "Pragma": "no-cache",
         "Expires": "0"
     }
-    return FileResponse(fp, media_type=mt, headers=headers)
+    return SafeFileResponse(fp, media_type=mt, headers=headers)
 
 @app.post("/api/update-thresholds")
 async def update_thresholds(req: Request):
@@ -1080,15 +1091,19 @@ def save_streams(
         # Fallback to current state
         entries = read_streams_metadata()
 
-    # 4. Strict RTSP URL Deduplication to prevent duplicate RTSP entries on restart
-    seen_rtsps = set()
-    deduped_entries = []
+    # 4. Strict RTSP URL Validation: Check for duplicates and return a clean error to prevent silent drop
+    from fastapi import HTTPException
+    seen_rtsps = {}
     for entry in entries:
         r_url = str(entry.get("rtsp") or "").strip()
-        if r_url and r_url not in seen_rtsps:
-            seen_rtsps.add(r_url)
-            deduped_entries.append(entry)
-    entries = deduped_entries
+        if r_url:
+            if r_url in seen_rtsps:
+                duplicate_location = seen_rtsps[r_url].get("location", "another location")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"RTSP URL is already configured under the location '{duplicate_location}'! Each camera must have a unique RTSP URL."
+                )
+            seen_rtsps[r_url] = entry
 
     # Common persistence logic
     old_metadata = read_streams_metadata()

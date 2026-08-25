@@ -101,16 +101,22 @@ class LocationDashboardApi {
     }
 
     async saveCameras(streamPayload, cameraModels) {
-        await fetch("/api/streams", {
+        const resStreams = await fetch("/api/streams", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(streamPayload)
         });
-        await fetch("/api/camera-models", {
+        if (!resStreams.ok) {
+            throw new Error(await resStreams.text());
+        }
+        const resModels = await fetch("/api/camera-models", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(cameraModels)
         });
+        if (!resModels.ok) {
+            throw new Error(await resModels.text());
+        }
     }
 
     async devices() {
@@ -359,8 +365,18 @@ class LocationDashboard {
             });
         localStorage.setItem("offline_streams", JSON.stringify(payload));
         localStorage.setItem("offline_camera_models", JSON.stringify(this.cameraModels));
-        await this.api.saveCameras(payload, this.cameraModels);
-        if (shouldReload) window.location.reload();
+        try {
+            await this.api.saveCameras(payload, this.cameraModels);
+            if (shouldReload) window.location.reload();
+        } catch (err) {
+            console.error("Camera save error:", err);
+            alert("Error saving cameras: " + err.message);
+            const btn = document.getElementById("btn-save-cameras");
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = "Save Cameras";
+            }
+        }
     }
 
     renderLocationForm() {
