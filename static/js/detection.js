@@ -10,7 +10,22 @@ function playHLS(video, url, idx) {
         return; // Stream is already playing this URL — don't interrupt or buffer!
     }
     video.dataset.currentUrl = url;
-    if (hlsInstances[idx]) { hlsInstances[idx].destroy(); delete hlsInstances[idx]; }
+    if (hlsInstances[idx]) { 
+        try {
+            hlsInstances[idx].detachMedia();
+            hlsInstances[idx].destroy();
+        } catch (_) {}
+        delete hlsInstances[idx]; 
+    }
+    
+    // Clean reset of the video element to flush hardware decoders and prevent stalling
+    try {
+        video.pause();
+        video.src = "";
+        video.removeAttribute("src");
+        video.load();
+    } catch (_) {}
+
     const fullUrl = url + "?t=" + Date.now();
     if (typeof Hls === "undefined" || !Hls.isSupported()) { 
         video.src = fullUrl; 
