@@ -177,7 +177,15 @@ class DetectorWorker:
                             if cfg and isinstance(cfg, dict):
                                 class_configs = cfg.get("class_configs")
                                 if class_configs and isinstance(class_configs, dict):
+                                    # Robust key lookup (casing and separator agnostic)
                                     c_cfg = class_configs.get(cls)
+                                    if not c_cfg:
+                                        # Try case-insensitive and character replacements (e.g., _ to -)
+                                        norm_cls = cls.lower().replace("_", "-")
+                                        for k, val in class_configs.items():
+                                            if k.lower().replace("_", "-") == norm_cls:
+                                                c_cfg = val
+                                                break
                                     if c_cfg and isinstance(c_cfg, dict):
                                         cls_conf = float(c_cfg.get("conf", m_conf))
 
