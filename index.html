@@ -1094,8 +1094,8 @@
     </aside>
   </div>
 
-  <script src="/static/js/detection.js?v=5.5"></script>
-  <script src="/static/js/location_dashboard.js?v=3.6"></script>
+  <script src="/static/js/detection.js?v=5.6"></script>
+  <script src="/static/js/location_dashboard.js?v=3.7"></script>
 
   <script>
     window.addEventListener("DOMContentLoaded", async () => {
@@ -1185,6 +1185,26 @@
         }
         lastHeartbeat = now;
       }, 2000);
+
+      // Auto-refresh page on tab focus/visibility change (recovers backgrounded streams)
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          console.log("Tab became visible - refreshing page to recover streams...");
+          window.location.reload();
+        }
+      });
+
+      // Periodic Auto-refresh (every 30 minutes) to clear HLS buffer/memory leak
+      setInterval(() => {
+        const dashboardTab = document.getElementById("tab-dashboard");
+        const isDashboardActive = dashboardTab && dashboardTab.style.display !== "none";
+        
+        // Only refresh if the user is on the dashboard tab and tab is visible (not editing settings)
+        if (isDashboardActive && document.visibilityState === "visible") {
+          console.log("Periodic 30-min auto-refresh triggered...");
+          window.location.reload();
+        }
+      }, 30 * 60 * 1000); // 30 minutes in milliseconds
 
       // ── ALERT POLLING (Smart Update) ───────────────────────────
       const alertList = document.getElementById("alert-list");
