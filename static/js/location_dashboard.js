@@ -335,6 +335,22 @@ class LocationDashboard {
     }
 
     async saveCameras(shouldReload = true) {
+        const ppeModelsList = ["ppe_new.pt", "nik_ppe_best.pt"];
+        Object.keys(this.cameraModels).forEach(cid => {
+            const stream = this.streams.find(s => String(s.id) === cid);
+            if (stream) {
+                this.cameraModels[cid] = this.cameraModels[cid].filter(model => {
+                    if (ppeModelsList.includes(model)) {
+                        const clean = model.replace(".pt", "");
+                        const cfg = (stream.model_configs && (stream.model_configs[model] || stream.model_configs[clean])) || {};
+                        const enabled = cfg.enabled_classes || [];
+                        return enabled.length > 0;
+                    }
+                    return true;
+                });
+            }
+        });
+
         const payload = this.streams
             .filter(item => (item.rtsp || "").trim())
             .map((item, idx) => {

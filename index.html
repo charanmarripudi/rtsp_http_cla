@@ -1094,8 +1094,8 @@
     </aside>
   </div>
 
-  <script src="/static/js/detection.js?v=5.7"></script>
-  <script src="/static/js/location_dashboard.js?v=3.8"></script>
+  <script src="/static/js/detection.js?v=5.8"></script>
+  <script src="/static/js/location_dashboard.js?v=3.9"></script>
 
   <script>
     window.addEventListener("DOMContentLoaded", async () => {
@@ -1598,6 +1598,23 @@
       }
 
       async function saveCurrentConfiguration(shouldReload) {
+        // Clean up empty PPE models from cameraModelsMap before saving
+        const ppeModelsList = ["ppe_new.pt", "nik_ppe_best.pt"];
+        Object.keys(cameraModelsMap).forEach(cid => {
+            const stream = streamsArray[Number(cid)];
+            if (stream) {
+                cameraModelsMap[cid] = cameraModelsMap[cid].filter(model => {
+                    if (ppeModelsList.includes(model)) {
+                        const clean = model.replace(".pt", "");
+                        const cfg = (stream.model_configs && (stream.model_configs[model] || stream.model_configs[clean])) || {};
+                        const enabled = cfg.enabled_classes || [];
+                        return enabled.length > 0;
+                    }
+                    return true;
+                });
+            }
+        });
+
         const payload = streamsArray
           .map((item, idx) => ({
             rtsp: (item.rtsp || "").trim(),
