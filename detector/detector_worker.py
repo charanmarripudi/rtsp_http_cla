@@ -141,13 +141,19 @@ class DetectorWorker:
                 
                 m_conf = self.conf
                 m_iou = self.iou
+                enabled_classes = None
                 if isinstance(self.model_configs, dict):
                     cfg = self.model_configs.get(m_name) or self.model_configs.get(m_clean) or self.model_configs.get(m_name.lower())
                     if cfg and isinstance(cfg, dict):
                         m_conf = float(cfg.get("conf", self.conf))
                         m_iou = float(cfg.get("iou", self.iou))
+                        enabled_classes = cfg.get("enabled_classes")
 
-                for r in model.predict(f, conf=m_conf, iou=m_iou, imgsz=640, verbose=False):
+                detect_conf = m_conf
+                if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) > 0:
+                    detect_conf = min(m_conf, 0.05)
+
+                for r in model.predict(f, conf=detect_conf, iou=m_iou, imgsz=640, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
@@ -158,8 +164,25 @@ class DetectorWorker:
                             cls = r.names[int(b.cls[0])]
                             conf_val = float(b.conf[0])
 
-                            # Validate Box
-                            if not self._is_valid_box(conf_val, m_conf, bw, bh, box_area, f_w, f_h, f_area):
+                            # Filter by enabled classes if list is provided (case-insensitive match)
+                            if enabled_classes is not None and isinstance(enabled_classes, list):
+                                matched = cls in enabled_classes
+                                if not matched:
+                                    matched = any(e.lower() == cls.lower() for e in enabled_classes)
+                                if not matched:
+                                    continue
+
+                            # Load class-specific conf thresholds
+                            cls_conf = m_conf
+                            if cfg and isinstance(cfg, dict):
+                                class_configs = cfg.get("class_configs")
+                                if class_configs and isinstance(class_configs, dict):
+                                    c_cfg = class_configs.get(cls)
+                                    if c_cfg and isinstance(c_cfg, dict):
+                                        cls_conf = float(c_cfg.get("conf", m_conf))
+
+                            # Validate Box using class-specific confidence
+                            if not self._is_valid_box(conf_val, cls_conf, bw, bh, box_area, f_w, f_h, f_area):
                                 continue
 
                             label_text = f"{cls} {conf_val:.2f}"

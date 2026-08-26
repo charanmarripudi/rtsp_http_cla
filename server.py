@@ -944,6 +944,43 @@ async def update_thresholds(req: Request):
 @app.get("/api/models")
 def get_models(): return {"models": [f for f in os.listdir(MODEL_DIR) if f.endswith(".pt")]} if os.path.exists(MODEL_DIR) else {"models": []}
 
+MODEL_CLASSES_CACHE = {
+    "ppe_new.pt": [
+        "Cap-Lamp", "Gloves", "Gum-Boots", "Hard-Hat", "Mask", "NO-Mask",
+        "No-Cap-Lamp", "No-Gloves", "No-Gum-Boots", "No-Hard-Hat",
+        "No-Saftey-Belt", "No-Saftey-Vest", "Saftey-Belt", "Saftey-Vest"
+    ],
+    "nik_ppe_best.pt": [
+        "Fall-Detected", "Gloves", "Goggles", "Helmet", "Mask", "NO-Mask",
+        "No_Gloves", "No_Goggles", "No_Harness", "No_boots", "No_helmet",
+        "No_safety_vest", "Safety Vest", "boots", "harness"
+    ]
+}
+
+def get_model_classes(model_name: str):
+    if model_name in MODEL_CLASSES_CACHE:
+        return MODEL_CLASSES_CACHE[model_name]
+    clean_name = model_name.replace(".pt", "")
+    if clean_name + ".pt" in MODEL_CLASSES_CACHE:
+        return MODEL_CLASSES_CACHE[clean_name + ".pt"]
+    try:
+        from ultralytics import YOLO
+        m_path = os.path.join(MODEL_DIR, model_name)
+        if not os.path.exists(m_path):
+            m_path = os.path.join(MODEL_DIR, clean_name + ".pt")
+        if os.path.exists(m_path):
+            yolo = YOLO(m_path)
+            classes = list(yolo.names.values())
+            MODEL_CLASSES_CACHE[model_name] = classes
+            return classes
+    except Exception as e:
+        print(f"[ERROR] Failed to load classes for model {model_name}: {e}")
+    return []
+
+@app.get("/api/model-classes")
+def get_model_classes_endpoint(model: str):
+    return {"model": model, "classes": get_model_classes(model)}
+
 @app.get("/api/streams")
 def get_streams(
     location_id: Optional[str] = None, 

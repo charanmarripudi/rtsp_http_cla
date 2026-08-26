@@ -196,56 +196,123 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
             assigned.forEach(m => {
                 const cleanName = m.replace(".pt", "");
                 const mCfg = modelConfigs[m] || modelConfigs[cleanName] || {};
-                const cVal = mCfg.conf !== undefined ? parseFloat(mCfg.conf).toFixed(2) : (meta.conf !== undefined ? parseFloat(meta.conf).toFixed(2) : "0.40");
-                const iVal = mCfg.iou !== undefined ? parseFloat(mCfg.iou).toFixed(2) : (meta.iou !== undefined ? parseFloat(meta.iou).toFixed(2) : "0.45");
+                const enabled = mCfg.enabled_classes || [];
 
-                const card = document.createElement("div");
-                card.className = "model-card-box";
-                card.setAttribute("data-model", m);
-                card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
-                card.innerHTML = `
-                    <div class="model-chip-header" style="margin-bottom:6px;">
-                        <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${cleanName}</span>
-                    </div>
-                    <div class="thresholds compact" style="display:flex;gap:12px;">
-                        <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
-                        <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
-                    </div>`;
-                chipsList.appendChild(card);
+                if (enabled.length > 0) {
+                    enabled.forEach(cls => {
+                        const cCfg = (mCfg.class_configs && mCfg.class_configs[cls]) || {};
+                        const cVal = cCfg.conf !== undefined ? parseFloat(cCfg.conf).toFixed(2) : parseFloat(mCfg.conf || meta.conf || 0.40).toFixed(2);
+                        const iVal = cCfg.iou !== undefined ? parseFloat(cCfg.iou).toFixed(2) : parseFloat(mCfg.iou || meta.iou || 0.45).toFixed(2);
 
-                const cSlider = card.querySelector(".model-conf-slider");
-                const iSlider = card.querySelector(".model-iou-slider");
-                const cSpan = card.querySelector(".model-conf-val");
-                const iSpan = card.querySelector(".model-iou-val");
+                        const card = document.createElement("div");
+                        card.className = "model-card-box";
+                        card.setAttribute("data-model", m);
+                        card.setAttribute("data-class", cls);
+                        card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
+                        card.innerHTML = `
+                            <div class="model-chip-header" style="margin-bottom:6px;">
+                                <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${cleanName} - ${cls}</span>
+                            </div>
+                            <div class="thresholds compact" style="display:flex;gap:12px;">
+                                <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
+                                <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
+                            </div>`;
+                        chipsList.appendChild(card);
 
-                const syncModelThreshold = () => {
-                    clearTimeout(thresholdSyncTimer);
-                    thresholdSyncTimer = setTimeout(() => {
-                        const cNum = parseFloat(cSlider.value);
-                        const iNum = parseFloat(iSlider.value);
-                        meta.model_configs = meta.model_configs || {};
-                        meta.model_configs[m] = { conf: cNum, iou: iNum };
-                        meta.model_configs[cleanName] = { conf: cNum, iou: iNum };
+                        const cSlider = card.querySelector(".model-conf-slider");
+                        const iSlider = card.querySelector(".model-iou-slider");
+                        const cSpan = card.querySelector(".model-conf-val");
+                        const iSpan = card.querySelector(".model-iou-val");
 
-                        fetch("/api/update-thresholds", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ camera: i, model: m, conf: cNum, iou: iNum, model_configs: meta.model_configs })
-                        }).catch(() => {});
-                    }, 200);
-                };
+                        const syncClassThreshold = () => {
+                            clearTimeout(thresholdSyncTimer);
+                            thresholdSyncTimer = setTimeout(() => {
+                                const cNum = parseFloat(cSlider.value);
+                                const iNum = parseFloat(iSlider.value);
+                                
+                                meta.model_configs = meta.model_configs || {};
+                                
+                                meta.model_configs[m] = meta.model_configs[m] || {};
+                                meta.model_configs[m].class_configs = meta.model_configs[m].class_configs || {};
+                                meta.model_configs[m].class_configs[cls] = { conf: cNum, iou: iNum };
+                                
+                                meta.model_configs[cleanName] = meta.model_configs[cleanName] || {};
+                                meta.model_configs[cleanName].class_configs = meta.model_configs[cleanName].class_configs || {};
+                                meta.model_configs[cleanName].class_configs[cls] = { conf: cNum, iou: iNum };
 
-                if (cSlider) {
-                    cSlider.oninput = () => {
-                        if (cSpan) cSpan.textContent = parseFloat(cSlider.value).toFixed(2);
-                        syncModelThreshold();
+                                fetch("/api/update-thresholds", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ camera: i, model: m, conf: cNum, iou: iNum, model_configs: meta.model_configs })
+                                }).catch(() => {});
+                            }, 200);
+                        };
+
+                        if (cSlider) {
+                            cSlider.oninput = () => {
+                                if (cSpan) cSpan.textContent = parseFloat(cSlider.value).toFixed(2);
+                                syncClassThreshold();
+                            };
+                        }
+                        if (iSlider) {
+                            iSlider.oninput = () => {
+                                if (iSpan) iSpan.textContent = parseFloat(iSlider.value).toFixed(2);
+                                syncClassThreshold();
+                            };
+                        }
+                    });
+                } else {
+                    const cVal = mCfg.conf !== undefined ? parseFloat(mCfg.conf).toFixed(2) : (meta.conf !== undefined ? parseFloat(meta.conf).toFixed(2) : "0.40");
+                    const iVal = mCfg.iou !== undefined ? parseFloat(mCfg.iou).toFixed(2) : (meta.iou !== undefined ? parseFloat(meta.iou).toFixed(2) : "0.45");
+
+                    const card = document.createElement("div");
+                    card.className = "model-card-box";
+                    card.setAttribute("data-model", m);
+                    card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
+                    card.innerHTML = `
+                        <div class="model-chip-header" style="margin-bottom:6px;">
+                            <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${cleanName}</span>
+                        </div>
+                        <div class="thresholds compact" style="display:flex;gap:12px;">
+                            <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
+                            <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
+                        </div>`;
+                    chipsList.appendChild(card);
+
+                    const cSlider = card.querySelector(".model-conf-slider");
+                    const iSlider = card.querySelector(".model-iou-slider");
+                    const cSpan = card.querySelector(".model-conf-val");
+                    const iSpan = card.querySelector(".model-iou-val");
+
+                    const syncModelThreshold = () => {
+                        clearTimeout(thresholdSyncTimer);
+                        thresholdSyncTimer = setTimeout(() => {
+                            const cNum = parseFloat(cSlider.value);
+                            const iNum = parseFloat(iSlider.value);
+                            meta.model_configs = meta.model_configs || {};
+                            meta.model_configs[m] = { conf: cNum, iou: iNum };
+                            meta.model_configs[cleanName] = { conf: cNum, iou: iNum };
+
+                            fetch("/api/update-thresholds", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ camera: i, model: m, conf: cNum, iou: iNum, model_configs: meta.model_configs })
+                            }).catch(() => {});
+                        }, 200);
                     };
-                }
-                if (iSlider) {
-                    iSlider.oninput = () => {
-                        if (iSpan) iSpan.textContent = parseFloat(iSlider.value).toFixed(2);
-                        syncModelThreshold();
-                    };
+
+                    if (cSlider) {
+                        cSlider.oninput = () => {
+                            if (cSpan) cSpan.textContent = parseFloat(cSlider.value).toFixed(2);
+                            syncModelThreshold();
+                        };
+                    }
+                    if (iSlider) {
+                        iSlider.oninput = () => {
+                            if (iSpan) iSpan.textContent = parseFloat(iSlider.value).toFixed(2);
+                            syncModelThreshold();
+                        };
+                    }
                 }
             });
         }
@@ -256,16 +323,29 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         const models = cm[camStr] || [];
         if (!models.length) return alert("No models assigned");
         
-        const domModelConfigs = {};
+        const domModelConfigs = JSON.parse(JSON.stringify(meta.model_configs || {}));
         box.querySelectorAll(".model-card-box").forEach(card => {
             const mName = card.getAttribute("data-model");
+            const cls = card.getAttribute("data-class");
             const cSlider = card.querySelector(".model-conf-slider");
             const iSlider = card.querySelector(".model-iou-slider");
             if (mName && cSlider && iSlider) {
                 const cVal = parseFloat(cSlider.value);
                 const iVal = parseFloat(iSlider.value);
-                domModelConfigs[mName] = { conf: cVal, iou: iVal };
-                domModelConfigs[mName.replace(".pt", "")] = { conf: cVal, iou: iVal };
+                const clean = mName.replace(".pt", "");
+                
+                if (cls) {
+                    domModelConfigs[mName] = domModelConfigs[mName] || {};
+                    domModelConfigs[mName].class_configs = domModelConfigs[mName].class_configs || {};
+                    domModelConfigs[mName].class_configs[cls] = { conf: cVal, iou: iVal };
+
+                    domModelConfigs[clean] = domModelConfigs[clean] || {};
+                    domModelConfigs[clean].class_configs = domModelConfigs[clean].class_configs || {};
+                    domModelConfigs[clean].class_configs[cls] = { conf: cVal, iou: iVal };
+                } else {
+                    domModelConfigs[mName] = Object.assign({}, domModelConfigs[mName], { conf: cVal, iou: iVal });
+                    domModelConfigs[clean] = Object.assign({}, domModelConfigs[clean], { conf: cVal, iou: iVal });
+                }
             }
         });
 

@@ -339,9 +339,8 @@ class LocationDashboard {
             .filter(item => (item.rtsp || "").trim())
             .map((item, idx) => {
                 const camBox = document.getElementById(`cam-box-${item.id}`);
-                let modelConfigs = item.model_configs || {};
+                let modelConfigs = JSON.parse(JSON.stringify(item.model_configs || {}));
                 if (camBox) {
-                    const domConfigs = {};
                     camBox.querySelectorAll(".model-card-box").forEach(card => {
                         const mName = card.getAttribute("data-model");
                         const cSlider = card.querySelector(".model-conf-slider");
@@ -350,14 +349,15 @@ class LocationDashboard {
                             const cVal = parseFloat(cSlider.value);
                             const iVal = parseFloat(iSlider.value);
                             const clean = mName.replace(".pt", "");
-                            domConfigs[mName] = { conf: cVal, iou: iVal };
-                            domConfigs[clean] = { conf: cVal, iou: iVal };
+                            
+                            const existingPt = modelConfigs[mName] || {};
+                            const existingClean = modelConfigs[clean] || {};
+                            
+                            modelConfigs[mName] = Object.assign({}, existingPt, { conf: cVal, iou: iVal });
+                            modelConfigs[clean] = Object.assign({}, existingClean, { conf: cVal, iou: iVal });
                         }
                     });
-                    if (Object.keys(domConfigs).length) {
-                        modelConfigs = domConfigs;
-                        item.model_configs = modelConfigs;
-                    }
+                    item.model_configs = modelConfigs;
                 }
                 const p = this.store.cameraPayload(item, idx);
                 p.model_configs = modelConfigs;
@@ -409,10 +409,8 @@ class LocationDashboard {
     removeLocation(item, idx) {
         const id = this.locationId(idx, item);
         this.locations.splice(idx, 1);
-        // Also remove or unlink cameras associated with this location
         this.streams = this.streams.filter(stream => stream.location_id !== id && stream.location !== item.location);
 
-        // Cleanup camera model mappings for deleted cameras
         const streamIds = this.streams.map(s => String(s.id));
         Object.keys(this.cameraModels).forEach(cid => {
             if (!streamIds.includes(cid)) delete this.cameraModels[cid];
@@ -421,7 +419,6 @@ class LocationDashboard {
         this.renderLocationForm();
         this.renderLocationWidgets();
 
-        // PERSIST BOTH to prevent re-seeding from old streams.json
         this.saveLocations(false);
         this.saveCameras(false);
     }
@@ -429,7 +426,6 @@ class LocationDashboard {
     renderLocationWidgets(force = false) {
         const hasRenderedCards = this.locationWidgets.querySelectorAll(".widget-card").length > 0;
         if (!force && hasRenderedCards) {
-            // Location cards & video elements are already rendered and playing — keep them alive!
             return;
         }
         this.locationWidgets.innerHTML = "";
@@ -453,7 +449,7 @@ class LocationDashboard {
         card.querySelector(".widget-header").addEventListener("click", () => {
             const isCollapsed = card.classList.contains("collapsed");
             card.classList.toggle("collapsed");
-            card.classList.toggle("expanded", isCollapsed);
+            card.classList.toggle("expanded", !isCollapsed);
             if (isCollapsed) {
                 this.expandedLocs.add(locId);
             } else {
@@ -508,7 +504,7 @@ class LocationDashboard {
         row.innerHTML = `
             <span>${this.escapeHtml(stream.location || stream.label || `Camera ${Number(stream.id) + 1}`)}</span>
             <input class="camera-rtsp-input" value="${this.escapeHtml(stream.rtsp || "")}" placeholder="rtsp://camera-url" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:.72rem;padding:7px;border-radius:6px;">
-            <div class="model-assign-row" style="margin:0;">${this.modelChips(stream.id)}</div>
+            <div class="model-assign-row" style="margin:0;display:flex;flex-wrap:wrap;gap:8px;">${this.modelChips(stream.id, stream)}</div>
             <button class="btn-remove">Remove</button>`;
         row.querySelector(".camera-rtsp-input").addEventListener("input", e => { stream.rtsp = e.target.value; });
         row.querySelectorAll('input[type="checkbox"]').forEach(cb => this.bindModelCheckbox(cb, stream));
@@ -516,32 +512,112 @@ class LocationDashboard {
         return row;
     }
 
-    modelChips(cameraIndex) {
+    modelChips(cameraIndex, stream) {
         const assigned = this.cameraModels[String(cameraIndex)] || [];
         if (!this.allModels.length) return '<span style="color:var(--muted);font-size:.68rem;">No models available</span>';
-        return this.allModels.map(model => {
+        
+        let html = "";
+        
+        const ppeModels = ["ppe_new.pt", "nik_ppe_best.pt"];
+        this.allModels.forEach(model => {
+            if (ppeModels.includes(model)) return;
             const checked = assigned.includes(model);
-            return `<label class="${checked ? "model-chip checked" : "model-chip"}">
-                <input type="checkbox" value="${this.escapeHtml(model)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}">
-                ${this.escapeHtml(model.replace(".pt", ""))}
+            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
+                <input type="checkbox" class="parent-model-checkbox" value="${this.escapeHtml(model)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" style="cursor: pointer; accent-color: #00ffaa; margin: 0; margin-right: 4px;">
+                <span>${this.escapeHtml(model.replace(".pt", ""))}</span>
             </label>`;
-        }).join("");
+        });
+
+        const ppeNewClasses = [
+          "Cap-Lamp", "Gloves", "Gum-Boots", "Hard-Hat", "Mask", "NO-Mask",
+          "No-Cap-Lamp", "No-Gloves", "No-Gum-Boots", "No-Hard-Hat", 
+          "No-Saftey-Belt", "No-Saftey-Vest", "Saftey-Belt", "Saftey-Vest"
+        ];
+        const ppeNewCfg = (stream && stream.model_configs && (stream.model_configs["ppe_new.pt"] || stream.model_configs["ppe_new"])) || {};
+        const ppeNewEnabled = ppeNewCfg.enabled_classes || [];
+
+        html += `<div style="width:100%;font-size:0.62rem;color:#00ffaa;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">PPE-NEW CLASSES</div>`;
+        ppeNewClasses.forEach(cls => {
+            const checked = ppeNewEnabled.includes(cls);
+            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
+                <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="ppe_new.pt" style="cursor: pointer; accent-color: #00ffaa; margin: 0; margin-right: 4px;">
+                <span>${this.escapeHtml(cls)}</span>
+            </label>`;
+        });
+
+        const nikPpeClasses = [
+          "Fall-Detected", "Gloves", "Goggles", "Helmet", "Mask", "NO-Mask",
+          "No_Gloves", "No_Goggles", "No_Harness", "No_boots", "No_helmet",
+          "No_safety_vest", "Safety Vest", "boots", "harness"
+        ];
+        const nikCfg = (stream && stream.model_configs && (stream.model_configs["nik_ppe_best.pt"] || stream.model_configs["nik_ppe_best"])) || {};
+        const nikEnabled = nikCfg.enabled_classes || [];
+
+        html += `<div style="width:100%;font-size:0.62rem;color:#f5a623;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">NIK-PPE CLASSES</div>`;
+        nikPpeClasses.forEach(cls => {
+            const checked = nikEnabled.includes(cls);
+            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
+                <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="nik_ppe_best.pt" style="cursor: pointer; accent-color: #f5a623; margin: 0; margin-right: 4px;">
+                <span style="color:${checked ? '#f5a623' : ''}">${this.escapeHtml(cls)}</span>
+            </label>`;
+        });
+        
+        return html;
     }
 
     bindModelCheckbox(cb, stream) {
         cb.addEventListener("change", () => {
             const key = String(stream.id);
             this.cameraModels[key] = this.cameraModels[key] || [];
-            if (cb.checked && !this.cameraModels[key].includes(cb.value)) this.cameraModels[key].push(cb.value);
-            if (!cb.checked) this.cameraModels[key] = this.cameraModels[key].filter(model => model !== cb.value);
-            cb.closest(".model-chip").classList.toggle("checked", cb.checked);
+
+            if (cb.classList.contains("parent-model-checkbox")) {
+                const val = cb.value;
+                if (cb.checked) {
+                    if (!this.cameraModels[key].includes(val)) this.cameraModels[key].push(val);
+                } else {
+                    this.cameraModels[key] = this.cameraModels[key].filter(model => model !== val);
+                }
+                cb.closest(".model-chip").classList.toggle("checked", cb.checked);
+            } else {
+                const cls = cb.value;
+                const parentModel = cb.getAttribute("data-model") || "ppe_new.pt";
+                const cleanParent = parentModel.replace(".pt", "");
+                cb.closest(".model-chip").classList.toggle("checked", cb.checked);
+
+                const labelSpan = cb.nextElementSibling;
+                if (parentModel === "nik_ppe_best.pt" && labelSpan) {
+                    labelSpan.style.color = cb.checked ? "#f5a623" : "";
+                }
+
+                stream.model_configs = stream.model_configs || {};
+                if (!stream.model_configs[parentModel]) {
+                    stream.model_configs[parentModel] = { conf: 0.40, iou: 0.45, enabled_classes: [] };
+                }
+                if (!stream.model_configs[cleanParent]) {
+                    stream.model_configs[cleanParent] = { conf: 0.40, iou: 0.45, enabled_classes: [] };
+                }
+
+                let active = stream.model_configs[parentModel].enabled_classes || [];
+                if (cb.checked) {
+                    if (!active.includes(cls)) active.push(cls);
+                } else {
+                    active = active.filter(x => x !== cls);
+                }
+                stream.model_configs[parentModel].enabled_classes = active;
+                stream.model_configs[cleanParent].enabled_classes = active;
+
+                if (active.length > 0) {
+                    if (!this.cameraModels[key].includes(parentModel)) this.cameraModels[key].push(parentModel);
+                } else {
+                    this.cameraModels[key] = this.cameraModels[key].filter(m => m !== parentModel);
+                }
+            }
         });
     }
 
     addCamera(loc, locIdx) {
         const nextId = this.streams.reduce((max, item) => Math.max(max, Number(item.id) || 0), -1) + 1;
 
-        // Start with no models pre-selected (empty list) so the user explicitly chooses models
         this.cameraModels[String(nextId)] = [];
 
         this.streams.push({
