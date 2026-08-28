@@ -940,6 +940,12 @@ async def update_thresholds(req: Request):
             if conf is not None: running[cid]["conf"] = conf
             if iou is not None: running[cid]["iou"] = iou
             if model_configs: running[cid]["model_configs"] = model_configs
+            
+            proc = running[cid].get("proc")
+            if proc and hasattr(proc, "worker") and proc.worker:
+                if conf is not None: proc.worker.conf = conf
+                if iou is not None: proc.worker.iou = iou
+                if model_configs: proc.worker.model_configs = model_configs
         return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -1242,6 +1248,46 @@ def save_streams(
                 # Clean both detected/raw only if this cid had a different RTSP before
                 _clean_camera_dirs(str(cid))
             start_raw_stream(i, u)
+        elif cid in running:
+            # If RTSP is the same but the camera has active detection, check if model configs changed
+            entry = entries[i]
+            new_cfg = entry.get("model_configs", {})
+            old_cfg = running[cid].get("model_configs", {})
+            if new_cfg != old_cfg:
+                print(f"[API] Camera {cid} configuration updated. Restarting detector with new settings...")
+                conf = float(entry.get("conf", 0.40))
+                iou = float(entry.get("iou", 0.45))
+                loc = entry.get("location", f"Camera {i+1}")
+                
+                # Fetch assigned models
+                if os.path.exists(CAMERA_MODELS_JSON):
+                    try: cm = json.load(open(CAMERA_MODELS_JSON))
+                    except: cm = {}
+                else:
+                    cm = {}
+                mods = cm.get(cid, [])
+                
+                if mods:
+                    # Stop active detector
+                    proc = running[cid].get("proc")
+                    if proc:
+                        try:
+                            proc.kill()
+                            proc.wait(timeout=2.0)
+                        except: pass
+                    running.pop(cid, None)
+                    
+                    # Clean HLS detected directory
+                    _clean_stale_detected_segments(cid)
+                    
+                    # Start fresh detector
+                    model_paths = [os.path.join(BASE_DIR, "models", m) for m in mods]
+                    det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
+                    worker = DetectorWorker(u, det_dir, model_paths, conf=conf, iou=iou, location=loc, model_configs=new_cfg)
+                    thread = threading.Thread(target=worker.run, daemon=True)
+                    thread.start()
+                    proc = ThreadProcWrapper(worker, thread)
+                    running[cid] = {"proc": proc, "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": new_cfg, "start_time": int(time.time())}
     
     # Stop streams that are NO LONGER in the new list
     max_new_idx = len(urls) - 1
