@@ -79,9 +79,9 @@ start_stream() {
             -b:v 500k \
             -maxrate 500k \
             -bufsize 1000k \
-            -r 20 \
-            -g 40 \
-            -keyint_min 40 \
+            -r 12 \
+            -g 24 \
+            -keyint_min 24 \
             -force_key_frames "expr:gte(t,n_forced*2)" \
             -sc_threshold 0 \
             -fflags +genpts \

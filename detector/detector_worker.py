@@ -58,7 +58,7 @@ class DetectorWorker:
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.40, iou=0.45, location="Camera", model_configs=None):
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
-        self.fps, self.width, self.height = 15.0, 1280, 720
+        self.fps, self.width, self.height = 12.0, 1280, 720
         self._latest_raw_frame = None
         self._latest_boxes = []
         self._frame_lock, self._box_lock = threading.Lock(), threading.Lock()
