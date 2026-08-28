@@ -97,7 +97,7 @@ class DetectorWorker:
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2",
             "-profile:v", "baseline", "-level:v", "3.1",
-            "-b:v", "1000k", "-maxrate", "1200k", "-bufsize", "2M",
+            "-b:v", "400k", "-maxrate", "500k", "-bufsize", "1M",
             "-g", str(int(self.fps * 2)), 
             "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
@@ -106,7 +106,7 @@ class DetectorWorker:
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 1000k (max 1200k)", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 400k (max 500k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):
