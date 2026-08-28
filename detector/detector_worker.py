@@ -119,11 +119,12 @@ class DetectorWorker:
     def _is_valid_box(self, conf_val, m_conf, bw, bh, box_area, f_w, f_h, f_area):
         if conf_val < m_conf:
             return False
-        # 1. Absolute Minimum Size Bounds (Rejects 1-pixel noise)
-        if bw < 10 or bh < 10 or box_area < 150:
+        # 1. Absolute Minimum Size Bounds (Rejects single-pixel noise only)
+        # Relaxed to allow small/distant detections in 480p/720p scaled streams
+        if bw < 4 or bh < 4 or box_area < 20:
             return False
         # 2. Maximum Size Bounds (Rejects 80% full-screen hallucinations)
-        if box_area > 0.65 * f_area or bh > 0.90 * f_h or bw > 0.90 * f_w:
+        if box_area > 0.85 * f_area or bh > 0.95 * f_h or bw > 0.95 * f_w:
             return False
         return True
 
