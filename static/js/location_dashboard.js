@@ -168,7 +168,7 @@ class LocationDashboardStore {
         this.locations = JSON.parse(localStorage.getItem("offline_locations") || "[]");
         this.streams = JSON.parse(localStorage.getItem("offline_streams") || "[]").map((item, idx) => this.streamView(item, idx));
         this.cameraModels = JSON.parse(localStorage.getItem("offline_camera_models") || "{}");
-        this.allModels = ["ppe_new.pt", "nik_ppe_best.pt", "firehose.pt", "sand_ext_chocks.pt", "fire_smoke.pt", "construction.pt", "tape.pt", "tyre.pt", "spillage.pt"];
+        this.allModels = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "firehose.pt", "sand_ext_chocks.pt", "fire_smoke.pt", "construction.pt", "tape.pt", "tyre.pt", "spillage.pt"];
     }
 
     seedLocationsFromStreams() {
@@ -335,7 +335,7 @@ class LocationDashboard {
     }
 
     async saveCameras(shouldReload = true) {
-        const ppeModelsList = ["ppe_new.pt", "nik_ppe_best.pt"];
+        const ppeModelsList = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt"];
         Object.keys(this.cameraModels).forEach(cid => {
             const stream = this.streams.find(s => String(s.id) === cid);
             if (stream) {
@@ -534,7 +534,7 @@ class LocationDashboard {
         
         let html = "";
         
-        const ppeModels = ["ppe_new.pt", "nik_ppe_best.pt"];
+        const ppeModels = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt"];
         this.allModels.forEach(model => {
             if (ppeModels.includes(model)) return;
             const checked = assigned.includes(model);
@@ -577,6 +577,19 @@ class LocationDashboard {
                 <span style="color:${checked ? '#f5a623' : ''}">${this.escapeHtml(cls)}</span>
             </label>`;
         });
+
+        const hfClasses = ["helmet", "human", "no-helmet", "vest"];
+        const hfCfg = (stream && stream.model_configs && (stream.model_configs["hf_ppe_detection.pt"] || stream.model_configs["hf_ppe_detection"])) || {};
+        const hfEnabled = hfCfg.enabled_classes || [];
+
+        html += `<div style="width:100%;font-size:0.62rem;color:#a78bfa;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">HF PPE DETECTION CLASSES</div>`;
+        hfClasses.forEach(cls => {
+            const checked = hfEnabled.includes(cls);
+            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
+                <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="hf_ppe_detection.pt" style="cursor: pointer; accent-color: #a78bfa; margin: 0; margin-right: 4px;">
+                <span style="color:${checked ? '#a78bfa' : ''}">${this.escapeHtml(cls)}</span>
+            </label>`;
+        });
         
         return html;
     }
@@ -603,6 +616,8 @@ class LocationDashboard {
                 const labelSpan = cb.nextElementSibling;
                 if (parentModel === "nik_ppe_best.pt" && labelSpan) {
                     labelSpan.style.color = cb.checked ? "#f5a623" : "";
+                } else if (parentModel === "hf_ppe_detection.pt" && labelSpan) {
+                    labelSpan.style.color = cb.checked ? "#a78bfa" : "";
                 }
 
                 stream.model_configs = stream.model_configs || {};
