@@ -170,16 +170,19 @@ class DetectorWorker:
                                     min_cls_conf = min(min_cls_conf, float(c_cfg["conf"]))
                     detect_conf = min_cls_conf
 
+                detected_this_model = []
                 for r in model.predict(f, conf=detect_conf, iou=m_iou, imgsz=640, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
+                            cls = r.names[int(b.cls[0])]
+                            conf_val = float(b.conf[0])
+                            detected_this_model.append((cls, conf_val))
+                            
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
                             x1, y1, x2, y2 = box_xyxy
                             bw = max(0, x2 - x1)
                             bh = max(0, y2 - y1)
                             box_area = bw * bh
-                            cls = r.names[int(b.cls[0])]
-                            conf_val = float(b.conf[0])
 
                             # Filter by enabled classes (robust match handling dashes/underscores/spaces/doubles)
                             if enabled_classes is not None and isinstance(enabled_classes, list):
@@ -216,6 +219,9 @@ class DetectorWorker:
                             label_text = f"{cls} {conf_val:.2f}"
                             color_val = colors(int(b.cls[0])+midx*50, True)
                             raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls))
+                if detected_this_model:
+                    m_name = os.path.basename(self.model_paths[midx])
+                    print(f"[DEBUG] Camera {self.cam_id} {m_name}: raw_detected={detected_this_model}, filter={enabled_classes}, kept={len(raw_boxes)} boxes", flush=True)
 
             # Universal Cross-Class Non-Maximum Suppression (NMS) across ALL models and ALL classes
             boxes_data = []
