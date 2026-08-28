@@ -41,6 +41,14 @@ except Exception:
 
 from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db
 
+YOLO_CACHE = {}
+
+def get_yolo_model(model_path):
+    if model_path not in YOLO_CACHE:
+        print(f"[CACHE] Loading model weights into memory: {model_path}", flush=True)
+        YOLO_CACHE[model_path] = YOLO(model_path)
+    return YOLO_CACHE[model_path]
+
 def get_alerts_base_url():
     try:
         public_url_file = os.path.join(str(BASE_DIR), "hls", "public_url.txt")
@@ -71,7 +79,7 @@ class DetectorWorker:
         paths = model_paths if isinstance(model_paths, list) else [model_paths]
         print(f"[WORKER-TIMER] Camera {self.cam_id} model loading started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
         t_load_start = time.time()
-        self.models = [YOLO(mp) for mp in paths]
+        self.models = [get_yolo_model(mp) for mp in paths]
         print(f"[WORKER-TIMER] Camera {self.cam_id} models loaded in {int((time.time() - t_load_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: {paths}", flush=True)
         self._db_conn = None
 

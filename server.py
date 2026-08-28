@@ -836,6 +836,24 @@ async def startup_event():
     for i, u in enumerate(read_streams_conf()): start_raw_stream(i, u)
     t = threading.Thread(target=monitor_raw_streams_loop, daemon=True)
     t.start()
+    
+    # Pre-load all available models in the background to ensure instant start (0ms load latency)
+    def preload_all_models():
+        try:
+            print("[STARTUP] Initializing background model preloading...")
+            from detector.detector_worker import get_yolo_model
+            model_dir = os.path.join(BASE_DIR, "models")
+            if os.path.exists(model_dir):
+                pts = [f for f in os.listdir(model_dir) if f.endswith(".pt")]
+                for m in pts:
+                    p = os.path.join(model_dir, m)
+                    print(f"[STARTUP] Background pre-loading model weights: {m}")
+                    get_yolo_model(p)
+                print("[STARTUP] All safety models successfully cached in memory!")
+        except Exception as e:
+            print(f"[STARTUP] Error pre-loading models: {e}")
+
+    threading.Thread(target=preload_all_models, daemon=True).start()
 
 # ─────────────────────────────────────────────────────────────
 # ROUTES
