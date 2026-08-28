@@ -58,7 +58,7 @@ class DetectorWorker:
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.40, iou=0.45, location="Camera", model_configs=None):
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
-        self.fps, self.width, self.height = 12.0, 1280, 720
+        self.fps, self.width, self.height = 15.0, 1280, 720
         self._latest_raw_frame = None
         self._latest_boxes = []
         self._frame_lock, self._box_lock = threading.Lock(), threading.Lock()
@@ -151,7 +151,23 @@ class DetectorWorker:
 
                 detect_conf = m_conf
                 if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) > 0:
-                    detect_conf = min(m_conf, 0.05)
+                    # Find the minimum confidence threshold among enabled classes to set as the YOLO predict threshold
+                    min_cls_conf = m_conf
+                    if cfg and isinstance(cfg, dict):
+                        class_configs = cfg.get("class_configs")
+                        if class_configs and isinstance(class_configs, dict):
+                            for cls_name in enabled_classes:
+                                c_cfg = class_configs.get(cls_name)
+                                if not c_cfg:
+                                    # Fallback to normalized dash/underscore lookup
+                                    norm_cls = cls_name.lower().replace("_", "-")
+                                    for k, val in class_configs.items():
+                                        if k.lower().replace("_", "-") == norm_cls:
+                                            c_cfg = val
+                                            break
+                                if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
+                                    min_cls_conf = min(min_cls_conf, float(c_cfg["conf"]))
+                    detect_conf = min_cls_conf
 
                 for r in model.predict(f, conf=detect_conf, iou=m_iou, imgsz=640, verbose=False):
                     if r.boxes:
