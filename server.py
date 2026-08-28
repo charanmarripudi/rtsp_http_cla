@@ -954,6 +954,9 @@ MODEL_CLASSES_CACHE = {
         "Fall-Detected", "Gloves", "Goggles", "Helmet", "Mask", "NO-Mask",
         "No_Gloves", "No_Goggles", "No_Harness", "No_boots", "No_helmet",
         "No_safety_vest", "Safety Vest", "boots", "harness"
+    ],
+    "hf_ppe_detection.pt": [
+        "helmet", "human", "no-helmet", "vest"
     ]
 }
 
