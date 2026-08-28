@@ -141,36 +141,13 @@ class DetectorWorker:
                 
                 m_conf = self.conf
                 m_iou = self.iou
-                enabled_classes = None
                 if isinstance(self.model_configs, dict):
                     cfg = self.model_configs.get(m_name) or self.model_configs.get(m_clean) or self.model_configs.get(m_name.lower())
                     if cfg and isinstance(cfg, dict):
                         m_conf = float(cfg.get("conf", self.conf))
                         m_iou = float(cfg.get("iou", self.iou))
-                        enabled_classes = cfg.get("enabled_classes")
 
-                detect_conf = m_conf
-                if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) > 0:
-                    # Find the minimum confidence threshold among enabled classes to set as the YOLO predict threshold
-                    min_cls_conf = m_conf
-                    if cfg and isinstance(cfg, dict):
-                        class_configs = cfg.get("class_configs")
-                        if class_configs and isinstance(class_configs, dict):
-                            for cls_name in enabled_classes:
-                                c_cfg = class_configs.get(cls_name)
-                                if not c_cfg:
-                                    # Fallback to normalized dash/underscore lookup
-                                    norm_cls = cls_name.lower().replace("_", "-")
-                                    for k, val in class_configs.items():
-                                        if k.lower().replace("_", "-") == norm_cls:
-                                            c_cfg = val
-                                            break
-                                if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
-                                    min_cls_conf = min(min_cls_conf, float(c_cfg["conf"]))
-                    detect_conf = min_cls_conf
-
-                detected_this_model = []
-                for r in model.predict(f, conf=detect_conf, iou=m_iou, imgsz=640, verbose=False):
+                for r in model.predict(f, conf=m_conf, iou=m_iou, imgsz=640, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
@@ -180,49 +157,14 @@ class DetectorWorker:
                             box_area = bw * bh
                             cls = r.names[int(b.cls[0])]
                             conf_val = float(b.conf[0])
-                            
-                            detected_this_model.append((cls, conf_val))
 
-                            # Filter by enabled classes if list is provided (robust case/separator agnostic check)
-                            if enabled_classes is not None and isinstance(enabled_classes, list):
-                                norm_cls = cls.lower().replace("_", "-").replace(" ", "-")
-                                matched = False
-                                for e in enabled_classes:
-                                    norm_e = e.lower().replace("_", "-").replace(" ", "-")
-                                    if norm_cls == norm_e:
-                                        matched = True
-                                        break
-                                if not matched:
-                                    continue
-
-                            # Load class-specific conf thresholds
-                            cls_conf = m_conf
-                            if cfg and isinstance(cfg, dict):
-                                class_configs = cfg.get("class_configs")
-                                if class_configs and isinstance(class_configs, dict):
-                                    # Robust key lookup (casing and separator agnostic)
-                                    c_cfg = class_configs.get(cls)
-                                    if not c_cfg:
-                                        # Try case-insensitive and character replacements (e.g., _ to -)
-                                        norm_cls = cls.lower().replace("_", "-")
-                                        for k, val in class_configs.items():
-                                            if k.lower().replace("_", "-") == norm_cls:
-                                                c_cfg = val
-                                                break
-                                    if c_cfg and isinstance(c_cfg, dict):
-                                        cls_conf = float(c_cfg.get("conf", m_conf))
-
-                            # Validate Box using class-specific confidence
-                            if not self._is_valid_box(conf_val, cls_conf, bw, bh, box_area, f_w, f_h, f_area):
+                            # Validate Box
+                            if not self._is_valid_box(conf_val, m_conf, bw, bh, box_area, f_w, f_h, f_area):
                                 continue
 
                             label_text = f"{cls} {conf_val:.2f}"
                             color_val = colors(int(b.cls[0])+midx*50, True)
                             raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls))
-                            
-                if enabled_classes and detected_this_model:
-                    unique_det = list(set(f"{c}({v:.2f})" for c, v in detected_this_model))
-                    print(f"[DEBUG] Camera {self.cam_id} {m_name}: detected {unique_det}, filter={enabled_classes}, kept={len(raw_boxes)} boxes", flush=True)
 
             # Universal Cross-Class Non-Maximum Suppression (NMS) across ALL models and ALL classes
             boxes_data = []
