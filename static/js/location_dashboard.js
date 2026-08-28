@@ -335,7 +335,7 @@ class LocationDashboard {
     }
 
     async saveCameras(shouldReload = true) {
-        const ppeModelsList = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt"];
+        const ppeModelsList = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"];
         Object.keys(this.cameraModels).forEach(cid => {
             const stream = this.streams.find(s => String(s.id) === cid);
             if (stream) {
@@ -534,7 +534,7 @@ class LocationDashboard {
         
         let html = "";
         
-        const ppeModels = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt"];
+        const ppeModels = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"];
         this.allModels.forEach(model => {
             if (ppeModels.includes(model)) return;
             const checked = assigned.includes(model);
@@ -604,6 +604,19 @@ class LocationDashboard {
             </label>`;
         });
         
+        const hsClasses = ["Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle"];
+        const hsCfg = (stream && stream.model_configs && (stream.model_configs["hansung_ppe_violations.pt"] || stream.model_configs["hansung_ppe_violations"])) || {};
+        const hsEnabled = hsCfg.enabled_classes || [];
+
+        html += `<div style="width:100%;font-size:0.62rem;color:#fb7185;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">HANSUNG VIOLATIONS CLASSES</div>`;
+        hsClasses.forEach(cls => {
+            const checked = hsEnabled.includes(cls);
+            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
+                <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="hansung_ppe_violations.pt" style="cursor: pointer; accent-color: #fb7185; margin: 0; margin-right: 4px;">
+                <span style="color:${checked ? '#fb7185' : ''}">${this.escapeHtml(cls)}</span>
+            </label>`;
+        });
+        
         return html;
     }
 
@@ -633,6 +646,8 @@ class LocationDashboard {
                     labelSpan.style.color = cb.checked ? "#a78bfa" : "";
                 } else if (parentModel === "keremberke_ppe_gear.pt" && labelSpan) {
                     labelSpan.style.color = cb.checked ? "#38bdf8" : "";
+                } else if (parentModel === "hansung_ppe_violations.pt" && labelSpan) {
+                    labelSpan.style.color = cb.checked ? "#fb7185" : "";
                 }
 
                 stream.model_configs = stream.model_configs || {};

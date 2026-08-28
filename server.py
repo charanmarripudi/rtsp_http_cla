@@ -957,6 +957,12 @@ MODEL_CLASSES_CACHE = {
     ],
     "hf_ppe_detection.pt": [
         "helmet", "human", "no-helmet", "vest"
+    ],
+    "keremberke_ppe_gear.pt": [
+        "glove", "goggles", "helmet", "mask", "no_glove", "no_goggles", "no_helmet", "no_mask", "no_shoes", "shoes"
+    ],
+    "hansung_ppe_violations.pt": [
+        "Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle"
     ]
 }
 
