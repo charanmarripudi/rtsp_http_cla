@@ -2430,7 +2430,27 @@ def get_analytics_by_usecase(d: dict = Body(default={})):
     return res.get("by_usecase", {}) 
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
-app.mount("/", StaticFiles(directory=BASE_DIR, html=True), name="ui")
+
+# Explicit routes for each HTML page — avoids exposing BASE_DIR (which contains
+# the ever-growing logs/server.log) via StaticFiles, which caused h11
+# "Too much data for declared Content-Length" errors on hard refresh.
+_HTML_FILES = ["index.html", "stream.html", "location_dashboard.html", "alerts.html"]
+
+@app.get("/")
+@app.head("/")
+async def serve_root():
+    return FileResponse(os.path.join(BASE_DIR, "index.html"))
+
+for _html in _HTML_FILES:
+    _html_path = os.path.join(BASE_DIR, _html)
+    if os.path.exists(_html_path):
+        # Use a closure to capture the correct path for each file
+        def _make_route(p):
+            async def _serve():
+                return FileResponse(p)
+            return _serve
+        app.get(f"/{_html}")(_make_route(_html_path))
+        app.head(f"/{_html}")(_make_route(_html_path))
 
 if __name__ == "__main__":
     import uvicorn
