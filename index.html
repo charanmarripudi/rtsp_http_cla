@@ -1740,15 +1740,40 @@
             const streamMeta = streamsArray[idx] || {};
             streamMeta.model_configs = streamMeta.model_configs || {};
 
-            // ── Render class checkboxes from pre-fetched cache (synchronous) ──
-            // modelClassesCache was populated at startup via Promise.all, so this
-            // loop runs instantly with no async needed inside forEach.
+            // PPE-type models: show individual class checkboxes (not a simple parent checkbox).
+            // General models: show a simple parent on/off checkbox.
+            const ppeModels = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt"];
+
+            // ── 1. Parent checkboxes for general (non-PPE) models ──
             allModels.forEach(m => {
+              if (ppeModels.includes(m)) return; // handled below with class sections
+              const checked = assignedModels.includes(m) ? 'checked' : '';
+              const cleanName = m.replace(".pt", "");
+              const lbl = document.createElement("label");
+              lbl.className = checked ? 'model-chip checked' : 'model-chip';
+              lbl.style.cssText = "margin: 0; display: inline-flex; cursor: pointer;";
+              lbl.innerHTML = `
+                <input type="checkbox" class="parent-model-checkbox" value="${m}" ${checked} data-cam="${idx}" style="cursor:pointer;accent-color:#00ffaa;margin:0;margin-right:4px;">
+                <span>${cleanName}</span>
+              `;
+              listContainer.appendChild(lbl);
+              const cb = lbl.querySelector(".parent-model-checkbox");
+              cb.onchange = () => {
+                lbl.classList.toggle('checked', cb.checked);
+                updateCheckboxState(idx, m, cb.checked);
+              };
+            });
+
+            // ── 2. Class selection sections for PPE-type models ──
+            // Uses modelClassesCache pre-fetched at startup (synchronous, no async needed).
+            const ppeAccentColors = { "ppe_new.pt": "#00ffaa", "nik_ppe_best.pt": "#f5a623", "hf_ppe_detection.pt": "#a78bfa" };
+
+            ppeModels.forEach(m => {
               const entry = modelClassesCache[m];
-              if (!entry || entry.classes.length === 0) return;
+              if (!entry || entry.classes.length === 0) return; // model not on this Pi, skip
 
               const cleanName = m.replace(".pt", "");
-              const accentColor = entry.color;
+              const accentColor = ppeAccentColors[m] || "#00ffaa";
               const classes = entry.classes;
               const cfg = streamMeta.model_configs[m] || streamMeta.model_configs[cleanName] || {};
               const enabled = cfg.enabled_classes || [];
