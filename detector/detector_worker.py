@@ -171,7 +171,9 @@ class DetectorWorker:
                     detect_conf = min_cls_conf
 
                 detected_this_model = []
-                for r in model.predict(f, conf=detect_conf, iou=m_iou, imgsz=640, verbose=False):
+                # Predict at a very low confidence (0.01) to capture distant or low-confidence boxes,
+                # then filter on the Python side using the slider threshold.
+                for r in model.predict(f, conf=0.01, iou=m_iou, imgsz=640, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
                             cls = r.names[int(b.cls[0])]
