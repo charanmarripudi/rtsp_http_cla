@@ -1598,18 +1598,17 @@
       }
 
       async function saveCurrentConfiguration(shouldReload) {
-        // Clean up empty PPE models from cameraModelsMap before saving
-        const ppeModelsList = ["ppe_new.pt", "nik_ppe_best.pt"];
+        // Remove any model that has no enabled classes from camera assignment
         Object.keys(cameraModelsMap).forEach(cid => {
             const stream = streamsArray[Number(cid)];
             if (stream) {
                 cameraModelsMap[cid] = cameraModelsMap[cid].filter(model => {
-                    if (ppeModelsList.includes(model)) {
-                        const clean = model.replace(".pt", "");
-                        const cfg = (stream.model_configs && (stream.model_configs[model] || stream.model_configs[clean])) || {};
-                        const enabled = cfg.enabled_classes || [];
-                        return enabled.length > 0;
-                    }
+                    const clean = model.replace(".pt", "");
+                    const cfg = (stream.model_configs && (stream.model_configs[model] || stream.model_configs[clean])) || {};
+                    const enabled = cfg.enabled_classes;
+                    // If the model has a class list (PPE-type), only keep it if classes are selected
+                    if (Array.isArray(enabled)) return enabled.length > 0;
+                    // Non-class-filtered models (e.g. fire_smoke, construction) are always kept
                     return true;
                 });
             }
@@ -1726,140 +1725,73 @@
             const streamMeta = streamsArray[idx] || {};
             streamMeta.model_configs = streamMeta.model_configs || {};
 
-            // 1. Render standard parent models
-            const ppeModels = ["ppe_new.pt", "nik_ppe_best.pt"];
-            allModels.forEach(m => {
-              if (ppeModels.includes(m)) return;
-              const checked = assignedModels.includes(m) ? 'checked' : '';
-              const chipClass = checked ? 'model-chip checked' : 'model-chip';
+            // ── Dynamic per-model class checkboxes ──────────────────────────
+            // For EVERY model in allModels, fetch its classes from the server
+            // and render individual class checkboxes. This works automatically
+            // for ppe_new, nik_ppe_best, hf_ppe_detection, and any future model.
+            const MODEL_COLORS = ["#00ffaa", "#f5a623", "#a78bfa", "#38bdf8", "#fb7185"];
+            let colorIdx = 0;
+
+            async function renderModelClasses(m) {
               const cleanName = m.replace(".pt", "");
-              
-              const lbl = document.createElement("label");
-              lbl.className = chipClass;
-              lbl.style.cssText = "margin: 0; display: inline-flex; cursor: pointer;";
-              lbl.innerHTML = `
-                <input type="checkbox" class="parent-model-checkbox" value="${m}" ${checked} data-cam="${idx}" style="cursor: pointer; accent-color: #00ffaa; margin: 0; margin-right: 4px;">
-                <span>${cleanName}</span>
-              `;
-              listContainer.appendChild(lbl);
-              
-              const cb = lbl.querySelector(".parent-model-checkbox");
-              cb.onchange = () => {
-                lbl.classList.toggle('checked', cb.checked);
-                updateCheckboxState(idx, m, cb.checked);
-              };
-            });
+              const accentColor = MODEL_COLORS[colorIdx % MODEL_COLORS.length];
+              colorIdx++;
 
-            // 2. Render individual PPE-NEW classes
-            const ppeNewClasses = [
-              "Cap-Lamp", "Gloves", "Gum-Boots", "Hard-Hat", "Mask", "NO-Mask",
-              "No-Cap-Lamp", "No-Gloves", "No-Gum-Boots", "No-Hard-Hat", 
-              "No-Saftey-Belt", "No-Saftey-Vest", "Saftey-Belt", "Saftey-Vest"
-            ];
-            
-            const ppeNewCfg = streamMeta.model_configs["ppe_new.pt"] || streamMeta.model_configs["ppe_new"] || {};
-            const ppeNewEnabled = ppeNewCfg.enabled_classes || [];
-            
-            const ppeNewHeader = document.createElement("div");
-            ppeNewHeader.style.cssText = "width:100%;font-size:0.62rem;color:#00ffaa;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);";
-            ppeNewHeader.textContent = "PPE-NEW CLASSES";
-            listContainer.appendChild(ppeNewHeader);
+              let classes = [];
+              try {
+                const resp = await fetch(`/api/model-classes?model=${encodeURIComponent(m)}`);
+                const data = await resp.json();
+                classes = data.classes || [];
+              } catch(e) { return; }
+              if (classes.length === 0) return;
 
-            ppeNewClasses.forEach(cls => {
-              const checked = ppeNewEnabled.includes(cls) ? 'checked' : '';
-              const chipClass = checked ? 'model-chip checked' : 'model-chip';
-              
-              const lbl = document.createElement("label");
-              lbl.className = chipClass;
-              lbl.style.cssText = "margin: 0; display: inline-flex; cursor: pointer;";
-              lbl.innerHTML = `
-                <input type="checkbox" class="class-checkbox" value="${cls}" ${checked ? "checked" : ""} data-cam="${idx}" data-model="ppe_new.pt" style="cursor: pointer; accent-color: #00ffaa; margin: 0; margin-right: 4px;">
-                <span>${cls}</span>
-              `;
-              listContainer.appendChild(lbl);
-              
-              const cb = lbl.querySelector(".class-checkbox");
-              cb.onchange = () => {
-                lbl.classList.toggle('checked', cb.checked);
-                
-                streamMeta.model_configs["ppe_new.pt"] = streamMeta.model_configs["ppe_new.pt"] || { conf: 0.40, iou: 0.45 };
-                streamMeta.model_configs["ppe_new"] = streamMeta.model_configs["ppe_new"] || { conf: 0.40, iou: 0.45 };
-                
-                let active = streamMeta.model_configs["ppe_new.pt"].enabled_classes || [];
-                if (cb.checked) {
-                  if (!active.includes(cls)) active.push(cls);
-                } else {
-                  active = active.filter(x => x !== cls);
-                }
-                streamMeta.model_configs["ppe_new.pt"].enabled_classes = active;
-                streamMeta.model_configs["ppe_new"].enabled_classes = active;
+              const cfg = streamMeta.model_configs[m] || streamMeta.model_configs[cleanName] || {};
+              const enabled = cfg.enabled_classes || [];
 
-                const hasActiveClasses = active.length > 0;
-                if (hasActiveClasses) {
-                  updateCheckboxState(idx, "ppe_new.pt", true);
-                } else {
-                  updateCheckboxState(idx, "ppe_new.pt", false);
-                }
-              };
-            });
+              // Section header
+              const hdr = document.createElement("div");
+              hdr.style.cssText = `width:100%;font-size:0.62rem;color:${accentColor};font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);`;
+              hdr.textContent = cleanName.toUpperCase().replace(/_/g," ") + " CLASSES";
+              listContainer.appendChild(hdr);
 
-            // 3. Render individual NIK-PPE classes
-            const nikPpeClasses = [
-              "Fall-Detected", "Gloves", "Goggles", "Helmet", "Mask", "NO-Mask",
-              "No_Gloves", "No_Goggles", "No_Harness", "No_boots", "No_helmet",
-              "No_safety_vest", "Safety Vest", "boots", "harness"
-            ];
-            
-            const nikCfg = streamMeta.model_configs["nik_ppe_best.pt"] || streamMeta.model_configs["nik_ppe_best"] || {};
-            const nikEnabled = nikCfg.enabled_classes || [];
-            
-            const nikHeader = document.createElement("div");
-            nikHeader.style.cssText = "width:100%;font-size:0.62rem;color:#f5a623;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);";
-            nikHeader.textContent = "NIK-PPE CLASSES";
-            listContainer.appendChild(nikHeader);
+              classes.forEach(cls => {
+                const isChecked = enabled.includes(cls);
+                const lbl = document.createElement("label");
+                lbl.className = isChecked ? "model-chip checked" : "model-chip";
+                lbl.style.cssText = "margin: 0; display: inline-flex; cursor: pointer;";
+                lbl.innerHTML = `
+                  <input type="checkbox" class="class-checkbox" value="${cls}" ${isChecked ? "checked" : ""} data-cam="${idx}" data-model="${m}" style="cursor:pointer;accent-color:${accentColor};margin:0;margin-right:4px;">
+                  <span style="color:${isChecked ? accentColor : ''}">${cls}</span>
+                `;
+                listContainer.appendChild(lbl);
 
-            nikPpeClasses.forEach(cls => {
-              const checked = nikEnabled.includes(cls) ? 'checked' : '';
-              const chipClass = checked ? 'model-chip checked' : 'model-chip';
-              
-              const lbl = document.createElement("label");
-              lbl.className = chipClass;
-              lbl.style.cssText = "margin: 0; display: inline-flex; cursor: pointer;";
-              lbl.innerHTML = `
-                <input type="checkbox" class="class-checkbox" value="${cls}" ${checked ? "checked" : ""} data-cam="${idx}" data-model="nik_ppe_best.pt" style="cursor: pointer; accent-color: #f5a623; margin: 0; margin-right: 4px;">
-                <span style="color:${checked ? '#f5a623' : ''}">${cls}</span>
-              `;
-              listContainer.appendChild(lbl);
-              
-              const cb = lbl.querySelector(".class-checkbox");
-              cb.onchange = () => {
-                lbl.classList.toggle('checked', cb.checked);
-                
-                const labelSpan = cb.nextElementSibling;
-                if (labelSpan) {
-                  labelSpan.style.color = cb.checked ? "#f5a623" : "";
-                }
-                
-                streamMeta.model_configs["nik_ppe_best.pt"] = streamMeta.model_configs["nik_ppe_best.pt"] || { conf: 0.40, iou: 0.45 };
-                streamMeta.model_configs["nik_ppe_best"] = streamMeta.model_configs["nik_ppe_best"] || { conf: 0.40, iou: 0.45 };
-                
-                let active = streamMeta.model_configs["nik_ppe_best.pt"].enabled_classes || [];
-                if (cb.checked) {
-                  if (!active.includes(cls)) active.push(cls);
-                } else {
-                  active = active.filter(x => x !== cls);
-                }
-                streamMeta.model_configs["nik_ppe_best.pt"].enabled_classes = active;
-                streamMeta.model_configs["nik_ppe_best"].enabled_classes = active;
+                const cb = lbl.querySelector(".class-checkbox");
+                cb.onchange = () => {
+                  lbl.classList.toggle("checked", cb.checked);
+                  const labelSpan = cb.nextElementSibling;
+                  if (labelSpan) labelSpan.style.color = cb.checked ? accentColor : "";
 
-                const hasActiveClasses = active.length > 0;
-                if (hasActiveClasses) {
-                  updateCheckboxState(idx, "nik_ppe_best.pt", true);
-                } else {
-                  updateCheckboxState(idx, "nik_ppe_best.pt", false);
-                }
-              };
-            });
+                  streamMeta.model_configs[m] = streamMeta.model_configs[m] || { conf: 0.40, iou: 0.45 };
+                  streamMeta.model_configs[cleanName] = streamMeta.model_configs[cleanName] || { conf: 0.40, iou: 0.45 };
+
+                  let active = streamMeta.model_configs[m].enabled_classes || [];
+                  if (cb.checked) { if (!active.includes(cls)) active.push(cls); }
+                  else { active = active.filter(x => x !== cls); }
+                  streamMeta.model_configs[m].enabled_classes = active;
+                  streamMeta.model_configs[cleanName].enabled_classes = active;
+
+                  updateCheckboxState(idx, m, active.length > 0);
+                };
+              });
+            }
+
+            // Render class sections for all models that have classes (PPE-type models)
+            // Run them in sequence so ordering is stable
+            (async () => {
+              for (const m of allModels) {
+                await renderModelClasses(m);
+              }
+            })();
 
             modelRow.appendChild(listContainer);
             wrapper.appendChild(modelRow);

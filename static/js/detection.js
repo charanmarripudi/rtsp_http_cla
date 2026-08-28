@@ -197,11 +197,9 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                 const cleanName = m.replace(".pt", "");
                 const mCfg = modelConfigs[m] || modelConfigs[cleanName] || {};
                 const enabled = mCfg.enabled_classes || [];
-                const ppeModels = ["ppe_new.pt", "nik_ppe_best.pt"];
-                if (ppeModels.includes(m) || ppeModels.includes(cleanName + ".pt")) {
-                    if (enabled.length === 0) {
-                        return; // Skip rendering card if no classes are checked for PPE models!
-                    }
+                // Any model with no enabled classes selected is skipped
+                if (enabled.length === 0) {
+                    return;
                 }
 
                 if (enabled.length > 0) {
