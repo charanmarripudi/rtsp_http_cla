@@ -71,7 +71,7 @@ start_stream() {
             -rtsp_transport tcp \
             -i "$rtsp_url" \
             -an \
-            -vf "scale=960:-2" \
+            -vf "scale=854:480" \
             -c:v libx264 \
             -preset ultrafast \
             -tune zerolatency \
