@@ -1435,6 +1435,21 @@
         ];
       }
 
+      // ── PRE-FETCH ALL MODEL CLASSES INTO A SYNCHRONOUS CACHE ──
+      // This runs once at startup so renderCamerasConfig can use it synchronously
+      // inside forEach without needing async/await, which caused silent failures.
+      const modelClassesCache = {}; // { "ppe_new.pt": ["Hard-Hat", ...], ... }
+      const MODEL_ACCENT_COLORS = ["#00ffaa", "#f5a623", "#a78bfa", "#38bdf8", "#fb7185"];
+      await Promise.all(allModels.map(async (m, i) => {
+        try {
+          const r = await fetch(`/api/model-classes?model=${encodeURIComponent(m)}`);
+          const d = await r.json();
+          if (d.classes && d.classes.length > 0) {
+            modelClassesCache[m] = { classes: d.classes, color: MODEL_ACCENT_COLORS[i % MODEL_ACCENT_COLORS.length] };
+          }
+        } catch(e) { /* skip models that fail */ }
+      }));
+
       // ── LOAD SAVED CAMERA-MODEL ASSIGNMENTS ──
       let cameraModelsMap = {};
       try {
@@ -1725,33 +1740,23 @@
             const streamMeta = streamsArray[idx] || {};
             streamMeta.model_configs = streamMeta.model_configs || {};
 
-            // ── Dynamic per-model class checkboxes ──────────────────────────
-            // For EVERY model in allModels, fetch its classes from the server
-            // and render individual class checkboxes. This works automatically
-            // for ppe_new, nik_ppe_best, hf_ppe_detection, and any future model.
-            const MODEL_COLORS = ["#00ffaa", "#f5a623", "#a78bfa", "#38bdf8", "#fb7185"];
-            let colorIdx = 0;
+            // ── Render class checkboxes from pre-fetched cache (synchronous) ──
+            // modelClassesCache was populated at startup via Promise.all, so this
+            // loop runs instantly with no async needed inside forEach.
+            allModels.forEach(m => {
+              const entry = modelClassesCache[m];
+              if (!entry || entry.classes.length === 0) return;
 
-            async function renderModelClasses(m) {
               const cleanName = m.replace(".pt", "");
-              const accentColor = MODEL_COLORS[colorIdx % MODEL_COLORS.length];
-              colorIdx++;
-
-              let classes = [];
-              try {
-                const resp = await fetch(`/api/model-classes?model=${encodeURIComponent(m)}`);
-                const data = await resp.json();
-                classes = data.classes || [];
-              } catch(e) { return; }
-              if (classes.length === 0) return;
-
+              const accentColor = entry.color;
+              const classes = entry.classes;
               const cfg = streamMeta.model_configs[m] || streamMeta.model_configs[cleanName] || {};
               const enabled = cfg.enabled_classes || [];
 
               // Section header
               const hdr = document.createElement("div");
-              hdr.style.cssText = `width:100%;font-size:0.62rem;color:${accentColor};font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);`;
-              hdr.textContent = cleanName.toUpperCase().replace(/_/g," ") + " CLASSES";
+              hdr.style.cssText = `width:100%;font-size:0.62rem;color:${accentColor};font-weight:700;letter-spacing:0.5px;margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.1);`;
+              hdr.textContent = cleanName.toUpperCase().replace(/_/g, " ") + " CLASSES";
               listContainer.appendChild(hdr);
 
               classes.forEach(cls => {
@@ -1783,15 +1788,7 @@
                   updateCheckboxState(idx, m, active.length > 0);
                 };
               });
-            }
-
-            // Render class sections for all models that have classes (PPE-type models)
-            // Run them in sequence so ordering is stable
-            (async () => {
-              for (const m of allModels) {
-                await renderModelClasses(m);
-              }
-            })();
+            });
 
             modelRow.appendChild(listContainer);
             wrapper.appendChild(modelRow);
