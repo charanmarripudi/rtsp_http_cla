@@ -557,13 +557,12 @@ def _kill_raw_ffmpeg_for_camera(cid: str):
     # Only kill if this camera is the sole user of this RTSP URL.
     # If multiple camera IDs share the same RTSP, keep the proc alive for others.
     count = sum(1 for k, v in cid_to_rtsp.items() if v == rtsp)
-    if count <= 1 and rtsp in rtsp_cache:
-        cached = rtsp_cache[rtsp]
-        if cached["proc"].poll() is None:
-            _async_kill(cached["proc"])
-        del rtsp_cache[rtsp]
-    if cid in cid_to_rtsp:
-        del cid_to_rtsp[cid]
+    if count <= 1:
+        cached = rtsp_cache.pop(rtsp, None)
+        if cached:
+            if cached["proc"].poll() is None:
+                _async_kill(cached["proc"])
+    cid_to_rtsp.pop(cid, None)
 
 def _clean_stale_detected_segments(camera: str):
     """Remove stale .ts segments from the detected HLS directory.
@@ -801,19 +800,24 @@ def monitor_raw_streams_loop():
 
 def stop_raw_stream(i, protect_rtsps=None):
     cid = str(i)
-    if cid in running: _async_kill(running[cid].get("proc")); del running[cid]; _clean_camera_dirs(cid)
+    if cid in running:
+        proc_info = running.get(cid)
+        if proc_info:
+            _async_kill(proc_info.get("proc"))
+        running.pop(cid, None)
+        _clean_camera_dirs(cid)
     # Check if it's in our cid_to_rtsp
     if cid in cid_to_rtsp:
         rtsp = cid_to_rtsp[cid]
         if protect_rtsps and rtsp in protect_rtsps:
             # Do NOT kill the FFmpeg process as this RTSP stream is still needed by other cameras
-            del cid_to_rtsp[cid]
+            cid_to_rtsp.pop(cid, None)
             return
         # Check if this is the last cid using this rtsp
         count = sum(1 for k, v in cid_to_rtsp.items() if v == rtsp)
         if count <= 1:
-            if rtsp in rtsp_cache:
-                cached = rtsp_cache[rtsp]
+            cached = rtsp_cache.pop(rtsp, None)
+            if cached:
                 proc = cached["proc"]
                 if proc.poll() is None:
                     _async_kill(proc)
@@ -824,8 +828,7 @@ def stop_raw_stream(i, protect_rtsps=None):
                     shutil.rmtree(sd)
                 except:
                     pass
-                del rtsp_cache[rtsp]
-        del cid_to_rtsp[cid]
+        cid_to_rtsp.pop(cid, None)
 
 @app.on_event("startup")
 async def startup_event():
@@ -1325,8 +1328,10 @@ def delete_stream(
 @app.get("/api/status")
 def get_status():
     for cid in list(running.keys()):
-        if not (running[cid].get("proc") and running[cid]["proc"].poll() is None): del running[cid]
-    return {"active": list(running.keys()), "models": {k: v["models"] for k, v in running.items()}}
+        proc_info = running.get(cid)
+        if not (proc_info and proc_info.get("proc") and proc_info["proc"].poll() is None):
+            running.pop(cid, None)
+    return {"active": list(running.keys()), "models": {k: v["models"] for k, v in running.items() if "models" in v}}
 
 @app.post("/api/start")
 def start_detection(d: dict):
@@ -1373,7 +1378,7 @@ def start_detection(d: dict):
                 proc.kill()
                 proc.wait(timeout=2.0)
             except: pass
-        del running[cid]
+        running.pop(cid, None)
 
     # Clean only detected dir
     det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
@@ -1425,7 +1430,7 @@ def stop_detection(d: dict):
     cid = str(d["camera"])
     if cid in running:
         proc = running[cid].get("proc")
-        del running[cid]
+        running.pop(cid, None)
         # Synchronously wait for the detector process to exit before restarting the raw
         # stream. Fire-and-forget (_async_kill) causes a race: the detector may still be
         # writing detected HLS segments while the player has already switched to raw,
@@ -1441,18 +1446,6 @@ def stop_detection(d: dict):
     urls = read_streams_conf()
     if int(cid) < len(urls):
         start_raw_stream(int(cid), urls[int(cid)])
-        # Block until the first raw segment is generated and listed in playlist.m3u8 (max 5 seconds)
-        sd = os.path.join(HLS_DIR, f"stream{cid}_raw")
-        playlist_file = os.path.join(sd, "playlist.m3u8")
-        t_start = time.time()
-        while time.time() - t_start < 5.0:
-            if os.path.exists(playlist_file):
-                try:
-                    with open(playlist_file) as f:
-                        if ".ts" in f.read():
-                            break
-                except: pass
-            time.sleep(0.1)
     return {"status": "stopped"}
 
 @app.post("/api/detection/start")
