@@ -1742,7 +1742,7 @@
             streamMeta.model_configs = streamMeta.model_configs || {};
 
             // ── 1. Parent checkboxes for general (non-PPE) models ──
-            const ppeModelNames = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt"];
+            const ppeModelNames = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt"];
             allModels.forEach(m => {
               if (ppeModelNames.includes(m)) return;
               const checked = assignedModels.includes(m) ? 'checked' : '';
@@ -1809,6 +1809,10 @@
 
             renderPpeSection("hf_ppe_detection.pt", "HF PPE DETECTION CLASSES", "#a78bfa", [
               "helmet","human","no-helmet","vest"
+            ]);
+
+            renderPpeSection("keremberke_ppe_gear.pt", "KEREMBERKE GEAR CLASSES", "#38bdf8", [
+              "glove","goggles","helmet","mask","no_glove","no_goggles","no_helmet","no_mask","no_shoes","shoes"
             ]);
 
             modelRow.appendChild(listContainer);

@@ -590,6 +590,19 @@ class LocationDashboard {
                 <span style="color:${checked ? '#a78bfa' : ''}">${this.escapeHtml(cls)}</span>
             </label>`;
         });
+
+        const kbClasses = ["glove", "goggles", "helmet", "mask", "no_glove", "no_goggles", "no_helmet", "no_mask", "no_shoes", "shoes"];
+        const kbCfg = (stream && stream.model_configs && (stream.model_configs["keremberke_ppe_gear.pt"] || stream.model_configs["keremberke_ppe_gear"])) || {};
+        const kbEnabled = kbCfg.enabled_classes || [];
+
+        html += `<div style="width:100%;font-size:0.62rem;color:#38bdf8;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">KEREMBERKE GEAR CLASSES</div>`;
+        kbClasses.forEach(cls => {
+            const checked = kbEnabled.includes(cls);
+            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
+                <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="keremberke_ppe_gear.pt" style="cursor: pointer; accent-color: #38bdf8; margin: 0; margin-right: 4px;">
+                <span style="color:${checked ? '#38bdf8' : ''}">${this.escapeHtml(cls)}</span>
+            </label>`;
+        });
         
         return html;
     }
@@ -618,6 +631,8 @@ class LocationDashboard {
                     labelSpan.style.color = cb.checked ? "#f5a623" : "";
                 } else if (parentModel === "hf_ppe_detection.pt" && labelSpan) {
                     labelSpan.style.color = cb.checked ? "#a78bfa" : "";
+                } else if (parentModel === "keremberke_ppe_gear.pt" && labelSpan) {
+                    labelSpan.style.color = cb.checked ? "#38bdf8" : "";
                 }
 
                 stream.model_configs = stream.model_configs || {};

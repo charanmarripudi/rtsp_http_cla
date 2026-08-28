@@ -143,12 +143,14 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
+                m_imgsz = 640
                 if isinstance(self.model_configs, dict):
                     cfg = self.model_configs.get(m_name) or self.model_configs.get(m_clean) or self.model_configs.get(m_name.lower())
                     if cfg and isinstance(cfg, dict):
                         m_conf = float(cfg.get("conf", self.conf))
                         m_iou = float(cfg.get("iou", self.iou))
                         enabled_classes = cfg.get("enabled_classes")
+                        m_imgsz = int(cfg.get("imgsz", 640))
 
                 # Dynamically set YOLO predict confidence to the minimum of active class sliders
                 detect_conf = m_conf
@@ -173,7 +175,7 @@ class DetectorWorker:
                 detected_this_model = []
                 # Predict at a very low confidence (0.01) to capture distant or low-confidence boxes,
                 # then filter on the Python side using the slider threshold.
-                for r in model.predict(f, conf=0.01, iou=m_iou, imgsz=640, verbose=False):
+                for r in model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
                             cls = r.names[int(b.cls[0])]
