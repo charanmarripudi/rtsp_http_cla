@@ -347,109 +347,123 @@ class DetectorWorker:
 
     def run(self):
         ffmpeg, cap, inf_t, cap_t = None, None, None, None
-        while True:
-            self._stop_event.set()
-            if inf_t: inf_t.join(timeout=5)
+        try:
+            while not self._stop_event.is_set():
+                if inf_t: inf_t.join(timeout=1)
+                if cap: cap.release(); cap = None
+                if ffmpeg:
+                    try: ffmpeg.stdin.close()
+                    except: pass
+                    ffmpeg.kill(); ffmpeg.wait()
+                    ffmpeg = None
+                
+                if self._stop_event.is_set():
+                    break
+
+                self._frame_queue = queue.Queue(maxsize=1)
+                self._result_queue = queue.Queue(maxsize=1)
+                self._latest_raw_frame = None
+                self._cap_ok = True
+
+                try:
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} connecting to RTSP at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...", flush=True)
+                    t_conn_start = time.time()
+                    cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    
+                    retry_count = 0
+                    while not cap.isOpened() and retry_count < 10 and not self._stop_event.is_set():
+                        time.sleep(0.5)
+                        cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+                        retry_count += 1
+                    
+                    if self._stop_event.is_set():
+                        break
+                    
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} RTSP connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+                    
+                    if cap and cap.isOpened():
+                        cap_t = threading.Thread(target=self._capture_thread, args=(cap,), daemon=True)
+                        cap_t.start()
+
+                    # Wait up to 5s for the first real frame from camera before starting FFmpeg
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} waiting for first raw frame...", flush=True)
+                    t_frame_start = time.time()
+                    while time.time() - t_frame_start < 5.0 and self._latest_raw_frame is None and not self._stop_event.is_set():
+                        time.sleep(0.05)
+                    
+                    if self._stop_event.is_set():
+                        break
+                    
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} first raw frame received in {int((time.time() - t_frame_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+                    
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} creating FFmpeg process...", flush=True)
+                    t_ff_start = time.time()
+                    ffmpeg = self._create_ffmpeg()
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} FFmpeg process created in {int((time.time() - t_ff_start)*1000)}ms", flush=True)
+                    
+                    inf_t = threading.Thread(target=self._inference_thread, daemon=True)
+                    inf_t.start()
+                    
+                    f_int = 1.0 / self.fps
+                    next_frame_time = time.time()
+                    
+                    while not self._stop_event.is_set():
+                        if cap and cap.isOpened():
+                            if not self._cap_ok or time.time() - self._last_frame_time > 15.0: break
+                        
+                        now = time.time()
+                        if now < next_frame_time:
+                            time.sleep(max(0.001, next_frame_time - now))
+                            continue
+                        next_frame_time += f_int
+                        if now - next_frame_time > 0.3:
+                            next_frame_time = now + f_int
+                        
+                        with self._frame_lock:
+                            f = self._latest_raw_frame
+                        
+                        if f is None:
+                            continue
+                        
+                        # Ultra-fast in-place resize to 720p HD
+                        pf = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                        
+                        # Send copy to inference thread if ready
+                        if not self._frame_queue.full():
+                            try:
+                                self._frame_queue.put_nowait(pf.copy())
+                            except:
+                                pass
+                        
+                        # Draw latest bounding boxes
+                        with self._box_lock:
+                            cur_boxes = list(self._latest_boxes)
+                        
+                        if cur_boxes:
+                            for b_xyxy, label_text, color_val in cur_boxes:
+                                try:
+                                    x1, y1, x2, y2 = [int(v) for v in b_xyxy]
+                                    c = tuple(color_val) if isinstance(color_val, (list, tuple)) and len(color_val) >= 3 else (0, 255, 128)
+                                    cv2.rectangle(pf, (x1, y1), (x2, y2), c, 2)
+                                    t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
+                                    cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 4, max(0, y1)), c, -1)
+                                    cv2.putText(pf, label_text, (x1 + 2, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+                                except: pass
+                        
+                        if ffmpeg.poll() is not None: break
+                        try:
+                            ffmpeg.stdin.write(pf)
+                        except: break
+                except:
+                    import traceback
+                    traceback.print_exc()
+        finally:
             if cap: cap.release()
             if ffmpeg:
                 try: ffmpeg.stdin.close()
                 except: pass
                 ffmpeg.kill(); ffmpeg.wait()
-            self._stop_event.clear()
-            self._frame_queue = queue.Queue(maxsize=1)
-            self._result_queue = queue.Queue(maxsize=1)
-            self._latest_raw_frame = None
-            self._cap_ok = True
-
-            try:
-                print(f"[WORKER-TIMER] Camera {self.cam_id} connecting to RTSP at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...", flush=True)
-                t_conn_start = time.time()
-                cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                
-                retry_count = 0
-                while not cap.isOpened() and retry_count < 10:
-                    time.sleep(0.5)
-                    cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-                    retry_count += 1
-                
-                print(f"[WORKER-TIMER] Camera {self.cam_id} RTSP connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-                
-                if cap and cap.isOpened():
-                    cap_t = threading.Thread(target=self._capture_thread, args=(cap,), daemon=True)
-                    cap_t.start()
-
-                # Wait up to 5s for the first real frame from camera before starting FFmpeg
-                print(f"[WORKER-TIMER] Camera {self.cam_id} waiting for first raw frame...", flush=True)
-                t_frame_start = time.time()
-                while time.time() - t_frame_start < 5.0 and self._latest_raw_frame is None:
-                    time.sleep(0.05)
-                
-                print(f"[WORKER-TIMER] Camera {self.cam_id} first raw frame received in {int((time.time() - t_frame_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-                
-                print(f"[WORKER-TIMER] Camera {self.cam_id} creating FFmpeg process...", flush=True)
-                t_ff_start = time.time()
-                ffmpeg = self._create_ffmpeg()
-                print(f"[WORKER-TIMER] Camera {self.cam_id} FFmpeg process created in {int((time.time() - t_ff_start)*1000)}ms", flush=True)
-                
-                inf_t = threading.Thread(target=self._inference_thread, daemon=True)
-                inf_t.start()
-                
-                f_int = 1.0 / self.fps
-                next_frame_time = time.time()
-                
-                while True:
-                    if cap and cap.isOpened():
-                        if not self._cap_ok or time.time() - self._last_frame_time > 15.0: break
-                    
-                    now = time.time()
-                    if now < next_frame_time:
-                        time.sleep(max(0.001, next_frame_time - now))
-                        continue
-                    next_frame_time += f_int
-                    if now - next_frame_time > 0.3:
-                        next_frame_time = now + f_int
-                    
-                    with self._frame_lock:
-                        f = self._latest_raw_frame
-                    
-                    if f is None:
-                        continue
-                    
-                    # Ultra-fast in-place resize to 720p HD
-                    pf = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
-                    
-
-
-                    # Send copy to inference thread if ready
-                    if not self._frame_queue.full():
-                        try:
-                            self._frame_queue.put_nowait(pf.copy())
-                        except:
-                            pass
-                    
-                    # Draw latest bounding boxes
-                    with self._box_lock:
-                        cur_boxes = list(self._latest_boxes)
-                    
-                    if cur_boxes:
-                        for b_xyxy, label_text, color_val in cur_boxes:
-                            try:
-                                x1, y1, x2, y2 = [int(v) for v in b_xyxy]
-                                c = tuple(color_val) if isinstance(color_val, (list, tuple)) and len(color_val) >= 3 else (0, 255, 128)
-                                cv2.rectangle(pf, (x1, y1), (x2, y2), c, 2)
-                                t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
-                                cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 4, max(0, y1)), c, -1)
-                                cv2.putText(pf, label_text, (x1 + 2, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
-                            except: pass
-                    
-                    if ffmpeg.poll() is not None: break
-                    try:
-                        ffmpeg.stdin.write(pf)
-                    except: break
-            except:
-                import traceback
-                traceback.print_exc()
 # import cv2, subprocess, os, time, threading, queue, json
 # from datetime import datetime
 # from ultralytics import YOLO
