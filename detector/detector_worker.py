@@ -169,6 +169,7 @@ class DetectorWorker:
                                     min_cls_conf = min(min_cls_conf, float(c_cfg["conf"]))
                     detect_conf = min_cls_conf
 
+                detected_this_model = []
                 for r in model.predict(f, conf=detect_conf, iou=m_iou, imgsz=640, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
@@ -179,12 +180,18 @@ class DetectorWorker:
                             box_area = bw * bh
                             cls = r.names[int(b.cls[0])]
                             conf_val = float(b.conf[0])
+                            
+                            detected_this_model.append((cls, conf_val))
 
-                            # Filter by enabled classes if list is provided (case-insensitive match)
+                            # Filter by enabled classes if list is provided (robust case/separator agnostic check)
                             if enabled_classes is not None and isinstance(enabled_classes, list):
-                                matched = cls in enabled_classes
-                                if not matched:
-                                    matched = any(e.lower() == cls.lower() for e in enabled_classes)
+                                norm_cls = cls.lower().replace("_", "-").replace(" ", "-")
+                                matched = False
+                                for e in enabled_classes:
+                                    norm_e = e.lower().replace("_", "-").replace(" ", "-")
+                                    if norm_cls == norm_e:
+                                        matched = True
+                                        break
                                 if not matched:
                                     continue
 
@@ -212,6 +219,10 @@ class DetectorWorker:
                             label_text = f"{cls} {conf_val:.2f}"
                             color_val = colors(int(b.cls[0])+midx*50, True)
                             raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls))
+                            
+                if enabled_classes and detected_this_model:
+                    unique_det = list(set(f"{c}({v:.2f})" for c, v in detected_this_model))
+                    print(f"[DEBUG] Camera {self.cam_id} {m_name}: detected {unique_det}, filter={enabled_classes}, kept={len(raw_boxes)} boxes", flush=True)
 
             # Universal Cross-Class Non-Maximum Suppression (NMS) across ALL models and ALL classes
             boxes_data = []
