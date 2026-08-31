@@ -71,6 +71,7 @@ class DetectorWorker:
     def model_configs(self, val):
         self._model_configs = val or {}
         self.roi_polygon = self._model_configs.get("roi_polygon")
+        print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, roi_polygon={self.roi_polygon}", flush=True)
 
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.40, iou=0.45, location="Camera", model_configs=None):
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
@@ -247,7 +248,9 @@ class DetectorWorker:
                                     ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
                                     cx = int((x1 + x2) / 2)
                                     cy = int((y1 + y2) / 2)
-                                    if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
+                                    inside = (rx1 <= cx <= rx2 and ry1 <= cy <= ry2)
+                                    print(f"[ROI-CHECK] cx={cx}, cy={cy}, box=[{rx1}, {ry1}, {rx2}, {ry2}], inside={inside}", flush=True)
+                                    if not inside:
                                         continue
                                 except Exception as e:
                                     print(f"[ROI] Filter error: {e}", flush=True)
