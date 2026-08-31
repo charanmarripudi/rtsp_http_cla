@@ -2291,10 +2291,13 @@ def get_cameras_with_models():
 
 @app.post("/api/alerts")
 def create_alert(d: dict = Body(...)):
-    # Local JSON Store
+    # Local JSON Store (Newest on Top)
     try:
         data = json.load(open(ALERTS_JSON)) if os.path.exists(ALERTS_JSON) else []
-        data.append(d); json.dump(data, open(ALERTS_JSON, "w"), indent=4)
+        if not isinstance(data, list): data = []
+        data.insert(0, d)
+        data = data[:100]
+        json.dump(data, open(ALERTS_JSON, "w"), indent=4)
     except: pass
     return {"status": "saved"}
 
@@ -2322,7 +2325,6 @@ def get_alerts_json():
         if not os.path.exists(ALERTS_JSON): return []
         with open(ALERTS_JSON, "r") as f:
             data = json.load(f)
-        # Ensure data is a list
         if not isinstance(data, list): data = []
         
         results = []
@@ -2337,7 +2339,7 @@ def get_alerts_json():
                 else:
                     a["image"] = f"/hls/alerts/{filename}"
                 results.append(a)
-        # Show alerts in the order from alerts.json (newest first)
+        # Show alerts newest first
         return results
     except Exception as e:
         print(f"[Alerts] Error reading JSON: {e}")
@@ -2350,7 +2352,7 @@ def get_alerts_db():
     if not conn: return []
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cur.execute("SELECT alert_id, camera_id, location, type_of_alert, image_path, created_at FROM alerts ORDER BY created_at DESC LIMIT 50")
+        cur.execute("SELECT alert_id, camera_id, location, type_of_alert, image_path, created_at FROM alerts ORDER BY created_at DESC, alert_id DESC LIMIT 50")
         rows = [dict(r) for r in cur.fetchall()]
         base_url = get_alerts_base_url()
         for r in rows:

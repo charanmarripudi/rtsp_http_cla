@@ -58,7 +58,19 @@ def get_alerts_base_url():
                 if val and not val.startswith("("):
                     return val
     except: pass
-    return os.getenv("ALERTS_BASE_URL", "")
+import colorsys
+
+def get_dynamic_class_color(class_name):
+    """
+    Pure dynamic deterministic color generator for ANY class name.
+    Works automatically for all present and future models/classes
+    without hardcoding or modifying code.
+    """
+    norm_name = str(class_name).lower().strip().replace("_", "-")
+    # Deterministic golden-angle distribution across 360-degree color wheel for distinct vibrant colors
+    h = ((abs(hash(norm_name)) * 137.507764) % 360.0) / 360.0
+    r, g, b = colorsys.hsv_to_rgb(h, 0.90, 0.95)
+    return (int(b * 255), int(g * 255), int(r * 255))
 
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
@@ -261,7 +273,7 @@ class DetectorWorker:
                                     print(f"[ROI] Filter error: {e}", flush=True)
 
                             label_text = f"{cls} {conf_val:.2f}"
-                            color_val = colors(int(b.cls[0])+midx*50, True)
+                            color_val = get_dynamic_class_color(cls)
                             raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls))
                 if detected_this_model:
                     m_name = os.path.basename(self.model_paths[midx])
@@ -356,11 +368,29 @@ class DetectorWorker:
                         pass
                 boxes_data.append((b_xyxy, l_text, c_color))
 
-            # Render alert image snapshot with bounding boxes
-            ann = Annotator(f.copy(), line_width=2)
-            for b_xyxy, label_text, color_val in boxes_data:
-                ann.box_label(b_xyxy, label_text, color=color_val)
-            res = ann.result()
+            # Render alert image snapshot with green ROI and identical color-coded boxes
+            snap_img = f.copy()
+            if self.roi_polygon and len(self.roi_polygon) == 2:
+                try:
+                    fh, fw = snap_img.shape[:2]
+                    rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                    ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                    rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                    ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                    cv2.rectangle(snap_img, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
+                except:
+                    pass
+
+            for b_xyxy, label_text, c_color in boxes_data:
+                try:
+                    x1, y1, x2, y2 = [int(v) for v in b_xyxy]
+                    cv2.rectangle(snap_img, (x1, y1), (x2, y2), c_color, 2)
+                    t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
+                    cv2.rectangle(snap_img, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), c_color, -1)
+                    cv2.putText(snap_img, label_text, (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+                except:
+                    pass
+            res = snap_img
 
             # Persistent alert timing: 3.0s initial trigger + 30.0s repeat interval for ongoing violations
             for c in cur_cls:
@@ -617,37 +647,9 @@ class DetectorWorker:
                             for b_xyxy, label_text, color_val in cur_boxes:
                                 try:
                                     x1, y1, x2, y2 = [int(v) for v in b_xyxy]
-                                    lbl_low = label_text.lower()
-                                    
-                                    # Distinct, vibrant curated color palette per class (BGR format)
-                                    if any(k in lbl_low for k in ["no-safety vest", "no_safety vest", "no-vest", "no_vest"]):
-                                        c = (0, 130, 255)    # Vivid Bright Amber/Orange
-                                    elif any(k in lbl_low for k in ["no-hard-hat", "no_helmet", "no-helmet", "no_hardhat", "no-hardhat"]):
-                                        c = (30, 45, 255)    # Vivid Coral Red
-                                    elif any(k in lbl_low for k in ["no-saftey-belt", "no-belt", "no_belt"]):
-                                        c = (180, 20, 255)   # Vivid Magenta/Purple
-                                    elif any(k in lbl_low for k in ["fall", "smoke", "fire", "spill", "danger"]):
-                                        c = (0, 0, 255)      # High-Alert Pure Red
-                                    elif any(k in lbl_low for k in ["safety vest", "vest"]):
-                                        c = (0, 230, 115)    # Vivid Emerald Green
-                                    elif any(k in lbl_low for k in ["hard-hat", "helmet", "hardhat"]):
-                                        c = (0, 215, 255)    # Golden Yellow
-                                    elif any(k in lbl_low for k in ["person", "human"]):
-                                        c = (255, 190, 40)   # Vivid Electric Cyan
-                                    elif any(k in lbl_low for k in ["belt", "goggles", "gloves", "boots"]):
-                                        c = (210, 230, 0)    # Bright Turquoise
-                                    else:
-                                        # Deterministic vibrant color for other custom model classes
-                                        palette = [
-                                            (0, 165, 255), (255, 140, 0), (50, 205, 50),
-                                            (238, 130, 238), (0, 215, 255), (255, 105, 180),
-                                            (30, 144, 255), (255, 215, 0)
-                                        ]
-                                        c = palette[abs(hash(lbl_low.split()[0])) % len(palette)]
-                                    
-                                    cv2.rectangle(pf, (x1, y1), (x2, y2), c, 2)
+                                    cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
                                     t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
-                                    cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), c, -1)
+                                    cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), color_val, -1)
                                     cv2.putText(pf, label_text, (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
                                 except: pass
                         
