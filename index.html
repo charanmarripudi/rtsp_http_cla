@@ -2374,25 +2374,36 @@
       });
     });
 
-    // Auto-render saved ROIs for all camera cards after dashboard rendering completes
+    function autoRenderAllSavedRois() {
+      fetch("/api/streams")
+        .then(res => res.json())
+        .then(streams => {
+          if (Array.isArray(streams)) {
+            streams.forEach((s, idx) => {
+              if (s.model_configs && s.model_configs.roi_polygon && s.model_configs.roi_polygon.length === 2) {
+                roiDrawStates[idx] = {
+                  isDrawing: false,
+                  startX: 0,
+                  startY: 0,
+                  startPctX: 0,
+                  startPctY: 0,
+                  vertices: s.model_configs.roi_polygon
+                };
+                window.renderInlineRoi(idx);
+              }
+            });
+          }
+        })
+        .catch(err => console.error("Error auto-rendering ROIs on load:", err));
+    }
+
     window.addEventListener("rtsp-dashboard-ready", () => {
-      setTimeout(() => {
-        if (typeof streamsArray !== "undefined" && Array.isArray(streamsArray)) {
-          streamsArray.forEach((s, idx) => {
-            if (s.model_configs && s.model_configs.roi_polygon) {
-              roiDrawStates[idx] = {
-                isDrawing: false,
-                startX: 0,
-                startY: 0,
-                startPctX: 0,
-                startPctY: 0,
-                vertices: s.model_configs.roi_polygon
-              };
-              window.renderInlineRoi(idx);
-            }
-          });
-        }
-      }, 600);
+      setTimeout(autoRenderAllSavedRois, 300);
+      setTimeout(autoRenderAllSavedRois, 1000);
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      setTimeout(autoRenderAllSavedRois, 400);
     });
   </script>
 
