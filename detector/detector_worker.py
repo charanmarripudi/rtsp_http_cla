@@ -502,9 +502,16 @@ class DetectorWorker:
                                 ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
                                 rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
                                 ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                                
+                                # Estimate camera-to-ROI ground distance in meters
+                                y_base = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                                est_dist = round(2.5 / max(0.08, y_base - 0.05)**0.95, 1)
+                                label = f"ROI: ~{est_dist}m"
+                                
                                 cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
-                                cv2.rectangle(pf, (rx1, max(0, ry1 - 18)), (rx1 + 45, max(0, ry1)), (0, 255, 0), -1)
-                                cv2.putText(pf, "ROI", (rx1 + 4, max(14, ry1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1, cv2.LINE_AA)
+                                t_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)[0]
+                                cv2.rectangle(pf, (rx1, max(0, ry1 - 18)), (rx1 + t_size[0] + 8, max(0, ry1)), (0, 255, 0), -1)
+                                cv2.putText(pf, label, (rx1 + 4, max(14, ry1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1, cv2.LINE_AA)
                             except:
                                 pass
 

@@ -44,6 +44,10 @@ class LocationDashboardTemplates {
                     <video id="v${id}" controls autoplay muted playsinline data-src="${this.text(stream.hls_live)}" ondblclick="toggleCardMaximize(${id})"></video>
                     <svg class="roi-draw-canvas" id="roi-canvas-${id}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; user-select: none; z-index: 15; pointer-events: none; background: transparent;">
                         <rect id="roi-rect-${id}" x="0" y="0" width="0" height="0" style="fill: none; stroke: #00ffaa; stroke-width: 2.5;"></rect>
+                        <g id="roi-badge-${id}" style="display: none;">
+                            <rect id="roi-badge-bg-${id}" x="0" y="0" width="0" height="0" rx="3" style="fill: #00ffaa;"></rect>
+                            <text id="roi-badge-text-${id}" x="0" y="0" style="fill: #000; font-family: monospace; font-size: 11px; font-weight: 700; dominant-baseline: middle;"></text>
+                        </g>
                     </svg>
                     <div class="cam-label">${this.text(stream.location || stream.label || `Camera ${id + 1}`)}</div>
                 </div>

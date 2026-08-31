@@ -1523,6 +1523,10 @@
             <video id="v${i}" controls autoplay muted playsinline data-src="${escapeHtml(s.hls_live)}" ondblclick="toggleCardMaximize(${i})"></video>
             <svg class="roi-draw-canvas" id="roi-canvas-${i}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; user-select: none; z-index: 15; pointer-events: none; background: transparent;">
               <rect id="roi-rect-${i}" x="0" y="0" width="0" height="0" style="fill: none; stroke: #00ffaa; stroke-width: 2.5;"></rect>
+              <g id="roi-badge-${i}" style="display: none;">
+                <rect id="roi-badge-bg-${i}" x="0" y="0" width="0" height="0" rx="3" style="fill: #00ffaa;"></rect>
+                <text id="roi-badge-text-${i}" x="0" y="0" style="fill: #000; font-family: monospace; font-size: 11px; font-weight: 700; dominant-baseline: middle;"></text>
+              </g>
             </svg>
             <div class="cam-label">${escapeHtml(s.label)} - ${escapeHtml(s.location || `Location ${i + 1}`)}</div>
           </div>
@@ -2231,6 +2235,24 @@
         rectEl.setAttribute("y", String(y));
         rectEl.setAttribute("width", String(w));
         rectEl.setAttribute("height", String(h));
+
+        const maxY = Math.max(state.startPctY, currentY / rect.height);
+        const estDist = (2.5 / Math.pow(Math.max(0.08, maxY - 0.05), 0.95)).toFixed(1);
+        const badgeG = document.getElementById(`roi-badge-${cid}`);
+        const badgeBg = document.getElementById(`roi-badge-bg-${cid}`);
+        const badgeText = document.getElementById(`roi-badge-text-${cid}`);
+        if (badgeG && badgeBg && badgeText) {
+          const txt = `ROI: ~${estDist}m`;
+          badgeText.textContent = txt;
+          const bgW = txt.length * 7.5 + 10;
+          badgeBg.setAttribute("x", String(x));
+          badgeBg.setAttribute("y", String(Math.max(0, y - 18)));
+          badgeBg.setAttribute("width", String(bgW));
+          badgeBg.setAttribute("height", "16");
+          badgeText.setAttribute("x", String(x + 5));
+          badgeText.setAttribute("y", String(Math.max(8, y - 9)));
+          badgeG.style.display = "block";
+        }
       });
 
       window.addEventListener("mouseup", async (e) => {
@@ -2294,24 +2316,47 @@
       const state = roiDrawStates[cid];
       const canvas = document.getElementById(`roi-canvas-${cid}`);
       const rectEl = document.getElementById(`roi-rect-${cid}`);
+      const badgeG = document.getElementById(`roi-badge-${cid}`);
+      const badgeBg = document.getElementById(`roi-badge-bg-${cid}`);
+      const badgeText = document.getElementById(`roi-badge-text-${cid}`);
       if (!state || !canvas || !rectEl) return;
       
       const rect = canvas.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
       
       if (state.vertices && state.vertices.length === 2) {
-        const rx1 = state.vertices[0][0] * rect.width;
-        const ry1 = state.vertices[0][1] * rect.height;
-        const rx2 = state.vertices[1][0] * rect.width;
-        const ry2 = state.vertices[1][1] * rect.height;
+        const minX = Math.min(state.vertices[0][0], state.vertices[1][0]);
+        const minY = Math.min(state.vertices[0][1], state.vertices[1][1]);
+        const maxX = Math.max(state.vertices[0][0], state.vertices[1][0]);
+        const maxY = Math.max(state.vertices[0][1], state.vertices[1][1]);
+
+        const rx1 = minX * rect.width;
+        const ry1 = minY * rect.height;
+        const rx2 = maxX * rect.width;
+        const ry2 = maxY * rect.height;
         
         rectEl.setAttribute("x", String(rx1));
         rectEl.setAttribute("y", String(ry1));
         rectEl.setAttribute("width", String(rx2 - rx1));
         rectEl.setAttribute("height", String(ry2 - ry1));
         rectEl.style.display = "block";
+
+        if (badgeG && badgeBg && badgeText) {
+          const estDist = (2.5 / Math.pow(Math.max(0.08, maxY - 0.05), 0.95)).toFixed(1);
+          const txt = `ROI: ~${estDist}m`;
+          badgeText.textContent = txt;
+          const bgW = txt.length * 7.5 + 10;
+          badgeBg.setAttribute("x", String(rx1));
+          badgeBg.setAttribute("y", String(Math.max(0, ry1 - 18)));
+          badgeBg.setAttribute("width", String(bgW));
+          badgeBg.setAttribute("height", "16");
+          badgeText.setAttribute("x", String(rx1 + 5));
+          badgeText.setAttribute("y", String(Math.max(8, ry1 - 9)));
+          badgeG.style.display = "block";
+        }
       } else {
         rectEl.style.display = "none";
+        if (badgeG) badgeG.style.display = "none";
       }
     };
 
