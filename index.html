@@ -2072,55 +2072,93 @@
       }, 300);
     };
 
+    let startX = 0, startY = 0;
+    let startPctX = 0, startPctY = 0;
+    let isDrawing = false;
+
     function renderRoiPolygon() {
       const svg = document.getElementById("roi-svg-canvas");
-      const polygon = document.getElementById("roi-svg-polygon");
-      const dotsGroup = document.getElementById("roi-svg-dots");
-      if (!svg || !polygon || !dotsGroup) return;
+      const rectEl = document.getElementById("roi-svg-rect");
+      if (!svg || !rectEl) return;
       
       const rect = svg.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
       
-      // Render polygon points
-      const ptsString = roiVertices.map(v => `${v[0] * rect.width},${v[1] * rect.height}`).join(" ");
-      polygon.setAttribute("points", ptsString);
-      
-      // Render interactive circles
-      dotsGroup.innerHTML = "";
-      roiVertices.forEach((v, idx) => {
-        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        circle.setAttribute("cx", String(v[0] * rect.width));
-        circle.setAttribute("cy", String(v[1] * rect.height));
-        circle.setAttribute("r", "6");
-        circle.setAttribute("fill", "#00ffff");
-        circle.setAttribute("stroke", "#fff");
-        circle.setAttribute("stroke-width", "2");
-        circle.style.cursor = "pointer";
+      if (roiVertices && roiVertices.length === 2) {
+        const rx1 = roiVertices[0][0] * rect.width;
+        const ry1 = roiVertices[0][1] * rect.height;
+        const rx2 = roiVertices[1][0] * rect.width;
+        const ry2 = roiVertices[1][1] * rect.height;
         
-        // Remove vertex on double click
-        circle.addEventListener("dblclick", (e) => {
-          e.stopPropagation();
-          roiVertices.splice(idx, 1);
-          renderRoiPolygon();
-        });
-        
-        dotsGroup.appendChild(circle);
-      });
+        rectEl.setAttribute("x", rx1);
+        rectEl.setAttribute("y", ry1);
+        rectEl.setAttribute("width", rx2 - rx1);
+        rectEl.setAttribute("height", ry2 - ry1);
+        rectEl.style.display = "block";
+      } else {
+        rectEl.style.display = "none";
+      }
     }
 
-    // Add SVG canvas click listener to draw vertices
-    document.getElementById("roi-svg-canvas").addEventListener("click", (e) => {
-      if (e.target.tagName === "circle") return;
+    // Attach click-and-drag listeners to draw rectangle
+    const svgCanvas = document.getElementById("roi-svg-canvas");
+    
+    svgCanvas.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const rect = svgCanvas.getBoundingClientRect();
+      startX = e.clientX - rect.left;
+      startY = e.clientY - rect.top;
+      startPctX = startX / rect.width;
+      startPctY = startY / rect.height;
+      isDrawing = true;
       
-      const svg = document.getElementById("roi-svg-canvas");
-      const rect = svg.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
+      const rectEl = document.getElementById("roi-svg-rect");
+      rectEl.setAttribute("x", startX);
+      rectEl.setAttribute("y", startY);
+      rectEl.setAttribute("width", 0);
+      rectEl.setAttribute("height", 0);
+      rectEl.style.display = "block";
+    });
+
+    svgCanvas.addEventListener("mousemove", (e) => {
+      if (!isDrawing) return;
+      const rect = svgCanvas.getBoundingClientRect();
+      const currentX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      const currentY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
       
-      const nx = parseFloat((cx / rect.width).toFixed(4));
-      const ny = parseFloat((cy / rect.height).toFixed(4));
+      const x = Math.min(startX, currentX);
+      const y = Math.min(startY, currentY);
+      const w = Math.abs(currentX - startX);
+      const h = Math.abs(currentY - startY);
       
-      roiVertices.push([nx, ny]);
+      const rectEl = document.getElementById("roi-svg-rect");
+      rectEl.setAttribute("x", x);
+      rectEl.setAttribute("y", y);
+      rectEl.setAttribute("width", w);
+      rectEl.setAttribute("height", h);
+    });
+
+    window.addEventListener("mouseup", (e) => {
+      if (!isDrawing) return;
+      isDrawing = false;
+      const rect = svgCanvas.getBoundingClientRect();
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      
+      const currentX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+      const currentY = Math.max(0, Math.min(rect.height, clientY - rect.top));
+      
+      const nx1 = parseFloat(Math.min(startPctX, currentX / rect.width).toFixed(4));
+      const ny1 = parseFloat(Math.min(startPctY, currentY / rect.height).toFixed(4));
+      const nx2 = parseFloat(Math.max(startPctX, currentX / rect.width).toFixed(4));
+      const ny2 = parseFloat(Math.max(startPctY, currentY / rect.height).toFixed(4));
+      
+      // If width or height is negligible, cancel the ROI
+      if (nx2 - nx1 < 0.01 || ny2 - ny1 < 0.01) {
+        roiVertices = [];
+      } else {
+        roiVertices = [[nx1, ny1], [nx2, ny2]];
+      }
       renderRoiPolygon();
     });
 
@@ -2188,7 +2226,7 @@
       <div style="width: 100%; max-width: 960px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
           <div>
               <h3 id="roi-modal-title" style="margin: 0; font-family: var(--display); color: var(--accent); font-size: 1.15rem; font-weight: 800; letter-spacing: 0.5px;">Maximize Camera</h3>
-              <span style="font-size: 0.7rem; color: var(--muted);">Click to draw ROI points. Double click a point to remove it.</span>
+              <span style="font-size: 0.7rem; color: var(--muted);">Click and drag your mouse on the screen to draw a rectangle detection zone.</span>
           </div>
           <div style="display: flex; gap: 10px;">
               <button id="roi-btn-clear" class="btn-secondary" style="padding: 6px 14px; font-size: 0.72rem; font-family: var(--mono);">Clear ROI</button>
@@ -2204,8 +2242,7 @@
           
           <!-- SVG Drawing Canvas Overlay -->
           <svg id="roi-svg-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; user-select: none;">
-              <polygon id="roi-svg-polygon" points="" style="fill: rgba(0, 255, 255, 0.15); stroke: #00ffff; stroke-width: 3; stroke-dasharray: 4;"></polygon>
-              <g id="roi-svg-dots"></g>
+              <rect id="roi-svg-rect" x="0" y="0" width="0" height="0" style="fill: rgba(0, 255, 255, 0.15); stroke: #00ffff; stroke-width: 3; stroke-dasharray: 4; display: none;"></rect>
           </svg>
       </div>
   </div>

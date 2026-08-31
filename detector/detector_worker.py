@@ -237,17 +237,19 @@ class DetectorWorker:
                             if not self._is_valid_box(conf_val, cls_conf, bw, bh, box_area, f_w, f_h, f_area):
                                 continue
 
-                            # Apply ROI polygon filter if configured
-                            if self.roi_polygon:
-                                try:
-                                    import numpy as np
-                                    poly_pts = np.array([[int(pt[0] * self.width), int(pt[1] * self.height)] for pt in self.roi_polygon], dtype=np.int32)
-                                    cx = int((x1 + x2) / 2)
-                                    cy = int((y1 + y2) / 2)
-                                    if cv2.pointPolygonTest(poly_pts, (cx, cy), False) < 0:
-                                        continue
-                                except Exception as e:
-                                    print(f"[ROI] Filter error: {e}", flush=True)
+                             # Apply ROI rectangle filter if configured
+                             if self.roi_polygon and len(self.roi_polygon) == 2:
+                                 try:
+                                     rx1 = int(self.roi_polygon[0][0] * self.width)
+                                     ry1 = int(self.roi_polygon[0][1] * self.height)
+                                     rx2 = int(self.roi_polygon[1][0] * self.width)
+                                     ry2 = int(self.roi_polygon[1][1] * self.height)
+                                     cx = int((x1 + x2) / 2)
+                                     cy = int((y1 + y2) / 2)
+                                     if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
+                                         continue
+                                 except Exception as e:
+                                     print(f"[ROI] Filter error: {e}", flush=True)
 
                             label_text = f"{cls} {conf_val:.2f}"
                             color_val = colors(int(b.cls[0])+midx*50, True)
@@ -294,12 +296,14 @@ class DetectorWorker:
                         boxes_data.append((b1_xyxy, l1_text, c1_color))
                         cur_cls.add(cls1_name)
 
-            # Draw ROI polygon outline if configured
-            if self.roi_polygon:
+            # Draw ROI rectangle outline if configured
+            if self.roi_polygon and len(self.roi_polygon) == 2:
                 try:
-                    import numpy as np
-                    poly_pts = np.array([[int(pt[0] * self.width), int(pt[1] * self.height)] for pt in self.roi_polygon], dtype=np.int32)
-                    cv2.polylines(f, [poly_pts], isClosed=True, color=(0, 255, 255), thickness=2)
+                    rx1 = int(self.roi_polygon[0][0] * self.width)
+                    ry1 = int(self.roi_polygon[0][1] * self.height)
+                    rx2 = int(self.roi_polygon[1][0] * self.width)
+                    ry2 = int(self.roi_polygon[1][1] * self.height)
+                    cv2.rectangle(f, (rx1, ry1), (rx2, ry2), color=(0, 255, 255), thickness=2)
                 except:
                     pass
 
