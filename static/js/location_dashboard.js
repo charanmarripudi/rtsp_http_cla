@@ -362,9 +362,18 @@ class LocationDashboard {
             .map((item, idx) => {
                 const camBox = document.getElementById(`cam-box-${item.id}`);
                 let modelConfigs = JSON.parse(JSON.stringify(item.model_configs || {}));
+                let topConf = item.conf !== undefined && item.conf !== null ? parseFloat(item.conf) : 0.40;
+                let topIou = item.iou !== undefined && item.iou !== null ? parseFloat(item.iou) : 0.45;
+                
                 if (camBox) {
+                    const topConfEl = camBox.querySelector(".conf-slider");
+                    const topIouEl = camBox.querySelector(".iou-slider");
+                    if (topConfEl) topConf = parseFloat(topConfEl.value);
+                    if (topIouEl) topIou = parseFloat(topIouEl.value);
+
                     camBox.querySelectorAll(".model-card-box").forEach(card => {
                         const mName = card.getAttribute("data-model");
+                        const cls = card.getAttribute("data-class");
                         const cSlider = card.querySelector(".model-conf-slider");
                         const iSlider = card.querySelector(".model-iou-slider");
                         if (mName && cSlider && iSlider) {
@@ -372,16 +381,29 @@ class LocationDashboard {
                             const iVal = parseFloat(iSlider.value);
                             const clean = mName.replace(".pt", "");
                             
-                            const existingPt = modelConfigs[mName] || {};
-                            const existingClean = modelConfigs[clean] || {};
-                            
-                            modelConfigs[mName] = Object.assign({}, existingPt, { conf: cVal, iou: iVal });
-                            modelConfigs[clean] = Object.assign({}, existingClean, { conf: cVal, iou: iVal });
+                            if (cls) {
+                                modelConfigs[mName] = modelConfigs[mName] || {};
+                                modelConfigs[mName].class_configs = modelConfigs[mName].class_configs || {};
+                                modelConfigs[mName].class_configs[cls] = { conf: cVal, iou: iVal };
+
+                                modelConfigs[clean] = modelConfigs[clean] || {};
+                                modelConfigs[clean].class_configs = modelConfigs[clean].class_configs || {};
+                                modelConfigs[clean].class_configs[cls] = { conf: cVal, iou: iVal };
+                            } else {
+                                const existingPt = modelConfigs[mName] || {};
+                                const existingClean = modelConfigs[clean] || {};
+                                modelConfigs[mName] = Object.assign({}, existingPt, { conf: cVal, iou: iVal });
+                                modelConfigs[clean] = Object.assign({}, existingClean, { conf: cVal, iou: iVal });
+                            }
                         }
                     });
                     item.model_configs = modelConfigs;
+                    item.conf = topConf;
+                    item.iou = topIou;
                 }
                 const p = this.store.cameraPayload(item, idx);
+                p.conf = topConf;
+                p.iou = topIou;
                 p.model_configs = modelConfigs;
                 return p;
             });
