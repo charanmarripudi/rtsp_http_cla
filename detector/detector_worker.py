@@ -240,10 +240,11 @@ class DetectorWorker:
                              # Apply ROI rectangle filter if configured
                             if self.roi_polygon and len(self.roi_polygon) == 2:
                                 try:
-                                    rx1 = int(self.roi_polygon[0][0] * self.width)
-                                    ry1 = int(self.roi_polygon[0][1] * self.height)
-                                    rx2 = int(self.roi_polygon[1][0] * self.width)
-                                    ry2 = int(self.roi_polygon[1][1] * self.height)
+                                    fh, fw = f.shape[:2]
+                                    rx1 = int(self.roi_polygon[0][0] * fw)
+                                    ry1 = int(self.roi_polygon[0][1] * fh)
+                                    rx2 = int(self.roi_polygon[1][0] * fw)
+                                    ry2 = int(self.roi_polygon[1][1] * fh)
                                     cx = int((x1 + x2) / 2)
                                     cy = int((y1 + y2) / 2)
                                     if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
@@ -299,10 +300,11 @@ class DetectorWorker:
             # Draw ROI rectangle outline if configured
             if self.roi_polygon and len(self.roi_polygon) == 2:
                 try:
-                    rx1 = int(self.roi_polygon[0][0] * self.width)
-                    ry1 = int(self.roi_polygon[0][1] * self.height)
-                    rx2 = int(self.roi_polygon[1][0] * self.width)
-                    ry2 = int(self.roi_polygon[1][1] * self.height)
+                    fh, fw = f.shape[:2]
+                    rx1 = int(self.roi_polygon[0][0] * fw)
+                    ry1 = int(self.roi_polygon[0][1] * fh)
+                    rx2 = int(self.roi_polygon[1][0] * fw)
+                    ry2 = int(self.roi_polygon[1][1] * fh)
                     cv2.rectangle(f, (rx1, ry1), (rx2, ry2), color=(0, 255, 255), thickness=2)
                 except:
                     pass

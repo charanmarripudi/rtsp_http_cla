@@ -2063,7 +2063,19 @@
       const stream = streamsArray[Number(cid)];
       if (!btn || !canvas || !video || !stream) return;
 
+      const box = document.getElementById(`cam-box-${cid}`);
+      const stopBtn = box ? box.querySelector(".stop") : null;
+
       const isDrawingModeActive = canvas.style.pointerEvents === "auto";
+
+      const restoreStopButton = () => {
+        if (stopBtn && stopBtn.originalOnclick) {
+          stopBtn.textContent = stopBtn.getAttribute("data-orig-text") || "Stop";
+          stopBtn.onclick = stopBtn.originalOnclick;
+          stopBtn.style.borderColor = "";
+          stopBtn.style.color = "";
+        }
+      };
 
       if (!isDrawingModeActive) {
         // TURN ON DRAWING MODE
@@ -2076,6 +2088,53 @@
         // Hide video controls to avoid click blocking
         video.removeAttribute("controls");
         
+        // Temporarily change Stop button to Clear ROI
+        if (stopBtn) {
+          stopBtn.setAttribute("data-orig-text", stopBtn.textContent);
+          stopBtn.originalOnclick = stopBtn.onclick;
+          stopBtn.textContent = "Clear ROI";
+          stopBtn.style.borderColor = "var(--danger)";
+          stopBtn.style.color = "var(--danger)";
+          
+          stopBtn.onclick = async (e) => {
+            e.stopPropagation();
+            
+            // Clear state and SVG
+            roiDrawStates[cid] = {
+              isDrawing: false,
+              startX: 0, startY: 0, startPctX: 0, startPctY: 0,
+              vertices: []
+            };
+            window.renderInlineRoi(cid);
+            
+            // Update metadata locally and on server
+            stream.model_configs = stream.model_configs || {};
+            stream.model_configs.roi_polygon = [];
+            localStorage.setItem("offline_streams", JSON.stringify(streamsArray));
+            
+            try {
+              await fetch("/api/update-thresholds", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  camera: cid,
+                  model_configs: stream.model_configs
+                })
+              });
+            } catch(err) {}
+            
+            // Exit drawing mode
+            canvas.style.pointerEvents = "none";
+            canvas.style.background = "transparent";
+            btn.textContent = "Draw ROI";
+            btn.style.background = "rgba(0, 240, 255, 0.1)";
+            btn.style.color = "var(--accent)";
+            video.setAttribute("controls", "");
+            
+            restoreStopButton();
+          };
+        }
+
         // Initialize state
         roiDrawStates[cid] = {
           isDrawing: false,
@@ -2129,6 +2188,7 @@
             console.error("Error saving ROI:", err);
           }
         }
+        restoreStopButton();
       }
     };
 
