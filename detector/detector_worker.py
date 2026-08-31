@@ -58,8 +58,6 @@ def get_alerts_base_url():
                 if val and not val.startswith("("):
                     return val
     except: pass
-import colorsys
-
 def get_dynamic_class_color(class_name):
     """
     Pure dynamic deterministic color generator for ANY class name.
@@ -67,10 +65,29 @@ def get_dynamic_class_color(class_name):
     without hardcoding or modifying code.
     """
     norm_name = str(class_name).lower().strip().replace("_", "-")
-    # Deterministic golden-angle distribution across 360-degree color wheel for distinct vibrant colors
-    h = ((abs(hash(norm_name)) * 137.507764) % 360.0) / 360.0
-    r, g, b = colorsys.hsv_to_rgb(h, 0.90, 0.95)
-    return (int(b * 255), int(g * 255), int(r * 255))
+    palette = [
+        (0, 140, 255),   # Bright Amber / Orange
+        (255, 190, 40),  # Electric Cyan
+        (30, 45, 255),   # Coral Red
+        (0, 230, 115),   # Emerald Green
+        (180, 20, 255),  # Magenta Pink
+        (0, 215, 255),   # Golden Yellow
+        (255, 105, 180), # Neon Pink
+        (210, 230, 0),   # Turquoise
+        (0, 165, 255),   # Vivid Orange
+        (50, 205, 50),   # Lime Green
+        (238, 130, 238), # Violet
+        (30, 144, 255),  # Deep Sky Blue
+        (255, 215, 0),   # Gold
+        (0, 128, 255),   # Tangerine
+        (255, 69, 0),    # Red Orange
+        (0, 255, 127),   # Spring Green
+        (147, 20, 255),  # Deep Purple
+        (255, 140, 0),   # Dark Orange
+        (0, 255, 255),   # Pure Cyan
+        (255, 20, 147),  # Deep Pink
+    ]
+    return palette[abs(hash(norm_name)) % len(palette)]
 
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
@@ -178,14 +195,14 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                m_imgsz = 960
+                m_imgsz = 640
                 if isinstance(self.model_configs, dict):
                     cfg = self.model_configs.get(m_name) or self.model_configs.get(m_clean) or self.model_configs.get(m_name.lower())
                     if cfg and isinstance(cfg, dict):
                         m_conf = float(cfg.get("conf", self.conf))
                         m_iou = float(cfg.get("iou", self.iou))
                         enabled_classes = cfg.get("enabled_classes")
-                        m_imgsz = int(cfg.get("imgsz", 960))
+                        m_imgsz = int(cfg.get("imgsz", 640))
 
                 # Dynamically set YOLO predict confidence to the minimum of active class sliders
                 detect_conf = m_conf
