@@ -267,7 +267,7 @@ class DetectorWorker:
                     m_name = os.path.basename(self.model_paths[midx])
                     print(f"[DEBUG] Camera {self.cam_id} {m_name}: raw_detected={detected_this_model}, filter={enabled_classes}, kept={len(raw_boxes)} boxes", flush=True)
 
-            # Universal Cross-Class Non-Maximum Suppression (NMS) across ALL models and ALL classes
+            # Cross-Class Non-Maximum Suppression (NMS) - 0.65 threshold to allow side-by-side seated workers
             boxes_data = []
             if raw_boxes:
                 raw_boxes.sort(key=lambda x: x[3], reverse=True)
@@ -295,8 +295,8 @@ class DetectorWorker:
                             union = area1 + area2 - inter
                             iou = inter / max(1.0, union)
                             
-                            # Universal IoU Threshold (0.35 overlap suppresses duplicate/conflicting boxes)
-                            if iou >= 0.35:
+                            # Suppress only if nearly identical overlap (0.65) so adjacent workers are both detected
+                            if iou >= 0.65:
                                 suppress = True
                                 break
                                 
@@ -304,6 +304,59 @@ class DetectorWorker:
                         kept_items.append(item)
                         boxes_data.append((b1_xyxy, l1_text, c1_color))
                         cur_cls.add(cls1_name)
+
+            # Multi-Frame Temporal Tracking & Smoothing to prevent flickering and track moving people smoothly
+            if not hasattr(self, "_tracked_boxes"):
+                self._tracked_boxes = []
+                
+            new_tracked = []
+            matched_indices = set()
+            
+            for item in boxes_data:
+                b_xyxy, l_text, c_color = item
+                bx1, by1, bx2, by2 = b_xyxy
+                b_area = max(0, bx2 - bx1) * max(0, by2 - by1)
+                
+                best_match = None
+                best_iou = 0.0
+                
+                for idx, t in enumerate(self._tracked_boxes):
+                    if idx in matched_indices: continue
+                    tx1, ty1, tx2, ty2 = t['box']
+                    t_area = max(0, tx2 - tx1) * max(0, ty2 - ty1)
+                    
+                    ix1, iy1 = max(bx1, tx1), max(by1, ty1)
+                    ix2, iy2 = min(bx2, tx2), min(by2, ty2)
+                    if ix2 > ix1 and iy2 > iy1:
+                        inter = (ix2 - ix1) * (iy2 - iy1)
+                        iou_val = inter / max(1.0, b_area + t_area - inter)
+                        if iou_val > best_iou:
+                            best_iou = iou_val
+                            best_match = idx
+                            
+                if best_match is not None and best_iou >= 0.25:
+                    matched_indices.add(best_match)
+                    old_t = self._tracked_boxes[best_match]
+                    # Smooth box movement interpolation (70% current, 30% previous)
+                    sm_box = [
+                        0.7 * bx1 + 0.3 * old_t['box'][0],
+                        0.7 * by1 + 0.3 * old_t['box'][1],
+                        0.7 * bx2 + 0.3 * old_t['box'][2],
+                        0.7 * by2 + 0.3 * old_t['box'][3]
+                    ]
+                    new_tracked.append({'box': sm_box, 'label': l_text, 'color': c_color, 'ttl': 4})
+                else:
+                    new_tracked.append({'box': b_xyxy, 'label': l_text, 'color': c_color, 'ttl': 4})
+            
+            # Keep alive existing tracks that briefly missed 1 frame (e.g. occlusion)
+            for idx, t in enumerate(self._tracked_boxes):
+                if idx not in matched_indices and t.get('ttl', 0) > 1:
+                    t['ttl'] -= 1
+                    new_tracked.append(t)
+                    
+            self._tracked_boxes = new_tracked
+            final_boxes_data = [(t['box'], t['label'], t['color']) for t in self._tracked_boxes]
+            boxes_data = final_boxes_data
 
             # Draw ROI rectangle outline if configured
             if self.roi_polygon and len(self.roi_polygon) == 2:
@@ -503,22 +556,37 @@ class DetectorWorker:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             try:
                                 fh, fw = pf.shape[:2]
-                                rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                                rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                                
-                                # Estimate camera-to-ROI ground distance range (Near to Far) in meters
+                                min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                                max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0])
                                 min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1])
                                 max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
-                                dist_near = round(2.5 / max(0.08, max_y - 0.05)**0.95, 1)
-                                dist_far = round(2.5 / max(0.08, min_y - 0.05)**0.95, 1)
-                                label = f"ROI: {dist_near}m - {dist_far}m"
                                 
+                                rx1, ry1 = int(min_x * fw), int(min_y * fh)
+                                rx2, ry2 = int(max_x * fw), int(max_y * fh)
+                                
+                                def _corner_dist(x_pct, y_pct):
+                                    d_fwd = 2.5 / (max(0.08, y_pct - 0.05)**0.95)
+                                    d_lat = (x_pct - 0.5) * (5.0 / (max(0.08, y_pct - 0.05)**0.5))
+                                    return round((d_fwd**2 + d_lat**2)**0.5, 1)
+
+                                d_tl = _corner_dist(min_x, min_y)
+                                d_tr = _corner_dist(max_x, min_y)
+                                d_bl = _corner_dist(min_x, max_y)
+                                d_br = _corner_dist(max_x, max_y)
+
                                 cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
-                                t_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)[0]
-                                cv2.rectangle(pf, (rx1, max(0, ry1 - 18)), (rx1 + t_size[0] + 8, max(0, ry1)), (0, 255, 0), -1)
-                                cv2.putText(pf, label, (rx1 + 4, max(14, ry1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1, cv2.LINE_AA)
+                                
+                                def _draw_tag(text, px, py, align_right=False, align_bottom=False):
+                                    tsz = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
+                                    bx = px - tsz[0] - 6 if align_right else px
+                                    by = py if not align_bottom else py - tsz[1] - 4
+                                    cv2.rectangle(pf, (bx, by), (bx + tsz[0] + 6, by + tsz[1] + 6), (0, 255, 0), -1)
+                                    cv2.putText(pf, text, (bx + 3, by + tsz[1] + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1, cv2.LINE_AA)
+
+                                _draw_tag(f"TL: {d_tl}m", rx1, max(0, ry1 - 18))
+                                _draw_tag(f"TR: {d_tr}m", rx2, max(0, ry1 - 18), align_right=True)
+                                _draw_tag(f"BL: {d_bl}m", rx1, min(fh - 18, ry2 + 2))
+                                _draw_tag(f"BR: {d_br}m", rx2, min(fh - 18, ry2 + 2), align_right=True)
                             except:
                                 pass
 
