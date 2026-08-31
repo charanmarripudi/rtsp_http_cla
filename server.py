@@ -942,6 +942,9 @@ async def update_thresholds(req: Request):
                 if conf is not None: entry["conf"] = conf
                 if iou is not None: entry["iou"] = iou
                 if model_configs and isinstance(model_configs, dict):
+                    # Retain existing roi_polygon if not explicitly passed
+                    if "roi_polygon" not in model_configs and "roi_polygon" in entry.get("model_configs", {}):
+                        model_configs["roi_polygon"] = entry["model_configs"]["roi_polygon"]
                     entry["model_configs"] = model_configs
                 elif target_model and conf is not None and iou is not None:
                     mc = entry.get("model_configs") or {}
@@ -957,13 +960,13 @@ async def update_thresholds(req: Request):
         if cid in running:
             if conf is not None: running[cid]["conf"] = conf
             if iou is not None: running[cid]["iou"] = iou
-            if model_configs: running[cid]["model_configs"] = model_configs
-            
-            proc = running[cid].get("proc")
-            if proc and hasattr(proc, "worker") and proc.worker:
-                if conf is not None: proc.worker.conf = conf
-                if iou is not None: proc.worker.iou = iou
-                if model_configs: proc.worker.model_configs = model_configs
+            if model_configs:
+                running[cid]["model_configs"] = model_configs
+                proc = running[cid].get("proc")
+                if proc and hasattr(proc, "worker") and proc.worker:
+                    if conf is not None: proc.worker.conf = conf
+                    if iou is not None: proc.worker.iou = iou
+                    proc.worker.model_configs = model_configs
         return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "message": str(e)}

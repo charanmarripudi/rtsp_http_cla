@@ -244,6 +244,10 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                 meta.model_configs[cleanName].class_configs = meta.model_configs[cleanName].class_configs || {};
                                 meta.model_configs[cleanName].class_configs[cls] = { conf: cNum, iou: iNum };
 
+                                if (window.roiDrawStates && window.roiDrawStates[i] && window.roiDrawStates[i].vertices && window.roiDrawStates[i].vertices.length === 2) {
+                                    meta.model_configs.roi_polygon = window.roiDrawStates[i].vertices;
+                                }
+
                                 fetch("/api/update-thresholds", {
                                     method: "POST",
                                     headers: { "Content-Type": "application/json" },
@@ -297,6 +301,10 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             meta.model_configs[m] = { conf: cNum, iou: iNum };
                             meta.model_configs[cleanName] = { conf: cNum, iou: iNum };
 
+                            if (window.roiDrawStates && window.roiDrawStates[i] && window.roiDrawStates[i].vertices && window.roiDrawStates[i].vertices.length === 2) {
+                                meta.model_configs.roi_polygon = window.roiDrawStates[i].vertices;
+                            }
+
                             fetch("/api/update-thresholds", {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
@@ -328,6 +336,9 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         if (!models.length) return alert("No models assigned");
         
         const domModelConfigs = JSON.parse(JSON.stringify(meta.model_configs || {}));
+        if (window.roiDrawStates && window.roiDrawStates[i] && window.roiDrawStates[i].vertices && window.roiDrawStates[i].vertices.length === 2) {
+            domModelConfigs.roi_polygon = window.roiDrawStates[i].vertices;
+        }
         box.querySelectorAll(".model-card-box").forEach(card => {
             const mName = card.getAttribute("data-model");
             const cls = card.getAttribute("data-class");
