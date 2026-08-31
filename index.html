@@ -1098,6 +1098,7 @@
   <script src="/static/js/location_dashboard.js?v=5.0"></script>
 
   <script>
+    var streamsArray = [];
     window.addEventListener("DOMContentLoaded", async () => {
       if (window.initLocationDashboard) {
         await window.initLocationDashboard();
@@ -1171,7 +1172,7 @@
         }
       }
 
-      let streamsArray = Array.isArray(streams) ? streams : [];
+      streamsArray = Array.isArray(streams) ? streams : [];
 
       loader.classList.add("gone");
 

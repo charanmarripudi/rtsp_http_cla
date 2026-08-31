@@ -283,11 +283,13 @@ class LocationDashboard {
         try {
             const data = await this.api.loadAll();
             this.store.load(data);
+            streamsArray = this.streams;
             this.dot.className = "ok";
             this.label.textContent = `${this.locations.length} location(s), ${this.streams.length} camera(s)`;
         } catch (err) {
             console.warn("Dashboard load failed, using local fallback:", err);
             this.store.loadOffline();
+            streamsArray = this.streams;
             this.dot.className = "err";
             this.label.textContent = "Offline Mode";
         } finally {
