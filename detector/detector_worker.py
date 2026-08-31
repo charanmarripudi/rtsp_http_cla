@@ -576,28 +576,25 @@ class DetectorWorker:
 
                                 cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
                                 
-                                def _draw_tag(text, px, py, align_right=False, center=False):
-                                    tsz = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
-                                    if center:
-                                        bx = px - tsz[0] // 2 - 4
-                                    elif align_right:
-                                        bx = px - tsz[0] - 6
-                                    else:
-                                        bx = px
-                                    by = max(0, min(fh - 18, py))
-                                    cv2.rectangle(pf, (bx, by), (bx + tsz[0] + 6, by + tsz[1] + 6), (0, 255, 0), -1)
-                                    cv2.putText(pf, text, (bx + 3, by + tsz[1] + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1, cv2.LINE_AA)
-
-                                # Main center header range
-                                dist_near = min(d_bl, d_br)
-                                dist_far = max(d_tl, d_tr)
-                                _draw_tag(f"ROI: {dist_near}m - {dist_far}m", int((rx1 + rx2) / 2), max(0, ry1 - 18), center=True)
-
-                                # 4 Corners placed neatly inside the rectangle so they never get clipped at frame boundaries
-                                _draw_tag(f"TL: {d_tl}m", rx1 + 3, ry1 + 3)
-                                _draw_tag(f"TR: {d_tr}m", rx2 - 3, ry1 + 3, align_right=True)
-                                _draw_tag(f"BL: {d_bl}m", rx1 + 3, ry2 - 18)
-                                _draw_tag(f"BR: {d_br}m", rx2 - 3, ry2 - 18, align_right=True)
+                                # Distance display (commented out for now, preserved for future use):
+                                # def _draw_tag(text, px, py, align_right=False, center=False):
+                                #     tsz = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
+                                #     if center:
+                                #         bx = px - tsz[0] // 2 - 4
+                                #     elif align_right:
+                                #         bx = px - tsz[0] - 6
+                                #     else:
+                                #         bx = px
+                                #     by = max(0, min(fh - 18, py))
+                                #     cv2.rectangle(pf, (bx, by), (bx + tsz[0] + 6, by + tsz[1] + 6), (0, 255, 0), -1)
+                                #     cv2.putText(pf, text, (bx + 3, by + tsz[1] + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1, cv2.LINE_AA)
+                                # dist_near = min(d_bl, d_br)
+                                # dist_far = max(d_tl, d_tr)
+                                # _draw_tag(f"ROI: {dist_near}m - {dist_far}m", int((rx1 + rx2) / 2), max(0, ry1 - 18), center=True)
+                                # _draw_tag(f"TL: {d_tl}m", rx1 + 3, ry1 + 3)
+                                # _draw_tag(f"TR: {d_tr}m", rx2 - 3, ry1 + 3, align_right=True)
+                                # _draw_tag(f"BL: {d_bl}m", rx1 + 3, ry2 - 18)
+                                # _draw_tag(f"BR: {d_br}m", rx2 - 3, ry2 - 18, align_right=True)
                             except:
                                 pass
 
