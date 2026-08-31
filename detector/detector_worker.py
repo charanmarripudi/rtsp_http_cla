@@ -225,13 +225,18 @@ class DetectorWorker:
                     detect_conf = min_cls_conf
 
                 detected_this_model = []
-                # Predict at a very low confidence (0.01) to capture distant or low-confidence boxes,
-                # then filter on the Python side using the slider threshold.
-                for r in model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False):
+                # Use ByteTrack multi-stage bipartite tracking across consecutive frames to prevent dropped detections
+                try:
+                    track_results = model.track(f, persist=True, tracker="bytetrack.yaml", conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                except:
+                    track_results = model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False)
+
+                for r in track_results:
                     if r.boxes:
                         for b in r.boxes:
                             cls = r.names[int(b.cls[0])]
                             conf_val = float(b.conf[0])
+                            track_id = int(b.id[0]) if (hasattr(b, "id") and b.id is not None and len(b.id) > 0) else None
                             detected_this_model.append((cls, conf_val))
                             
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
@@ -283,11 +288,10 @@ class DetectorWorker:
                                     cx = int((x1 + x2) / 2)
                                     cy = int((y1 + y2) / 2)
                                     inside = (rx1 <= cx <= rx2 and ry1 <= cy <= ry2)
-                                    print(f"[ROI-CHECK] cx={cx}, cy={cy}, box=[{rx1}, {ry1}, {rx2}, {ry2}], inside={inside}", flush=True)
                                     if not inside:
                                         continue
                                 except Exception as e:
-                                    print(f"[ROI] Filter error: {e}", flush=True)
+                                    pass
 
                             label_text = f"{cls} {conf_val:.2f}"
                             color_val = get_dynamic_class_color(cls)
