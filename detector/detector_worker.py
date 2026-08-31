@@ -337,50 +337,24 @@ class DetectorWorker:
                 if best_match is not None and best_iou >= 0.25:
                     matched_indices.add(best_match)
                     old_t = self._tracked_boxes[best_match]
-                    # Smooth box movement interpolation (70% current, 30% previous)
-                    sm_box = [
-                        0.7 * bx1 + 0.3 * old_t['box'][0],
-                        0.7 * by1 + 0.3 * old_t['box'][1],
-                        0.7 * bx2 + 0.3 * old_t['box'][2],
-                        0.7 * by2 + 0.3 * old_t['box'][3]
-                    ]
-                    new_tracked.append({'box': sm_box, 'label': l_text, 'color': c_color, 'ttl': 4})
-                else:
-                    new_tracked.append({'box': b_xyxy, 'label': l_text, 'color': c_color, 'ttl': 4})
-            
-            # Keep alive existing tracks that briefly missed 1 frame (e.g. occlusion)
-            for idx, t in enumerate(self._tracked_boxes):
-                if idx not in matched_indices and t.get('ttl', 0) > 1:
-                    t['ttl'] -= 1
-                    new_tracked.append(t)
-                    
-            # Filter temporal tracks to strictly eliminate any tracks outside active ROI
-            if self.roi_polygon and len(self.roi_polygon) == 2:
-                try:
-                    fh, fw = f.shape[:2]
-                    rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                    ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                    rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                    ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                    new_tracked = [t for t in new_tracked if rx1 <= (t['box'][0] + t['box'][2]) / 2 <= rx2 and ry1 <= (t['box'][1] + t['box'][3]) / 2 <= ry2]
-                except:
-                    pass
-
-            self._tracked_boxes = new_tracked
-            final_boxes_data = [(t['box'], t['label'], t['color']) for t in self._tracked_boxes]
-            boxes_data = final_boxes_data
-
-            # Draw ROI rectangle outline if configured
-            if self.roi_polygon and len(self.roi_polygon) == 2:
-                try:
-                    fh, fw = f.shape[:2]
-                    rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                    ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                    rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                    ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                    cv2.rectangle(f, (rx1, ry1), (rx2, ry2), color=(0, 255, 0), thickness=2)
-                except:
-                    pass
+            # Real-time box update (instant tracking with zero ghost box lag on moving/vacating objects)
+            boxes_data = []
+            for b_xyxy, l_text, c_color, conf_val, cls_name in raw_boxes:
+                if self.roi_polygon and len(self.roi_polygon) == 2:
+                    try:
+                        fh, fw = f.shape[:2]
+                        rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                        ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                        rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                        ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                        bx1, by1, bx2, by2 = b_xyxy
+                        bcx = int((bx1 + bx2) / 2)
+                        bcy = int((by1 + by2) / 2)
+                        if not (rx1 <= bcx <= rx2 and ry1 <= bcy <= ry2):
+                            continue
+                    except:
+                        pass
+                boxes_data.append((b_xyxy, l_text, c_color))
 
             # Render alert image snapshot with bounding boxes
             ann = Annotator(f.copy(), line_width=2)
@@ -388,16 +362,30 @@ class DetectorWorker:
                 ann.box_label(b_xyxy, label_text, color=color_val)
             res = ann.result()
 
+            # Persistent 3-second alert timing with 1.5s grace window
             for c in cur_cls:
-                if c not in self.alert_timers: self.alert_timers[c] = now
-                elif now - self.alert_timers[c] >= 3.0 and c not in self.alert_triggered:
-                    self.alert_triggered.add(c); self._save_alert(c, res)
-            for c in list(self.alert_timers):
-                if c not in cur_cls:
+                if c not in self.alert_timers:
+                    self.alert_timers[c] = {'start': now, 'last_seen': now}
+                else:
+                    self.alert_timers[c]['last_seen'] = now
+
+                duration = now - self.alert_timers[c]['start']
+                if duration >= 3.0 and c not in self.alert_triggered:
+                    self.alert_triggered.add(c)
+                    print(f"[ALERT] Triggering 3s alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s", flush=True)
+                    self._save_alert(c, res)
+
+            # Cleanup expired classes (absent for > 1.5s)
+            for c in list(self.alert_timers.keys()):
+                if now - self.alert_timers[c]['last_seen'] > 1.5:
                     del self.alert_timers[c]
-                    if c in self.alert_triggered: self.alert_triggered.remove(c)
+                    if c in self.alert_triggered:
+                        self.alert_triggered.remove(c)
+
             return boxes_data
-        except: return []
+        except Exception as err:
+            print(f"[ERROR] _run_all_models error: {err}", flush=True)
+            return []
 
     def _save_alert(self, class_name, frame):
         try:
@@ -406,7 +394,8 @@ class DetectorWorker:
             filename = f"cam{self.cam_id}_{ts}_{class_name}.jpg"
             adir = os.path.join(os.path.dirname(self.output_dir), "alerts")
             os.makedirs(adir, exist_ok=True)
-            cv2.imwrite(os.path.join(adir, filename), frame)
+            img_saved = cv2.imwrite(os.path.join(adir, filename), frame)
+            print(f"[ALERT-IMG] Saved snapshot {filename}, ok={img_saved}", flush=True)
 
             # Create full image path
             base_url = get_alerts_base_url()
@@ -424,8 +413,13 @@ class DetectorWorker:
                     insert_alert_db(cur, self.cam_id, self.location, f"{class_name} Detected", image_path, now_dt)
                     conn.commit()
                     cur.close()
-                except: pass
-        except: pass
+                    print(f"[ALERT-DB] Alert stored successfully in DB: cam={self.cam_id}, class={class_name}, location={self.location}", flush=True)
+                except Exception as dbe:
+                    print(f"[ALERT-DB-ERR] DB insert error: {dbe}", flush=True)
+            else:
+                print(f"[ALERT-DB-WARN] No DB connection available (PSYCOPG2={PSYCOPG2_AVAILABLE})", flush=True)
+        except Exception as e:
+            print(f"[ALERT-ERR] Failed to save alert: {e}", flush=True)
 
     def _get_connecting_frame(self):
         # Create a fallback frame with message
