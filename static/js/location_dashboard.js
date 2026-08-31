@@ -362,6 +362,9 @@ class LocationDashboard {
             .map((item, idx) => {
                 const camBox = document.getElementById(`cam-box-${item.id}`);
                 let modelConfigs = JSON.parse(JSON.stringify(item.model_configs || {}));
+                if (window.roiDrawStates && window.roiDrawStates[item.id] && window.roiDrawStates[item.id].vertices && window.roiDrawStates[item.id].vertices.length === 2) {
+                    modelConfigs.roi_polygon = window.roiDrawStates[item.id].vertices;
+                }
                 let topConf = item.conf !== undefined && item.conf !== null ? parseFloat(item.conf) : 0.40;
                 let topIou = item.iou !== undefined && item.iou !== null ? parseFloat(item.iou) : 0.45;
                 
