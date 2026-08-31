@@ -225,18 +225,12 @@ class DetectorWorker:
                     detect_conf = min_cls_conf
 
                 detected_this_model = []
-                # Use ByteTrack multi-stage bipartite tracking across consecutive frames to prevent dropped detections
-                try:
-                    track_results = model.track(f, persist=True, tracker="bytetrack.yaml", conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False)
-                except:
-                    track_results = model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False)
-
-                for r in track_results:
+                # Predict at a very low base confidence (0.01) to capture all moving, distant, and close objects
+                for r in model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
                             cls = r.names[int(b.cls[0])]
                             conf_val = float(b.conf[0])
-                            track_id = int(b.id[0]) if (hasattr(b, "id") and b.id is not None and len(b.id) > 0) else None
                             detected_this_model.append((cls, conf_val))
                             
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
@@ -277,7 +271,7 @@ class DetectorWorker:
                             if not self._is_valid_box(conf_val, cls_conf, bw, bh, box_area, f_w, f_h, f_area):
                                 continue
 
-                             # Apply ROI rectangle filter if configured
+                            # Apply ROI rectangle filter if configured
                             if self.roi_polygon and len(self.roi_polygon) == 2:
                                 try:
                                     fh, fw = f.shape[:2]
@@ -298,7 +292,7 @@ class DetectorWorker:
                             raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls))
                 if detected_this_model:
                     m_name = os.path.basename(self.model_paths[midx])
-                    print(f"[DEBUG] Camera {self.cam_id} {m_name}: raw_detected={detected_this_model}, filter={enabled_classes}, kept={len(raw_boxes)} boxes", flush=True)
+                    print(f"[DEBUG] Camera {self.cam_id} {m_name}: raw_detected={len(detected_this_model)}, filter={enabled_classes}, kept={len(raw_boxes)} boxes", flush=True)
 
             # Cross-Class Non-Maximum Suppression (NMS) - 0.65 threshold to allow side-by-side seated workers
             boxes_data = []
@@ -337,57 +331,6 @@ class DetectorWorker:
                         kept_items.append(item)
                         boxes_data.append((b1_xyxy, l1_text, c1_color))
                         cur_cls.add(cls1_name)
-
-            # Multi-Frame Temporal Tracking & Smoothing to prevent flickering and track moving people smoothly
-            if not hasattr(self, "_tracked_boxes"):
-                self._tracked_boxes = []
-                
-            new_tracked = []
-            matched_indices = set()
-            
-            for item in boxes_data:
-                b_xyxy, l_text, c_color = item
-                bx1, by1, bx2, by2 = b_xyxy
-                b_area = max(0, bx2 - bx1) * max(0, by2 - by1)
-                
-                best_match = None
-                best_iou = 0.0
-                
-                for idx, t in enumerate(self._tracked_boxes):
-                    if idx in matched_indices: continue
-                    tx1, ty1, tx2, ty2 = t['box']
-                    t_area = max(0, tx2 - tx1) * max(0, ty2 - ty1)
-                    
-                    ix1, iy1 = max(bx1, tx1), max(by1, ty1)
-                    ix2, iy2 = min(bx2, tx2), min(by2, ty2)
-                    if ix2 > ix1 and iy2 > iy1:
-                        inter = (ix2 - ix1) * (iy2 - iy1)
-                        iou_val = inter / max(1.0, b_area + t_area - inter)
-                        if iou_val > best_iou:
-                            best_iou = iou_val
-                            best_match = idx
-                            
-                if best_match is not None and best_iou >= 0.25:
-                    matched_indices.add(best_match)
-                    old_t = self._tracked_boxes[best_match]
-            # Real-time box update (instant tracking with zero ghost box lag on moving/vacating objects)
-            boxes_data = []
-            for b_xyxy, l_text, c_color, conf_val, cls_name in raw_boxes:
-                if self.roi_polygon and len(self.roi_polygon) == 2:
-                    try:
-                        fh, fw = f.shape[:2]
-                        rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                        ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                        rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                        ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                        bx1, by1, bx2, by2 = b_xyxy
-                        bcx = int((bx1 + bx2) / 2)
-                        bcy = int((by1 + by2) / 2)
-                        if not (rx1 <= bcx <= rx2 and ry1 <= bcy <= ry2):
-                            continue
-                    except:
-                        pass
-                boxes_data.append((b_xyxy, l_text, c_color))
 
             # Render alert image snapshot with green ROI and identical color-coded boxes
             snap_img = f.copy()
