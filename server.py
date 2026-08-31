@@ -2505,7 +2505,10 @@ _HTML_FILES = ["index.html", "stream.html", "location_dashboard.html", "alerts.h
 @app.get("/")
 @app.head("/")
 async def serve_root():
-    return FileResponse(os.path.join(BASE_DIR, "index.html"))
+    return FileResponse(
+        os.path.join(BASE_DIR, "index.html"),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
 
 for _html in _HTML_FILES:
     _html_path = os.path.join(BASE_DIR, _html)
@@ -2513,7 +2516,10 @@ for _html in _HTML_FILES:
         # Use a closure to capture the correct path for each file
         def _make_route(p):
             async def _serve():
-                return FileResponse(p)
+                return FileResponse(
+                    p,
+                    headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+                )
             return _serve
         app.get(f"/{_html}")(_make_route(_html_path))
         app.head(f"/{_html}")(_make_route(_html_path))
