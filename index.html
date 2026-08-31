@@ -110,8 +110,24 @@
       border-color: #2a3040;
     }
 
-    .box.detecting {
-      border-color: var(--accent);
+    .box.maximized-card {
+      position: fixed !important;
+      inset: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      max-width: 100vw !important;
+      z-index: 99999 !important;
+      background: var(--bg) !important;
+      display: flex !important;
+      flex-direction: column !important;
+      padding: 24px !important;
+      box-sizing: border-box !important;
+      margin: 0 !important;
+    }
+    .box.maximized-card .video-wrap {
+      flex: 1 !important;
+      height: auto !important;
+      max-height: calc(100vh - 120px) !important;
     }
 
     .mode-badge {
@@ -1503,8 +1519,9 @@
         box.innerHTML = `
           <div class="video-wrap" style="position: relative;">
             <div class="mode-badge raw" id="badge-${i}">RAW</div>
-            <video id="v${i}" controls autoplay muted playsinline data-src="${escapeHtml(s.hls_live)}"></video>
-            <svg class="roi-draw-canvas" id="roi-canvas-${i}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; user-select: none; display: none; z-index: 15; background: rgba(0,240,255,0.06);">
+            <button class="fullscreen-btn" title="Toggle Fullscreen" onclick="toggleCardMaximize(${i})">⛶</button>
+            <video id="v${i}" controls autoplay muted playsinline data-src="${escapeHtml(s.hls_live)}" ondblclick="toggleCardMaximize(${i})"></video>
+            <svg class="roi-draw-canvas" id="roi-canvas-${i}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; user-select: none; z-index: 15; pointer-events: none; background: transparent;">
               <rect id="roi-rect-${i}" x="0" y="0" width="0" height="0" style="fill: rgba(0, 255, 255, 0.15); stroke: #00ffff; stroke-width: 3; stroke-dasharray: 4;"></rect>
             </svg>
             <div class="cam-label">${escapeHtml(s.label)} - ${escapeHtml(s.location || `Location ${i + 1}`)}</div>
@@ -2033,6 +2050,8 @@
       if (refreshDevicesBtn) {
         refreshDevicesBtn.onclick = () => loadDevicesWidget();
       }
+      // Dispatch ready event to draw saved ROIs
+      window.dispatchEvent(new CustomEvent("rtsp-dashboard-ready"));
     });
 
     let roiDrawStates = {};
@@ -2044,11 +2063,12 @@
       const stream = streamsArray[Number(cid)];
       if (!btn || !canvas || !video || !stream) return;
 
-      const isDrawingModeActive = canvas.style.display === "block";
+      const isDrawingModeActive = canvas.style.pointerEvents === "auto";
 
       if (!isDrawingModeActive) {
         // TURN ON DRAWING MODE
-        canvas.style.display = "block";
+        canvas.style.pointerEvents = "auto";
+        canvas.style.background = "rgba(0, 240, 255, 0.08)";
         btn.textContent = "Save ROI";
         btn.style.background = "var(--accent)";
         btn.style.color = "#000";
@@ -2067,7 +2087,7 @@
         };
         
         // Render existing ROI on start
-        renderInlineRoi(cid);
+        window.renderInlineRoi(cid);
         
         // Bind events if not already done
         if (!canvas.hasAttribute("data-bound")) {
@@ -2076,7 +2096,8 @@
         }
       } else {
         // SAVE AND TURN OFF DRAWING MODE
-        canvas.style.display = "none";
+        canvas.style.pointerEvents = "none";
+        canvas.style.background = "transparent";
         btn.textContent = "Draw ROI";
         btn.style.background = "rgba(0, 240, 255, 0.1)";
         btn.style.color = "var(--accent)";
@@ -2175,7 +2196,20 @@
       });
     }
 
-    function renderInlineRoi(cid) {
+    window.roiDrawStates = roiDrawStates;
+
+    window.toggleCardMaximize = function(cid) {
+      const box = document.getElementById(`cam-box-${cid}`);
+      if (!box) return;
+      box.classList.toggle("maximized-card");
+      
+      // Recalculate and render the SVG ROI rectangle since card dimensions changed!
+      setTimeout(() => {
+        window.renderInlineRoi(cid);
+      }, 150);
+    };
+
+    window.renderInlineRoi = function(cid) {
       const state = roiDrawStates[cid];
       const canvas = document.getElementById(`roi-canvas-${cid}`);
       const rectEl = document.getElementById(`roi-rect-${cid}`);
@@ -2198,7 +2232,35 @@
       } else {
         rectEl.style.display = "none";
       }
-    }
+    };
+
+    // Auto-render saved ROIs for all loaded camera cards on resize
+    window.addEventListener("resize", () => {
+      Object.keys(roiDrawStates).forEach(cid => {
+        window.renderInlineRoi(cid);
+      });
+    });
+
+    // Auto-render saved ROIs for all camera cards after dashboard rendering completes
+    window.addEventListener("rtsp-dashboard-ready", () => {
+      setTimeout(() => {
+        if (typeof streamsArray !== "undefined" && Array.isArray(streamsArray)) {
+          streamsArray.forEach((s, idx) => {
+            if (s.model_configs && s.model_configs.roi_polygon) {
+              roiDrawStates[idx] = {
+                isDrawing: false,
+                startX: 0,
+                startY: 0,
+                startPctX: 0,
+                startPctY: 0,
+                vertices: s.model_configs.roi_polygon
+              };
+              window.renderInlineRoi(idx);
+            }
+          });
+        }
+      }, 600);
+    });
   </script>
 
 </body>
