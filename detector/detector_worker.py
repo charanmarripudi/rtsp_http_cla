@@ -494,6 +494,20 @@ class DetectorWorker:
                             except:
                                 pass
                         
+                        # Draw ROI boundary if active
+                        if self.roi_polygon and len(self.roi_polygon) == 2:
+                            try:
+                                fh, fw = pf.shape[:2]
+                                rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                                ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                                rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                                ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                                cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
+                                cv2.rectangle(pf, (rx1, max(0, ry1 - 18)), (rx1 + 45, max(0, ry1)), (0, 255, 0), -1)
+                                cv2.putText(pf, "ROI", (rx1 + 4, max(14, ry1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1, cv2.LINE_AA)
+                            except:
+                                pass
+
                         # Draw latest bounding boxes
                         with self._box_lock:
                             cur_boxes = list(self._latest_boxes)
@@ -502,11 +516,19 @@ class DetectorWorker:
                             for b_xyxy, label_text, color_val in cur_boxes:
                                 try:
                                     x1, y1, x2, y2 = [int(v) for v in b_xyxy]
-                                    c = tuple(color_val) if isinstance(color_val, (list, tuple)) and len(color_val) >= 3 else (0, 255, 128)
+                                    # Use distinct, vibrant colors based on violation status
+                                    lbl_low = label_text.lower()
+                                    if any(k in lbl_low for k in ["no-", "no_", "fall", "smoke", "fire", "spill"]):
+                                        c = (30, 50, 255)   # Vivid Warning Crimson/Red (BGR)
+                                    elif "person" in lbl_low or "human" in lbl_low:
+                                        c = (255, 200, 0)   # Vivid Cyan (BGR)
+                                    else:
+                                        c = (0, 230, 115)   # Vivid Emerald Green (BGR)
+                                    
                                     cv2.rectangle(pf, (x1, y1), (x2, y2), c, 2)
                                     t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
-                                    cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 4, max(0, y1)), c, -1)
-                                    cv2.putText(pf, label_text, (x1 + 2, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+                                    cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), c, -1)
+                                    cv2.putText(pf, label_text, (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
                                 except: pass
                         
                         if ffmpeg.poll() is not None: break
