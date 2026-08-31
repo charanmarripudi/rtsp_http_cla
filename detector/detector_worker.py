@@ -355,6 +355,27 @@ class DetectorWorker:
                     new_tracked.append(t)
                     
             self._tracked_boxes = new_tracked
+
+            # Filter tracked boxes to guarantee zero outside boxes leak through tracking
+            if self.roi_polygon and len(self.roi_polygon) == 2:
+                try:
+                    fh, fw = f.shape[:2]
+                    rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                    ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                    rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                    ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                    
+                    filtered_tracks = []
+                    for t in self._tracked_boxes:
+                        tx1, ty1, tx2, ty2 = t['box']
+                        tcx = int((tx1 + tx2) / 2)
+                        tcy = int((ty1 + ty2) / 2)
+                        if rx1 <= tcx <= rx2 and ry1 <= tcy <= ry2:
+                            filtered_tracks.append(t)
+                    self._tracked_boxes = filtered_tracks
+                except:
+                    pass
+
             final_boxes_data = [(t['box'], t['label'], t['color']) for t in self._tracked_boxes]
             boxes_data = final_boxes_data
 
@@ -606,6 +627,18 @@ class DetectorWorker:
                             for b_xyxy, label_text, color_val in cur_boxes:
                                 try:
                                     x1, y1, x2, y2 = [int(v) for v in b_xyxy]
+                                    # Strict stream boundary gate: ignore any box outside the active ROI
+                                    if self.roi_polygon and len(self.roi_polygon) == 2:
+                                        fh, fw = pf.shape[:2]
+                                        rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                                        ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                                        rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                                        ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                                        cx = int((x1 + x2) / 2)
+                                        cy = int((y1 + y2) / 2)
+                                        if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
+                                            continue
+
                                     # Use distinct, vibrant colors based on violation status
                                     lbl_low = label_text.lower()
                                     if any(k in lbl_low for k in ["no-", "no_", "fall", "smoke", "fire", "spill"]):
