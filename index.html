@@ -2236,6 +2236,8 @@
         rectEl.setAttribute("width", String(w));
         rectEl.setAttribute("height", String(h));
 
+        // Distance calculation & badge display (commented out for now, preserved for future use):
+        /*
         const minY = Math.min(state.startPctY, currentY / rect.height);
         const maxY = Math.max(state.startPctY, currentY / rect.height);
         const distNear = (2.5 / Math.pow(Math.max(0.08, maxY - 0.05), 0.95)).toFixed(1);
@@ -2257,6 +2259,7 @@
           badgeText.setAttribute("y", String(Math.max(8, y - 13)));
           badgeG.style.display = "block";
         }
+        */
       });
 
       window.addEventListener("mouseup", async (e) => {
@@ -2345,6 +2348,8 @@
         rectEl.setAttribute("height", String(ry2 - ry1));
         rectEl.style.display = "block";
 
+        // Distance calculation & badge display (commented out for now, preserved for future use):
+        /*
         if (badgeG && badgeBg && badgeText) {
           const distNear = (2.5 / Math.pow(Math.max(0.08, maxY - 0.05), 0.95)).toFixed(1);
           const distFar = (2.5 / Math.pow(Math.max(0.08, minY - 0.05), 0.95)).toFixed(1);
@@ -2361,6 +2366,7 @@
           badgeText.setAttribute("y", String(Math.max(8, ry1 - 13)));
           badgeG.style.display = "block";
         }
+        */
       } else {
         rectEl.style.display = "none";
         if (badgeG) badgeG.style.display = "none";

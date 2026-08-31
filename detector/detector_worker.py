@@ -588,17 +588,25 @@ class DetectorWorker:
 
                                 cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
                                 
-                                def _draw_tag(text, px, py, align_right=False, align_bottom=False):
-                                    tsz = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
-                                    bx = px - tsz[0] - 6 if align_right else px
-                                    by = py if not align_bottom else py - tsz[1] - 4
-                                    cv2.rectangle(pf, (bx, by), (bx + tsz[0] + 6, by + tsz[1] + 6), (0, 255, 0), -1)
-                                    cv2.putText(pf, text, (bx + 3, by + tsz[1] + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1, cv2.LINE_AA)
-
-                                _draw_tag(f"TL: {d_tl}m", rx1, max(0, ry1 - 18))
-                                _draw_tag(f"TR: {d_tr}m", rx2, max(0, ry1 - 18), align_right=True)
-                                _draw_tag(f"BL: {d_bl}m", rx1, min(fh - 18, ry2 + 2))
-                                _draw_tag(f"BR: {d_br}m", rx2, min(fh - 18, ry2 + 2), align_right=True)
+                                # Distance display (commented out for now, preserved for future use):
+                                # def _draw_tag(text, px, py, align_right=False, center=False):
+                                #     tsz = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
+                                #     if center:
+                                #         bx = px - tsz[0] // 2 - 4
+                                #     elif align_right:
+                                #         bx = px - tsz[0] - 6
+                                #     else:
+                                #         bx = px
+                                #     by = max(0, min(fh - 18, py))
+                                #     cv2.rectangle(pf, (bx, by), (bx + tsz[0] + 6, by + tsz[1] + 6), (0, 255, 0), -1)
+                                #     cv2.putText(pf, text, (bx + 3, by + tsz[1] + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1, cv2.LINE_AA)
+                                # dist_near = min(d_bl, d_br)
+                                # dist_far = max(d_tl, d_tr)
+                                # _draw_tag(f"ROI: {dist_near}m - {dist_far}m", int((rx1 + rx2) / 2), max(0, ry1 - 18), center=True)
+                                # _draw_tag(f"TL: {d_tl}m", rx1 + 3, ry1 + 3)
+                                # _draw_tag(f"TR: {d_tr}m", rx2 - 3, ry1 + 3, align_right=True)
+                                # _draw_tag(f"BL: {d_bl}m", rx1 + 3, ry2 - 18)
+                                # _draw_tag(f"BR: {d_br}m", rx2 - 3, ry2 - 18, align_right=True)
                             except:
                                 pass
 
@@ -610,14 +618,33 @@ class DetectorWorker:
                             for b_xyxy, label_text, color_val in cur_boxes:
                                 try:
                                     x1, y1, x2, y2 = [int(v) for v in b_xyxy]
-                                    # Use distinct, vibrant colors based on violation status
                                     lbl_low = label_text.lower()
-                                    if any(k in lbl_low for k in ["no-", "no_", "fall", "smoke", "fire", "spill"]):
-                                        c = (30, 50, 255)   # Vivid Warning Crimson/Red (BGR)
-                                    elif "person" in lbl_low or "human" in lbl_low:
-                                        c = (255, 200, 0)   # Vivid Cyan (BGR)
+                                    
+                                    # Distinct, vibrant curated color palette per class (BGR format)
+                                    if any(k in lbl_low for k in ["no-safety vest", "no_safety vest", "no-vest", "no_vest"]):
+                                        c = (0, 130, 255)    # Vivid Bright Amber/Orange
+                                    elif any(k in lbl_low for k in ["no-hard-hat", "no_helmet", "no-helmet", "no_hardhat", "no-hardhat"]):
+                                        c = (30, 45, 255)    # Vivid Coral Red
+                                    elif any(k in lbl_low for k in ["no-saftey-belt", "no-belt", "no_belt"]):
+                                        c = (180, 20, 255)   # Vivid Magenta/Purple
+                                    elif any(k in lbl_low for k in ["fall", "smoke", "fire", "spill", "danger"]):
+                                        c = (0, 0, 255)      # High-Alert Pure Red
+                                    elif any(k in lbl_low for k in ["safety vest", "vest"]):
+                                        c = (0, 230, 115)    # Vivid Emerald Green
+                                    elif any(k in lbl_low for k in ["hard-hat", "helmet", "hardhat"]):
+                                        c = (0, 215, 255)    # Golden Yellow
+                                    elif any(k in lbl_low for k in ["person", "human"]):
+                                        c = (255, 190, 40)   # Vivid Electric Cyan
+                                    elif any(k in lbl_low for k in ["belt", "goggles", "gloves", "boots"]):
+                                        c = (210, 230, 0)    # Bright Turquoise
                                     else:
-                                        c = (0, 230, 115)   # Vivid Emerald Green (BGR)
+                                        # Deterministic vibrant color for other custom model classes
+                                        palette = [
+                                            (0, 165, 255), (255, 140, 0), (50, 205, 50),
+                                            (238, 130, 238), (0, 215, 255), (255, 105, 180),
+                                            (30, 144, 255), (255, 215, 0)
+                                        ]
+                                        c = palette[abs(hash(lbl_low.split()[0])) % len(palette)]
                                     
                                     cv2.rectangle(pf, (x1, y1), (x2, y2), c, 2)
                                     t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
