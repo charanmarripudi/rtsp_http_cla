@@ -362,18 +362,23 @@ class DetectorWorker:
                 ann.box_label(b_xyxy, label_text, color=color_val)
             res = ann.result()
 
-            # Persistent 3-second alert timing with 1.5s grace window
+            # Persistent alert timing: 3.0s initial trigger + 30.0s repeat interval for ongoing violations
             for c in cur_cls:
                 if c not in self.alert_timers:
-                    self.alert_timers[c] = {'start': now, 'last_seen': now}
+                    self.alert_timers[c] = {'start': now, 'last_seen': now, 'last_alert': 0.0}
                 else:
                     self.alert_timers[c]['last_seen'] = now
 
                 duration = now - self.alert_timers[c]['start']
-                if duration >= 3.0 and c not in self.alert_triggered:
-                    self.alert_triggered.add(c)
-                    print(f"[ALERT] Triggering 3s alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s", flush=True)
-                    self._save_alert(c, res)
+                last_alert_time = self.alert_timers[c].get('last_alert', 0.0)
+
+                # Initial trigger after 3.0s continuous detection, or repeat every 30s for continuous violations
+                if duration >= 3.0:
+                    if last_alert_time == 0.0 or (now - last_alert_time) >= 30.0:
+                        self.alert_timers[c]['last_alert'] = now
+                        self.alert_triggered.add(c)
+                        print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, is_repeat={(last_alert_time > 0)}", flush=True)
+                        self._save_alert(c, res)
 
             # Cleanup expired classes (absent for > 1.5s)
             for c in list(self.alert_timers.keys()):
