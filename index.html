@@ -2247,12 +2247,14 @@
           const txt = `ROI: ${distNear}m - ${distFar}m`;
           badgeText.textContent = txt;
           const bgW = txt.length * 7.2 + 10;
-          badgeBg.setAttribute("x", String(x));
-          badgeBg.setAttribute("y", String(Math.max(0, y - 18)));
+          const cx = (x + (x + w)) / 2;
+          const badgeX = Math.max(0, cx - bgW / 2);
+          badgeBg.setAttribute("x", String(badgeX));
+          badgeBg.setAttribute("y", String(Math.max(0, y - 22)));
           badgeBg.setAttribute("width", String(bgW));
           badgeBg.setAttribute("height", "16");
-          badgeText.setAttribute("x", String(x + 5));
-          badgeText.setAttribute("y", String(Math.max(8, y - 9)));
+          badgeText.setAttribute("x", String(badgeX + 5));
+          badgeText.setAttribute("y", String(Math.max(8, y - 13)));
           badgeG.style.display = "block";
         }
       });
@@ -2349,12 +2351,14 @@
           const txt = `ROI: ${distNear}m - ${distFar}m`;
           badgeText.textContent = txt;
           const bgW = txt.length * 7.2 + 10;
-          badgeBg.setAttribute("x", String(rx1));
-          badgeBg.setAttribute("y", String(Math.max(0, ry1 - 18)));
+          const cx = (rx1 + rx2) / 2;
+          const badgeX = Math.max(0, cx - bgW / 2);
+          badgeBg.setAttribute("x", String(badgeX));
+          badgeBg.setAttribute("y", String(Math.max(0, ry1 - 22)));
           badgeBg.setAttribute("width", String(bgW));
           badgeBg.setAttribute("height", "16");
-          badgeText.setAttribute("x", String(rx1 + 5));
-          badgeText.setAttribute("y", String(Math.max(8, ry1 - 9)));
+          badgeText.setAttribute("x", String(badgeX + 5));
+          badgeText.setAttribute("y", String(Math.max(8, ry1 - 13)));
           badgeG.style.display = "block";
         }
       } else {
