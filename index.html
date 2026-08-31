@@ -2031,18 +2031,183 @@
       }
     });
 
+    let currentRoiCameraId = null;
+    let roiVertices = [];
+
     window.toggleBoxFullscreen = function(videoId) {
       const video = document.getElementById(videoId);
       if (!video) return;
-      if (!document.fullscreenElement) {
-        if (video.requestFullscreen) { video.requestFullscreen(); }
-        else if (video.webkitRequestFullscreen) { video.webkitRequestFullscreen(); }
-        else if (video.msRequestFullscreen) { video.msRequestFullscreen(); }
+      
+      const cid = videoId.replace("v", "");
+      currentRoiCameraId = cid;
+      
+      const stream = streamsArray[Number(cid)];
+      if (!stream) return;
+      
+      const modal = document.getElementById("roi-modal");
+      const modalVideo = document.getElementById("roi-modal-video");
+      const modalTitle = document.getElementById("roi-modal-title");
+      
+      modalTitle.textContent = `Maximize Camera - ${stream.location || `Camera ${Number(cid) + 1}`}`;
+      modal.style.display = "flex";
+      
+      // Load current video source
+      const activeSrc = video.src || video.querySelector("source")?.src;
+      if (Hls && Hls.isSupported()) {
+        const hls = new Hls();
+        hls.loadSource(activeSrc || stream.hls_live || `/hls/stream${cid}_raw/playlist.m3u8`);
+        hls.attachMedia(modalVideo);
+        window.modalHls = hls;
       } else {
-        if (document.exitFullscreen) { document.exitFullscreen(); }
+        modalVideo.src = activeSrc || stream.hls_live || `/hls/stream${cid}_raw/playlist.m3u8`;
       }
+      
+      // Load existing ROI polygon
+      const modelConfigs = stream.model_configs || {};
+      roiVertices = modelConfigs.roi_polygon || [];
+      
+      setTimeout(() => {
+        renderRoiPolygon();
+      }, 300);
     };
+
+    function renderRoiPolygon() {
+      const svg = document.getElementById("roi-svg-canvas");
+      const polygon = document.getElementById("roi-svg-polygon");
+      const dotsGroup = document.getElementById("roi-svg-dots");
+      if (!svg || !polygon || !dotsGroup) return;
+      
+      const rect = svg.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      
+      // Render polygon points
+      const ptsString = roiVertices.map(v => `${v[0] * rect.width},${v[1] * rect.height}`).join(" ");
+      polygon.setAttribute("points", ptsString);
+      
+      // Render interactive circles
+      dotsGroup.innerHTML = "";
+      roiVertices.forEach((v, idx) => {
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("cx", String(v[0] * rect.width));
+        circle.setAttribute("cy", String(v[1] * rect.height));
+        circle.setAttribute("r", "6");
+        circle.setAttribute("fill", "#00ffff");
+        circle.setAttribute("stroke", "#fff");
+        circle.setAttribute("stroke-width", "2");
+        circle.style.cursor = "pointer";
+        
+        // Remove vertex on double click
+        circle.addEventListener("dblclick", (e) => {
+          e.stopPropagation();
+          roiVertices.splice(idx, 1);
+          renderRoiPolygon();
+        });
+        
+        dotsGroup.appendChild(circle);
+      });
+    }
+
+    // Add SVG canvas click listener to draw vertices
+    document.getElementById("roi-svg-canvas").addEventListener("click", (e) => {
+      if (e.target.tagName === "circle") return;
+      
+      const svg = document.getElementById("roi-svg-canvas");
+      const rect = svg.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      
+      const nx = parseFloat((cx / rect.width).toFixed(4));
+      const ny = parseFloat((cy / rect.height).toFixed(4));
+      
+      roiVertices.push([nx, ny]);
+      renderRoiPolygon();
+    });
+
+    document.getElementById("roi-btn-close").onclick = () => {
+      closeRoiModal();
+    };
+
+    function closeRoiModal() {
+      const modal = document.getElementById("roi-modal");
+      const modalVideo = document.getElementById("roi-modal-video");
+      modal.style.display = "none";
+      modalVideo.pause();
+      modalVideo.src = "";
+      if (window.modalHls) {
+        window.modalHls.destroy();
+        window.modalHls = null;
+      }
+    }
+
+    document.getElementById("roi-btn-clear").onclick = () => {
+      roiVertices = [];
+      renderRoiPolygon();
+    };
+
+    document.getElementById("roi-btn-save").onclick = async () => {
+      if (currentRoiCameraId === null) return;
+      const cid = currentRoiCameraId;
+      const stream = streamsArray[Number(cid)];
+      if (!stream) return;
+      
+      stream.model_configs = stream.model_configs || {};
+      stream.model_configs.roi_polygon = roiVertices;
+      
+      localStorage.setItem("offline_streams", JSON.stringify(streamsArray));
+      
+      try {
+        const res = await fetch("/api/update-thresholds", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            camera: cid,
+            model_configs: stream.model_configs
+          })
+        });
+        if (res.ok) {
+          console.log(`ROI saved successfully for camera ${cid}`);
+        }
+      } catch (err) {
+        console.error("Error saving ROI:", err);
+      }
+      
+      closeRoiModal();
+    };
+    
+    window.addEventListener("resize", () => {
+      if (document.getElementById("roi-modal").style.display === "flex") {
+        renderRoiPolygon();
+      }
+    });
   </script>
+
+  <!-- Custom ROI & Maximize Modal -->
+  <div id="roi-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(10, 12, 16, 0.96); backdrop-filter: blur(12px); z-index: 9999; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; padding: 20px;">
+      <!-- Header -->
+      <div style="width: 100%; max-width: 960px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+          <div>
+              <h3 id="roi-modal-title" style="margin: 0; font-family: var(--display); color: var(--accent); font-size: 1.15rem; font-weight: 800; letter-spacing: 0.5px;">Maximize Camera</h3>
+              <span style="font-size: 0.7rem; color: var(--muted);">Click to draw ROI points. Double click a point to remove it.</span>
+          </div>
+          <div style="display: flex; gap: 10px;">
+              <button id="roi-btn-clear" class="btn-secondary" style="padding: 6px 14px; font-size: 0.72rem; font-family: var(--mono);">Clear ROI</button>
+              <button id="roi-btn-save" class="btn-primary" style="padding: 6px 14px; font-size: 0.72rem; font-family: var(--mono);">Save ROI</button>
+              <button id="roi-btn-close" class="btn-secondary" style="padding: 6px 14px; font-size: 0.72rem; font-family: var(--mono); background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.1);">✕ Close</button>
+          </div>
+      </div>
+      
+      <!-- Video & Canvas Area -->
+      <div id="roi-video-container" style="position: relative; width: 100%; max-width: 960px; aspect-ratio: 16/9; background: #000; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+          <!-- Video Element -->
+          <video id="roi-modal-video" autoplay muted playsinline style="width: 100%; height: 100%; object-fit: contain;"></video>
+          
+          <!-- SVG Drawing Canvas Overlay -->
+          <svg id="roi-svg-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; user-select: none;">
+              <polygon id="roi-svg-polygon" points="" style="fill: rgba(0, 255, 255, 0.15); stroke: #00ffff; stroke-width: 3; stroke-dasharray: 4;"></polygon>
+              <g id="roi-svg-dots"></g>
+          </svg>
+      </div>
+  </div>
 
 </body>
 

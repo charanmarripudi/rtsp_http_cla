@@ -63,6 +63,15 @@ def get_alerts_base_url():
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 class DetectorWorker:
+    @property
+    def model_configs(self):
+        return self._model_configs
+
+    @model_configs.setter
+    def model_configs(self, val):
+        self._model_configs = val or {}
+        self.roi_polygon = self._model_configs.get("roi_polygon")
+
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.40, iou=0.45, location="Camera", model_configs=None):
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
@@ -228,6 +237,18 @@ class DetectorWorker:
                             if not self._is_valid_box(conf_val, cls_conf, bw, bh, box_area, f_w, f_h, f_area):
                                 continue
 
+                            # Apply ROI polygon filter if configured
+                            if self.roi_polygon:
+                                try:
+                                    import numpy as np
+                                    poly_pts = np.array([[int(pt[0] * self.width), int(pt[1] * self.height)] for pt in self.roi_polygon], dtype=np.int32)
+                                    cx = int((x1 + x2) / 2)
+                                    cy = int((y1 + y2) / 2)
+                                    if cv2.pointPolygonTest(poly_pts, (cx, cy), False) < 0:
+                                        continue
+                                except Exception as e:
+                                    print(f"[ROI] Filter error: {e}", flush=True)
+
                             label_text = f"{cls} {conf_val:.2f}"
                             color_val = colors(int(b.cls[0])+midx*50, True)
                             raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls))
@@ -272,6 +293,15 @@ class DetectorWorker:
                         kept_items.append(item)
                         boxes_data.append((b1_xyxy, l1_text, c1_color))
                         cur_cls.add(cls1_name)
+
+            # Draw ROI polygon outline if configured
+            if self.roi_polygon:
+                try:
+                    import numpy as np
+                    poly_pts = np.array([[int(pt[0] * self.width), int(pt[1] * self.height)] for pt in self.roi_polygon], dtype=np.int32)
+                    cv2.polylines(f, [poly_pts], isClosed=True, color=(0, 255, 255), thickness=2)
+                except:
+                    pass
 
             # Render alert image snapshot with bounding boxes
             ann = Annotator(f.copy(), line_width=2)
