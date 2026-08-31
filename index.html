@@ -1525,9 +1525,10 @@
                 </div>
               </div>
             </div>
-            <div class="btn-row">
-              <button class="start">Start</button>
-              <button class="stop">Stop</button>
+            <div class="btn-row" style="margin-top: 10px; display: flex; gap: 8px;">
+              <button class="start" style="flex: 1;">Start</button>
+              <button class="stop" style="flex: 1;">Stop</button>
+              <button class="draw-roi-btn" onclick="toggleBoxFullscreen('v${i}')" style="flex: 1; background: rgba(0, 240, 255, 0.1); border: 1px solid var(--accent); color: var(--accent); border-radius: 6px; padding: 6px 10px; font-size: 0.72rem; cursor: pointer; transition: all 0.2s; font-weight: 600; font-family: var(--mono);">Draw ROI</button>
             </div>
           </div>`;
         return box;
