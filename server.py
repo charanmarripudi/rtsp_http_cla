@@ -946,9 +946,9 @@ async def update_thresholds(req: Request):
                     existing_roi = existing_mc.get("roi_polygon") if isinstance(existing_mc, dict) else None
                     incoming_roi = model_configs.get("roi_polygon")
                     
-                    if existing_roi and len(existing_roi) == 2 and (not incoming_roi or len(incoming_roi) != 2) and incoming_roi != "CLEAR":
+                    if incoming_roi is None and existing_roi and len(existing_roi) == 2:
                         model_configs["roi_polygon"] = existing_roi
-                    elif incoming_roi == "CLEAR":
+                    elif incoming_roi == [] or incoming_roi == "CLEAR" or incoming_roi == "":
                         model_configs["roi_polygon"] = []
                     entry["model_configs"] = model_configs
                 elif target_model and conf is not None and iou is not None:
