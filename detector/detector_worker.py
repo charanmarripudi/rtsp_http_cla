@@ -110,7 +110,7 @@ class DetectorWorker:
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.40, iou=0.45, location="Camera", model_configs=None):
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
-        self.fps, self.width, self.height = 5.0, 1280, 720
+        self.fps, self.width, self.height = 15.0, 1280, 720
         self._latest_raw_frame = None
         self._latest_boxes = []
         self._frame_lock, self._box_lock = threading.Lock(), threading.Lock()
@@ -149,7 +149,7 @@ class DetectorWorker:
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2",
             "-profile:v", "baseline", "-level:v", "3.1",
-            "-b:v", "400k", "-maxrate", "500k", "-bufsize", "1M",
+            "-b:v", "700k", "-maxrate", "900k", "-bufsize", "1.5M",
             "-g", str(int(self.fps * 2)), 
             "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
@@ -158,7 +158,7 @@ class DetectorWorker:
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 400k (max 500k)", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 700k (max 900k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):
