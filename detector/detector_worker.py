@@ -238,18 +238,18 @@ class DetectorWorker:
                                 continue
 
                              # Apply ROI rectangle filter if configured
-                             if self.roi_polygon and len(self.roi_polygon) == 2:
-                                 try:
-                                     rx1 = int(self.roi_polygon[0][0] * self.width)
-                                     ry1 = int(self.roi_polygon[0][1] * self.height)
-                                     rx2 = int(self.roi_polygon[1][0] * self.width)
-                                     ry2 = int(self.roi_polygon[1][1] * self.height)
-                                     cx = int((x1 + x2) / 2)
-                                     cy = int((y1 + y2) / 2)
-                                     if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
-                                         continue
-                                 except Exception as e:
-                                     print(f"[ROI] Filter error: {e}", flush=True)
+                            if self.roi_polygon and len(self.roi_polygon) == 2:
+                                try:
+                                    rx1 = int(self.roi_polygon[0][0] * self.width)
+                                    ry1 = int(self.roi_polygon[0][1] * self.height)
+                                    rx2 = int(self.roi_polygon[1][0] * self.width)
+                                    ry2 = int(self.roi_polygon[1][1] * self.height)
+                                    cx = int((x1 + x2) / 2)
+                                    cy = int((y1 + y2) / 2)
+                                    if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
+                                        continue
+                                except Exception as e:
+                                    print(f"[ROI] Filter error: {e}", flush=True)
 
                             label_text = f"{cls} {conf_val:.2f}"
                             color_val = colors(int(b.cls[0])+midx*50, True)
