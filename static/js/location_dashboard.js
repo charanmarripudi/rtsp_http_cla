@@ -40,7 +40,6 @@ class LocationDashboardTemplates {
             <div class="box" id="cam-box-${id}" data-camera-id="${id}">
                 <div class="video-wrap" style="position: relative;">
                     <div class="mode-badge raw" id="badge-${id}">RAW</div>
-                    <button class="fullscreen-btn" title="Toggle Fullscreen" onclick="toggleCardMaximize(${id})">⛶</button>
                     <video id="v${id}" controls autoplay muted playsinline data-src="${this.text(stream.hls_live)}" ondblclick="toggleCardMaximize(${id})"></video>
                     <svg class="roi-draw-canvas" id="roi-canvas-${id}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; user-select: none; z-index: 15; pointer-events: none; background: transparent;">
                         <rect id="roi-rect-${id}" x="0" y="0" width="0" height="0" style="fill: none; stroke: #00ffaa; stroke-width: 2.5;"></rect>

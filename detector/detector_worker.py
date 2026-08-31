@@ -647,6 +647,17 @@ class DetectorWorker:
                             for b_xyxy, label_text, color_val in cur_boxes:
                                 try:
                                     x1, y1, x2, y2 = [int(v) for v in b_xyxy]
+                                    if self.roi_polygon and len(self.roi_polygon) == 2:
+                                        fh, fw = pf.shape[:2]
+                                        rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                                        ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                                        rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
+                                        ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                                        cx = int((x1 + x2) / 2)
+                                        cy = int((y1 + y2) / 2)
+                                        if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
+                                            continue
+
                                     cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
                                     t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
                                     cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), color_val, -1)
