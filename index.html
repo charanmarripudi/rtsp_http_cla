@@ -2236,15 +2236,17 @@
         rectEl.setAttribute("width", String(w));
         rectEl.setAttribute("height", String(h));
 
+        const minY = Math.min(state.startPctY, currentY / rect.height);
         const maxY = Math.max(state.startPctY, currentY / rect.height);
-        const estDist = (2.5 / Math.pow(Math.max(0.08, maxY - 0.05), 0.95)).toFixed(1);
+        const distNear = (2.5 / Math.pow(Math.max(0.08, maxY - 0.05), 0.95)).toFixed(1);
+        const distFar = (2.5 / Math.pow(Math.max(0.08, minY - 0.05), 0.95)).toFixed(1);
         const badgeG = document.getElementById(`roi-badge-${cid}`);
         const badgeBg = document.getElementById(`roi-badge-bg-${cid}`);
         const badgeText = document.getElementById(`roi-badge-text-${cid}`);
         if (badgeG && badgeBg && badgeText) {
-          const txt = `ROI: ~${estDist}m`;
+          const txt = `ROI: ${distNear}m - ${distFar}m`;
           badgeText.textContent = txt;
-          const bgW = txt.length * 7.5 + 10;
+          const bgW = txt.length * 7.2 + 10;
           badgeBg.setAttribute("x", String(x));
           badgeBg.setAttribute("y", String(Math.max(0, y - 18)));
           badgeBg.setAttribute("width", String(bgW));
@@ -2342,10 +2344,11 @@
         rectEl.style.display = "block";
 
         if (badgeG && badgeBg && badgeText) {
-          const estDist = (2.5 / Math.pow(Math.max(0.08, maxY - 0.05), 0.95)).toFixed(1);
-          const txt = `ROI: ~${estDist}m`;
+          const distNear = (2.5 / Math.pow(Math.max(0.08, maxY - 0.05), 0.95)).toFixed(1);
+          const distFar = (2.5 / Math.pow(Math.max(0.08, minY - 0.05), 0.95)).toFixed(1);
+          const txt = `ROI: ${distNear}m - ${distFar}m`;
           badgeText.textContent = txt;
-          const bgW = txt.length * 7.5 + 10;
+          const bgW = txt.length * 7.2 + 10;
           badgeBg.setAttribute("x", String(rx1));
           badgeBg.setAttribute("y", String(Math.max(0, ry1 - 18)));
           badgeBg.setAttribute("width", String(bgW));

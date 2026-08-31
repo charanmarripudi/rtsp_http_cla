@@ -70,7 +70,12 @@ class DetectorWorker:
     @model_configs.setter
     def model_configs(self, val):
         self._model_configs = val or {}
-        self.roi_polygon = self._model_configs.get("roi_polygon")
+        new_roi = self._model_configs.get("roi_polygon")
+        if new_roi != getattr(self, "roi_polygon", None):
+            self.roi_polygon = new_roi
+            if hasattr(self, "_box_lock"):
+                with self._box_lock:
+                    self._latest_boxes = []
         print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, roi_polygon={self.roi_polygon}", flush=True)
 
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.40, iou=0.45, location="Camera", model_configs=None):
@@ -503,10 +508,12 @@ class DetectorWorker:
                                 rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
                                 ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
                                 
-                                # Estimate camera-to-ROI ground distance in meters
-                                y_base = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
-                                est_dist = round(2.5 / max(0.08, y_base - 0.05)**0.95, 1)
-                                label = f"ROI: ~{est_dist}m"
+                                # Estimate camera-to-ROI ground distance range (Near to Far) in meters
+                                min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                                max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                                dist_near = round(2.5 / max(0.08, max_y - 0.05)**0.95, 1)
+                                dist_far = round(2.5 / max(0.08, min_y - 0.05)**0.95, 1)
+                                label = f"ROI: {dist_near}m - {dist_far}m"
                                 
                                 cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
                                 t_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)[0]
