@@ -195,14 +195,14 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                m_imgsz = 640
+                m_imgsz = 960
                 if isinstance(self.model_configs, dict):
                     cfg = self.model_configs.get(m_name) or self.model_configs.get(m_clean) or self.model_configs.get(m_name.lower())
                     if cfg and isinstance(cfg, dict):
                         m_conf = float(cfg.get("conf", self.conf))
                         m_iou = float(cfg.get("iou", self.iou))
                         enabled_classes = cfg.get("enabled_classes")
-                        m_imgsz = int(cfg.get("imgsz", 640))
+                        m_imgsz = int(cfg.get("imgsz", 960))
 
                 # Dynamically set YOLO predict confidence to the minimum of active class sliders
                 detect_conf = m_conf
