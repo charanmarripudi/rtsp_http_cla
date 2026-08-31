@@ -1522,7 +1522,7 @@
             <button class="fullscreen-btn" title="Toggle Fullscreen" onclick="toggleCardMaximize(${i})">⛶</button>
             <video id="v${i}" controls autoplay muted playsinline data-src="${escapeHtml(s.hls_live)}" ondblclick="toggleCardMaximize(${i})"></video>
             <svg class="roi-draw-canvas" id="roi-canvas-${i}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; user-select: none; z-index: 15; pointer-events: none; background: transparent;">
-              <rect id="roi-rect-${i}" x="0" y="0" width="0" height="0" style="fill: rgba(0, 255, 255, 0.15); stroke: #00ffff; stroke-width: 3; stroke-dasharray: 4;"></rect>
+              <rect id="roi-rect-${i}" x="0" y="0" width="0" height="0" style="fill: none; stroke: #00ffaa; stroke-width: 2.5;"></rect>
             </svg>
             <div class="cam-label">${escapeHtml(s.label)} - ${escapeHtml(s.location || `Location ${i + 1}`)}</div>
           </div>
@@ -2080,7 +2080,7 @@
       if (!isDrawingModeActive) {
         // TURN ON DRAWING MODE
         canvas.style.pointerEvents = "auto";
-        canvas.style.background = "rgba(0, 240, 255, 0.08)";
+        canvas.style.background = "transparent";
         btn.textContent = "Save ROI";
         btn.style.background = "var(--accent)";
         btn.style.color = "#000";
@@ -2233,7 +2233,7 @@
         rectEl.setAttribute("height", String(h));
       });
 
-      window.addEventListener("mouseup", (e) => {
+      window.addEventListener("mouseup", async (e) => {
         const state = roiDrawStates[cid];
         if (!state || !state.isDrawing) return;
         
@@ -2253,6 +2253,25 @@
           state.vertices = [[nx1, ny1], [nx2, ny2]];
         }
         renderInlineRoi(cid);
+        
+        // Auto-save immediately to stream metadata and backend
+        stream.model_configs = stream.model_configs || {};
+        stream.model_configs.roi_polygon = state.vertices;
+        localStorage.setItem("offline_streams", JSON.stringify(streamsArray));
+        
+        try {
+          await fetch("/api/update-thresholds", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              camera: cid,
+              model_configs: stream.model_configs
+            })
+          });
+          console.log(`ROI automatically synced to server for camera ${cid}:`, state.vertices);
+        } catch (err) {
+          console.error("Error auto-syncing ROI:", err);
+        }
       });
     }
 
