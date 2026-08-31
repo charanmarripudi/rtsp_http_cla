@@ -354,9 +354,7 @@ class DetectorWorker:
                     t['ttl'] -= 1
                     new_tracked.append(t)
                     
-            self._tracked_boxes = new_tracked
-
-            # Filter tracked boxes to guarantee zero outside boxes leak through tracking
+            # Filter temporal tracks to strictly eliminate any tracks outside active ROI
             if self.roi_polygon and len(self.roi_polygon) == 2:
                 try:
                     fh, fw = f.shape[:2]
@@ -364,18 +362,11 @@ class DetectorWorker:
                     ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
                     rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
                     ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                    
-                    filtered_tracks = []
-                    for t in self._tracked_boxes:
-                        tx1, ty1, tx2, ty2 = t['box']
-                        tcx = int((tx1 + tx2) / 2)
-                        tcy = int((ty1 + ty2) / 2)
-                        if rx1 <= tcx <= rx2 and ry1 <= tcy <= ry2:
-                            filtered_tracks.append(t)
-                    self._tracked_boxes = filtered_tracks
+                    new_tracked = [t for t in new_tracked if rx1 <= (t['box'][0] + t['box'][2]) / 2 <= rx2 and ry1 <= (t['box'][1] + t['box'][3]) / 2 <= ry2]
                 except:
                     pass
 
+            self._tracked_boxes = new_tracked
             final_boxes_data = [(t['box'], t['label'], t['color']) for t in self._tracked_boxes]
             boxes_data = final_boxes_data
 
@@ -597,25 +588,17 @@ class DetectorWorker:
 
                                 cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
                                 
-                                # Distance display (commented out for now, preserved for future use):
-                                # def _draw_tag(text, px, py, align_right=False, center=False):
-                                #     tsz = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
-                                #     if center:
-                                #         bx = px - tsz[0] // 2 - 4
-                                #     elif align_right:
-                                #         bx = px - tsz[0] - 6
-                                #     else:
-                                #         bx = px
-                                #     by = max(0, min(fh - 18, py))
-                                #     cv2.rectangle(pf, (bx, by), (bx + tsz[0] + 6, by + tsz[1] + 6), (0, 255, 0), -1)
-                                #     cv2.putText(pf, text, (bx + 3, by + tsz[1] + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1, cv2.LINE_AA)
-                                # dist_near = min(d_bl, d_br)
-                                # dist_far = max(d_tl, d_tr)
-                                # _draw_tag(f"ROI: {dist_near}m - {dist_far}m", int((rx1 + rx2) / 2), max(0, ry1 - 18), center=True)
-                                # _draw_tag(f"TL: {d_tl}m", rx1 + 3, ry1 + 3)
-                                # _draw_tag(f"TR: {d_tr}m", rx2 - 3, ry1 + 3, align_right=True)
-                                # _draw_tag(f"BL: {d_bl}m", rx1 + 3, ry2 - 18)
-                                # _draw_tag(f"BR: {d_br}m", rx2 - 3, ry2 - 18, align_right=True)
+                                def _draw_tag(text, px, py, align_right=False, align_bottom=False):
+                                    tsz = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
+                                    bx = px - tsz[0] - 6 if align_right else px
+                                    by = py if not align_bottom else py - tsz[1] - 4
+                                    cv2.rectangle(pf, (bx, by), (bx + tsz[0] + 6, by + tsz[1] + 6), (0, 255, 0), -1)
+                                    cv2.putText(pf, text, (bx + 3, by + tsz[1] + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1, cv2.LINE_AA)
+
+                                _draw_tag(f"TL: {d_tl}m", rx1, max(0, ry1 - 18))
+                                _draw_tag(f"TR: {d_tr}m", rx2, max(0, ry1 - 18), align_right=True)
+                                _draw_tag(f"BL: {d_bl}m", rx1, min(fh - 18, ry2 + 2))
+                                _draw_tag(f"BR: {d_br}m", rx2, min(fh - 18, ry2 + 2), align_right=True)
                             except:
                                 pass
 
@@ -627,18 +610,6 @@ class DetectorWorker:
                             for b_xyxy, label_text, color_val in cur_boxes:
                                 try:
                                     x1, y1, x2, y2 = [int(v) for v in b_xyxy]
-                                    # Strict stream boundary gate: ignore any box outside the active ROI
-                                    if self.roi_polygon and len(self.roi_polygon) == 2:
-                                        fh, fw = pf.shape[:2]
-                                        rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                        ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                                        rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                        ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                                        cx = int((x1 + x2) / 2)
-                                        cy = int((y1 + y2) / 2)
-                                        if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
-                                            continue
-
                                     # Use distinct, vibrant colors based on violation status
                                     lbl_low = label_text.lower()
                                     if any(k in lbl_low for k in ["no-", "no_", "fall", "smoke", "fire", "spill"]):

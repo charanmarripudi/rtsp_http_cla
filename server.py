@@ -942,7 +942,6 @@ async def update_thresholds(req: Request):
                 if conf is not None: entry["conf"] = conf
                 if iou is not None: entry["iou"] = iou
                 if model_configs and isinstance(model_configs, dict):
-                    # Retain existing roi_polygon if incoming model_configs does not provide a valid 2-point ROI
                     existing_mc = entry.get("model_configs", {})
                     existing_roi = existing_mc.get("roi_polygon") if isinstance(existing_mc, dict) else None
                     incoming_roi = model_configs.get("roi_polygon")
