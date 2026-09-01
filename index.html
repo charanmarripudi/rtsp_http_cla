@@ -1125,8 +1125,6 @@
               <button class="ptz-stream-btn active" data-stream="main" style="background: var(--accent); color: #000; border: none; padding: 3px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; cursor: pointer;">HD 1080p</button>
               <button class="ptz-stream-btn" data-stream="sub" style="background: transparent; color: var(--muted); border: none; padding: 3px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; cursor: pointer;">SD Fast</button>
             </div>
-            <button class="btn-secondary" id="ptzBtnOpenAddCam" style="padding: 3px 8px; font-size: 0.7rem;">+ Add Camera</button>
-            <button class="btn-primary" id="ptzBtnSaveCameras" style="padding: 3px 12px; font-size: 0.7rem; font-weight: 600; background: var(--accent); color: #000; border-radius: 6px; border: none; cursor: pointer;">Save Cameras</button>
           </div>
           <span id="ptzCameraIpLabel" style="font-family: var(--mono); font-size: 0.72rem; color: var(--muted);">192.168.96.30:8888 (ONVIF)</span>
         </div>
@@ -1223,28 +1221,7 @@
     </div>
   </div>
 
-  <!-- Modal: Add PTZ Camera -->
-  <div id="ptzAddCamModal" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; z-index:99999; backdrop-filter:blur(6px);">
-    <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:480px; max-width:90vw; padding:20px; position:relative; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
-      <button onclick="window.closeAddCamModal()" style="position:absolute; top:14px; right:14px; background:transparent; border:none; color:var(--muted); font-size:1.2rem; cursor:pointer;">✕</button>
-      <h3 style="color:var(--accent); font-size:1rem; margin-bottom:6px;">+ Add ONVIF PTZ Camera</h3>
-      <p style="font-size:0.75rem; color:var(--muted); margin-bottom:14px;">Enter the RTSP stream URL. ONVIF IP, Port, and credentials will be parsed automatically:</p>
-      <div style="display:flex; flex-direction:column; gap:12px;">
-        <div>
-          <label style="font-size:0.75rem; color:var(--text); font-weight:500;">RTSP Stream URL <span style="color:var(--accent);">*</span></label>
-          <input type="text" id="newPtzRtsp" placeholder="rtsp://admin:@192.168.96.30:554/ch0_0.264" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.8rem; padding:9px 12px; border-radius:6px; outline:none; margin-top:4px;">
-        </div>
-        <div>
-          <label style="font-size:0.72rem; color:var(--muted);">Camera Label (Optional)</label>
-          <input type="text" id="newPtzLabel" placeholder="e.g. PTZ Camera 2" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
-        </div>
-        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
-          <button class="btn-secondary" onclick="window.closeAddCamModal()" style="padding:6px 14px;">Cancel</button>
-          <button class="btn-primary" id="ptzBtnSaveNewCam" style="padding:6px 16px;">Add Camera</button>
-        </div>
-      </div>
-    </div>
-  </div>
+
 
   <!-- PTZ API Modal -->
   <div id="ptzApiModal" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; z-index:99999; backdrop-filter:blur(6px);">

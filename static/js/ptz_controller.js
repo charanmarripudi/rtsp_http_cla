@@ -189,16 +189,6 @@
       ptzHls = null;
     }
 
-    if (typeof playHLS === "function") {
-      playHLS(video, hlsUrl, "ptz_" + camIndex);
-      setTimeout(() => {
-        if (video && video.paused) {
-          video.play().catch(() => {});
-        }
-      }, 500);
-      return;
-    }
-
     const streamUrl = hlsUrl + "?t=" + Date.now();
 
     if (typeof Hls !== "undefined" && Hls.isSupported()) {
