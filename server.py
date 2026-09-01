@@ -2638,6 +2638,15 @@ try:
         start_raw_stream(cid, normalized_url)
         return {"status": "success", "camera": new_cam, "cameras": cams}
 
+    @app.delete("/api/ptz/cameras/{cam_id}")
+    def delete_ptz_camera_api(cam_id: str):
+        cams = read_ptz_cameras()
+        new_cams = [c for c in cams if str(c.get("id")) != str(cam_id)]
+        if len(new_cams) == len(cams):
+            raise HTTPException(status_code=404, detail="PTZ camera not found")
+        save_ptz_cameras(new_cams)
+        return {"status": "success", "message": f"Camera {cam_id} removed", "cameras": new_cams}
+
     @app.post("/api/ptz/cameras/start-stream")
     def start_ptz_stream_api(d: dict = Body(default={})):
         cid = d.get("cid", "ptz0")
