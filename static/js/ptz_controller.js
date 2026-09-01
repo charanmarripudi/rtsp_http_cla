@@ -24,9 +24,15 @@
   async function loadPtzCameras() {
     try {
       const res = await fetch("/api/ptz/cameras");
-      ptzCameras = await res.json();
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        ptzCameras = data;
+      }
     } catch (e) {
       console.warn("Failed to fetch PTZ cameras, using default:", e);
+    }
+
+    if (!ptzCameras || ptzCameras.length === 0) {
       ptzCameras = [
         {
           id: "ptz-0",
@@ -41,7 +47,11 @@
       ];
     }
 
+    renderPtzCameraSelect();
     renderPtzCamerasConfigList();
+    if (ptzCameras.length > 0) {
+      switchActivePtzCamera(0);
+    }
   }
 
   function renderPtzCamerasConfigList() {
@@ -95,6 +105,7 @@
         } catch (_) {}
 
         renderPtzCameraSelect();
+        renderPtzCamerasConfigList();
         if (ptzCameras.length > 0) {
           switchActivePtzCamera(Math.min(i, ptzCameras.length - 1));
         } else {
@@ -118,12 +129,6 @@
     `
       )
       .join("");
-
-    renderPtzCamerasConfigList();
-
-    if (ptzCameras.length > 0) {
-      switchActivePtzCamera(0);
-    }
 
     select.onchange = (e) => {
       const idx = parseInt(e.target.value, 10);
