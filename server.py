@@ -2611,6 +2611,7 @@ try:
                 cam["hls_raw"] = f"/hls/stream{cid}_raw/playlist.m3u8"
         return {"status": "success", "cameras": payload}
 
+    @app.post("/api/ptz/cameras/save")
     @app.post("/api/ptz/cameras/add")
     def api_add_ptz_camera_by_rtsp(d: dict = Body(default={})):
         rtsp = d.get("rtsp", "").strip()
