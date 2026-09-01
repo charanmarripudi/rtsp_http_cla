@@ -41,7 +41,42 @@
       ];
     }
 
-    renderPtzCameraSelect();
+    renderPtzCamerasConfigList();
+  }
+
+  function renderPtzCamerasConfigList() {
+    const listEl = document.getElementById("ptz-cameras-edit-list");
+    if (!listEl) return;
+    listEl.innerHTML = "";
+    if (ptzCameras.length === 0) {
+      listEl.innerHTML = '<div style="color:var(--muted); font-size:0.75rem; text-align:center; padding:10px;">No PTZ cameras configured. Click "+ Add Camera" below.</div>';
+      return;
+    }
+    ptzCameras.forEach((cam, idx) => {
+      const div = document.createElement("div");
+      div.className = "ptz-edit-row";
+      div.style.cssText = "display:flex; gap:8px; align-items:center; margin-bottom:8px;";
+      div.innerHTML = `
+        <div style="flex:2; display:flex; flex-direction:column; gap:2px;">
+          <label style="font-size:0.68rem; color:var(--muted);">RTSP Stream URL</label>
+          <input type="text" class="ptz-rtsp-input" value="${escapeHtml(cam.rtsp || '')}" placeholder="rtsp://admin:@192.168.96.30:554/ch0_0.264" style="background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; font-size:0.78rem; font-family:var(--mono);" />
+        </div>
+        <div style="flex:1; display:flex; flex-direction:column; gap:2px;">
+          <label style="font-size:0.68rem; color:var(--muted);">Label</label>
+          <input type="text" class="ptz-label-input" value="${escapeHtml(cam.label || '')}" placeholder="PTZ Camera ${idx + 1}" style="background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; font-size:0.78rem;" />
+        </div>
+        <button class="btn-danger ptz-remove-row" data-index="${idx}" style="align-self:flex-end; padding:6px 10px; font-size:0.75rem; border-radius:6px; height:32px;">✕</button>
+      `;
+      listEl.appendChild(div);
+    });
+
+    listEl.querySelectorAll(".ptz-remove-row").forEach(btn => {
+      btn.onclick = () => {
+        const i = parseInt(btn.getAttribute("data-index"), 10);
+        ptzCameras.splice(i, 1);
+        renderPtzCamerasConfigList();
+      };
+    });
   }
 
   function renderPtzCameraSelect() {
@@ -55,6 +90,8 @@
     `
       )
       .join("");
+
+    renderPtzCamerasConfigList();
 
     if (ptzCameras.length > 0) {
       switchActivePtzCamera(0);
@@ -370,6 +407,67 @@
           showStatusToast("Error saving PTZ cameras: " + e.message, true);
         }
       });
+    }
+
+    // Inline Manage PTZ Cameras Handlers (Location-Style)
+    const btnAddRow = document.getElementById("ptz-btn-add-row");
+    if (btnAddRow) {
+      btnAddRow.onclick = () => {
+        ptzCameras.push({
+          rtsp: "",
+          label: `PTZ Camera ${ptzCameras.length + 1}`
+        });
+        renderPtzCamerasConfigList();
+      };
+    }
+
+    const btnSaveList = document.getElementById("ptz-btn-save-list");
+    if (btnSaveList) {
+      btnSaveList.onclick = async () => {
+        const rows = document.querySelectorAll("#ptz-cameras-edit-list .ptz-edit-row");
+        const payload = [];
+        rows.forEach((row, idx) => {
+          const rtsp = row.querySelector(".ptz-rtsp-input").value.trim();
+          const label = row.querySelector(".ptz-label-input").value.trim();
+          if (rtsp) {
+            payload.push({
+              rtsp: rtsp,
+              label: label || `PTZ Camera ${idx + 1}`
+            });
+          }
+        });
+
+        if (payload.length === 0) {
+          showStatusToast("Please enter at least one RTSP Stream URL", true);
+          return;
+        }
+
+        try {
+          showStatusToast("Saving PTZ Cameras configuration...");
+          btnSaveList.disabled = true;
+          btnSaveList.textContent = "Saving...";
+          const res = await fetch("/api/ptz/cameras", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          btnSaveList.disabled = false;
+          btnSaveList.textContent = "Save Cameras";
+          if (data.status === "success" && data.cameras) {
+            ptzCameras = data.cameras;
+            renderPtzCameraSelect();
+            switchActivePtzCamera(0);
+            showStatusToast("PTZ Cameras Saved & Connected Successfully!");
+          } else {
+            showStatusToast("Failed to save PTZ cameras", true);
+          }
+        } catch (e) {
+          btnSaveList.disabled = false;
+          btnSaveList.textContent = "Save Cameras";
+          showStatusToast("Save error: " + e.message, true);
+        }
+      };
     }
   }
 

@@ -1140,6 +1140,19 @@
           <button class="btn-secondary" style="padding: 2px 10px; font-size: 0.7rem;" onclick="window.reloadPtzStream()">🔄 Reload Feed</button>
           <button class="btn-secondary" style="margin-left: auto; padding: 2px 10px; font-size: 0.7rem;" onclick="window.showPtzApiModal()">⚡ API Docs</button>
         </div>
+
+        <!-- Manage PTZ Cameras Panel (Inline Location-Style Config) -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-top: 16px;">
+          <div class="widget-header" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="font-size: 0.85rem; font-weight: 600; color: var(--text);">📹 Manage ONVIF PTZ Cameras</h3>
+            <span style="font-size: 0.72rem; color: var(--muted);">RTSP Stream & Label Configuration</span>
+          </div>
+          <div id="ptz-cameras-edit-list"></div>
+          <div style="display: flex; gap: 10px; margin-top: 12px;">
+            <button class="btn-secondary" id="ptz-btn-add-row" style="padding: 6px 14px; font-size: 0.78rem;">+ Add Camera</button>
+            <button class="btn-primary" id="ptz-btn-save-list" style="padding: 6px 18px; font-size: 0.78rem; font-weight: 600; background: var(--accent); color: #000; border: none; border-radius: 6px; cursor: pointer;">Save Cameras</button>
+          </div>
+        </div>
       </div>
 
       <!-- Controls Sidebar -->
