@@ -1249,7 +1249,18 @@ def save_streams(
         # 2. Filter out current entries that belong to the same locations
         # This allows us to "replace" cameras for specific locations without deleting others
         if location_id is None and location is None:
-            entries = new_entries_to_add
+            final_entries = []
+            old_by_rtsp = {e.get("rtsp"): e for e in current_metadata if isinstance(e, dict) and e.get("rtsp")}
+            old_by_loc = {e.get("location"): e for e in current_metadata if isinstance(e, dict) and e.get("location")}
+            for entry in new_entries_to_add:
+                matched_old = old_by_rtsp.get(entry.get("rtsp")) or old_by_loc.get(entry.get("location"))
+                if matched_old:
+                    merged = dict(matched_old)
+                    merged.update(entry)
+                    final_entries.append(merged)
+                else:
+                    final_entries.append(entry)
+            entries = final_entries
         else:
             final_entries = []
             for old_entry in current_metadata:
