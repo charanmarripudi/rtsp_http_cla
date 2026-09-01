@@ -53,3 +53,4 @@ models/*.pt
 # Backup files
 *.backup
 server.py.backup
+ptz_cameras_user.json

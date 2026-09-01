@@ -1573,6 +1573,11 @@
         });
       });
 
+      // Pre-initialize PTZ controller on load
+      if (window.initPtzController) {
+        window.initPtzController();
+      }
+
       // ── CAMERA LIST CONFIG LOGIC ──
       const camerasEditList = document.getElementById("cameras-edit-list");
 

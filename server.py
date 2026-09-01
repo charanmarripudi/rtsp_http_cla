@@ -2548,9 +2548,16 @@ try:
     from onvif_client import OnvifPtzClient
     _ptz_clients = {}
 
+    PTZ_CAMERAS_USER_FILE = os.path.join(BASE_DIR, "ptz_cameras_user.json")
     PTZ_CAMERAS_FILE = os.path.join(BASE_DIR, "ptz_cameras.json")
 
     def read_ptz_cameras():
+        if os.path.exists(PTZ_CAMERAS_USER_FILE):
+            try:
+                with open(PTZ_CAMERAS_USER_FILE, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, list): return data
+            except: pass
         if os.path.exists(PTZ_CAMERAS_FILE):
             try:
                 with open(PTZ_CAMERAS_FILE, "r") as f:
@@ -2571,8 +2578,10 @@ try:
         ]
 
     def save_ptz_cameras(cams):
-        with open(PTZ_CAMERAS_FILE, "w") as f:
-            json.dump(cams, f, indent=2)
+        write_json_atomic(PTZ_CAMERAS_USER_FILE, cams)
+        try:
+            write_json_atomic(PTZ_CAMERAS_FILE, cams)
+        except: pass
 
     def get_ptz_client_for_camera(ip="192.168.96.30", port=8888, user="admin", password=""):
         key = f"{ip}:{port}:{user}"
