@@ -153,6 +153,11 @@
       ptzHls = null;
     }
 
+    if (typeof playHLS === "function") {
+      playHLS(video, hlsUrl, "ptz_" + camIndex);
+      return;
+    }
+
     const streamUrl = hlsUrl + "?t=" + Date.now();
 
     if (typeof Hls !== "undefined" && Hls.isSupported()) {

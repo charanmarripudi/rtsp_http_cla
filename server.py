@@ -794,6 +794,25 @@ def monitor_raw_streams_loop():
                 if not is_running:
                     print(f"[MONITOR] Raw stream {cid} ({normalized_rtsp}) is not running! Restarting...")
                     start_raw_stream(i, u)
+            
+            # Also monitor PTZ camera streams to ensure continuous smooth playback
+            try:
+                ptz_cams = read_ptz_cameras()
+                for ptz_idx, ptz_cam in enumerate(ptz_cams):
+                    ptz_cid = f"ptz{ptz_idx}"
+                    raw_url = ptz_cam.get("rtsp", "")
+                    ptz_rtsp = normalize_ptz_rtsp(raw_url)
+                    if ptz_rtsp:
+                        is_ptz_running = False
+                        if ptz_rtsp in rtsp_cache:
+                            cached = rtsp_cache[ptz_rtsp]
+                            if cached["proc"].poll() is None:
+                                is_ptz_running = True
+                        if not is_ptz_running:
+                            print(f"[MONITOR] PTZ Raw stream {ptz_cid} ({ptz_rtsp}) is not running! Starting...")
+                            start_raw_stream(ptz_cid, ptz_rtsp)
+            except Exception as _pe:
+                pass
         except Exception as e:
             print(f"[MONITOR] Error: {e}")
         time.sleep(5)
