@@ -22,14 +22,29 @@
   };
 
   async function loadPtzCameras() {
+    // 1. Instantly load from localStorage cache if available
+    try {
+      const cached = localStorage.getItem("ptz_cameras_cache");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          ptzCameras = parsed;
+          renderPtzCameraSelect();
+          renderPtzCamerasConfigList();
+        }
+      }
+    } catch (_) {}
+
+    // 2. Fetch latest from backend API
     try {
       const res = await fetch("/api/ptz/cameras");
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         ptzCameras = data;
+        localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
       }
     } catch (e) {
-      console.warn("Failed to fetch PTZ cameras, using default:", e);
+      console.warn("Failed to fetch PTZ cameras from API:", e);
     }
 
     if (!ptzCameras || ptzCameras.length === 0) {
@@ -45,11 +60,12 @@
           hls_raw: "/hls/streamptz0_raw/playlist.m3u8",
         },
       ];
+      localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
     }
 
     renderPtzCameraSelect();
     renderPtzCamerasConfigList();
-    if (ptzCameras.length > 0) {
+    if (ptzCameras.length > 0 && !activePtzCamera) {
       switchActivePtzCamera(0);
     }
   }
@@ -69,15 +85,36 @@
       div.innerHTML = `
         <div style="flex:2; display:flex; flex-direction:column; gap:2px;">
           <label style="font-size:0.68rem; color:var(--muted);">RTSP Stream URL</label>
-          <input type="text" class="ptz-rtsp-input" value="${escapeHtml(cam.rtsp || '')}" placeholder="rtsp://admin:@192.168.96.30:554/ch0_0.264" style="background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; font-size:0.78rem; font-family:var(--mono);" />
+          <input type="text" class="ptz-rtsp-input" data-index="${idx}" value="${escapeHtml(cam.rtsp || '')}" placeholder="rtsp://admin:@192.168.96.30:554/ch0_0.264" style="background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; font-size:0.78rem; font-family:var(--mono);" />
         </div>
         <div style="flex:1; display:flex; flex-direction:column; gap:2px;">
           <label style="font-size:0.68rem; color:var(--muted);">Label</label>
-          <input type="text" class="ptz-label-input" value="${escapeHtml(cam.label || '')}" placeholder="PTZ Camera ${idx + 1}" style="background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; font-size:0.78rem;" />
+          <input type="text" class="ptz-label-input" data-index="${idx}" value="${escapeHtml(cam.label || '')}" placeholder="PTZ Camera ${idx + 1}" style="background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; font-size:0.78rem;" />
         </div>
         <button class="btn-danger ptz-remove-row" data-index="${idx}" style="align-self:flex-end; padding:6px 12px; font-size:0.75rem; border-radius:6px; height:32px; cursor:pointer;" title="Remove this RTSP camera">Remove</button>
       `;
       listEl.appendChild(div);
+    });
+
+    // Live update memory & localStorage on input
+    listEl.querySelectorAll(".ptz-rtsp-input").forEach(input => {
+      input.oninput = (e) => {
+        const i = parseInt(e.target.getAttribute("data-index"), 10);
+        if (ptzCameras[i]) {
+          ptzCameras[i].rtsp = e.target.value;
+          localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
+        }
+      };
+    });
+
+    listEl.querySelectorAll(".ptz-label-input").forEach(input => {
+      input.oninput = (e) => {
+        const i = parseInt(e.target.getAttribute("data-index"), 10);
+        if (ptzCameras[i]) {
+          ptzCameras[i].label = e.target.value;
+          localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
+        }
+      };
     });
 
     listEl.querySelectorAll(".ptz-remove-row").forEach(btn => {
@@ -91,6 +128,7 @@
           await fetch(`/api/ptz/cameras/${camToRemove.id}`, { method: "DELETE" }).catch(() => {});
         }
         ptzCameras.splice(i, 1);
+        localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
 
         try {
           const res = await fetch("/api/ptz/cameras", {
@@ -101,6 +139,7 @@
           const data = await res.json();
           if (data.status === "success" && data.cameras) {
             ptzCameras = data.cameras;
+            localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
           }
         } catch (_) {}
 
@@ -479,6 +518,7 @@
           btnSaveList.textContent = "Save Cameras";
           if (data.status === "success" && data.cameras) {
             ptzCameras = data.cameras;
+            localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
             renderPtzCameraSelect();
             switchActivePtzCamera(0);
             showStatusToast("PTZ Cameras Saved & Connected Successfully!");
