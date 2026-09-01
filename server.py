@@ -2500,10 +2500,112 @@ def get_analytics_by_location(d: dict = Body(default={})):
 @app.post("/api/analytics/by-usecase")
 def get_analytics_by_usecase(d: dict = Body(default={})):
     """Returns only usecase-grouped data."""
-    # Support both "usecase" (singular) and "models" (plural) keys
+# Support both "usecase" (singular) and "models" (plural) keys
     models = d.get("models") or d.get("usecase")
     res = get_analytics_mapping_core(location=d.get("location"), models=models)
     return res.get("by_usecase", {}) 
+
+# ─────────────────────────────────────────────────────────────
+# ONVIF PTZ CAMERA CONTROL APIS
+# ─────────────────────────────────────────────────────────────
+try:
+    from onvif_client import OnvifPtzClient
+    _ptz_clients = {}
+
+    def get_ptz_client_for_camera(ip="192.168.96.30", port=8888, user="admin", password=""):
+        key = f"{ip}:{port}"
+        if key not in _ptz_clients:
+            _ptz_clients[key] = OnvifPtzClient(ip=ip, port=port, username=user, password=password)
+        return _ptz_clients[key]
+
+    @app.post("/api/ptz/move")
+    def api_ptz_move(d: dict = Body(default={})):
+        direction = d.get("direction", "up")
+        speed = float(d.get("speed", 0.5))
+        ip = d.get("ip", "192.168.96.30")
+        port = int(d.get("port", 8888))
+        client = get_ptz_client_for_camera(ip, port)
+        return client.move(direction, speed)
+
+    @app.post("/api/ptz/step")
+    def api_ptz_step(d: dict = Body(default={})):
+        direction = d.get("direction", "up")
+        speed = float(d.get("speed", 0.5))
+        duration = float(d.get("duration", 0.35))
+        ip = d.get("ip", "192.168.96.30")
+        port = int(d.get("port", 8888))
+        client = get_ptz_client_for_camera(ip, port)
+        return client.step(direction, speed, duration)
+
+    @app.post("/api/ptz/stop")
+    def api_ptz_stop(d: dict = Body(default={})):
+        ip = d.get("ip", "192.168.96.30")
+        port = int(d.get("port", 8888))
+        client = get_ptz_client_for_camera(ip, port)
+        return client.stop()
+
+    @app.post("/api/ptz/zoom")
+    def api_ptz_zoom(d: dict = Body(default={})):
+        direction = d.get("direction", "in")
+        speed = float(d.get("speed", 0.5))
+        ip = d.get("ip", "192.168.96.30")
+        port = int(d.get("port", 8888))
+        client = get_ptz_client_for_camera(ip, port)
+        return client.zoom(direction, speed)
+
+    @app.post("/api/ptz/zoom-step")
+    def api_ptz_zoom_step(d: dict = Body(default={})):
+        direction = d.get("direction", "in")
+        speed = float(d.get("speed", 0.5))
+        duration = float(d.get("duration", 0.35))
+        ip = d.get("ip", "192.168.96.30")
+        port = int(d.get("port", 8888))
+        client = get_ptz_client_for_camera(ip, port)
+        return client.zoom_step(direction, speed, duration)
+
+    @app.get("/api/ptz/status")
+    def api_ptz_status(ip: str = "192.168.96.30", port: int = 8888):
+        client = get_ptz_client_for_camera(ip, port)
+        return client.get_status()
+
+    @app.get("/api/ptz/presets")
+    def api_ptz_presets(ip: str = "192.168.96.30", port: int = 8888):
+        client = get_ptz_client_for_camera(ip, port)
+        return client.get_presets()
+
+    @app.post("/api/ptz/presets/goto")
+    def api_ptz_goto_preset(d: dict = Body(default={})):
+        preset_token = d.get("preset_token", "1")
+        speed = float(d.get("speed", 1.0))
+        ip = d.get("ip", "192.168.96.30")
+        port = int(d.get("port", 8888))
+        client = get_ptz_client_for_camera(ip, port)
+        return client.goto_preset(preset_token, speed)
+
+    @app.post("/api/ptz/presets/set")
+    def api_ptz_set_preset(d: dict = Body(default={})):
+        name = d.get("preset_name", "Preset")
+        ip = d.get("ip", "192.168.96.30")
+        port = int(d.get("port", 8888))
+        client = get_ptz_client_for_camera(ip, port)
+        return client.set_preset(name)
+
+    @app.delete("/api/ptz/presets/{token}")
+    def api_ptz_delete_preset(token: str, ip: str = "192.168.96.30", port: int = 8888):
+        client = get_ptz_client_for_camera(ip, port)
+        return client.remove_preset(token)
+
+    @app.get("/api/ptz/info")
+    def api_ptz_info(ip: str = "192.168.96.30", port: int = 8888):
+        client = get_ptz_client_for_camera(ip, port)
+        return {
+            "camera_ip": ip,
+            "onvif_port": port,
+            "device_info": client.get_device_info(),
+            "status": client.get_status()
+        }
+except Exception as _e:
+    print(f"[ONVIF-PTZ] Warning: Could not initialize ONVIF client in server.py: {_e}")
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 

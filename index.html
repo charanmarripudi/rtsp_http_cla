@@ -1029,6 +1029,7 @@
     <div class="nav-tabs">
       <button class="tab-btn active" data-tab="manage">Locations</button>
       <button class="tab-btn" data-tab="dashboard">Location Cameras</button>
+      <button class="tab-btn" data-tab="ptz">🎮 PTZ Camera</button>
     </div>
     <div id="system-status">
       <div id="status-dot"></div>
@@ -1110,8 +1111,126 @@
     </aside>
   </div>
 
+  <!-- Tab 3: PTZ Camera Controller -->
+  <div class="config-layout tab-content" id="tab-ptz" style="display: none; padding: 22px;">
+    <div style="display: grid; grid-template-columns: 1fr 380px; gap: 20px; max-width: 1400px; margin: 0 auto;">
+      
+      <!-- Video Card -->
+      <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column;">
+        <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center;">
+          <div class="widget-title">
+            <h3>AMBICAM PTZ Live Preview</h3>
+          </div>
+          <span style="font-family: var(--mono); font-size: 0.72rem; color: var(--muted);">192.168.96.30:8888 (ONVIF)</span>
+        </div>
+        <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center;">
+          <video id="ptzLiveVideo" autoplay muted playsinline controls style="width: 100%; height: 100%; object-fit: fill;"></video>
+        </div>
+        <div style="display: flex; gap: 16px; padding: 10px 16px; font-size: 0.75rem; color: var(--muted); border-top: 1px solid var(--border); background: rgba(0,0,0,0.2);">
+          <div>Pan: <strong id="ptzTelemetryPan" style="color: var(--accent);">0.00</strong></div>
+          <div>Tilt: <strong id="ptzTelemetryTilt" style="color: var(--accent);">0.00</strong></div>
+          <div>Zoom: <strong id="ptzTelemetryZoom" style="color: var(--accent);">0.00</strong></div>
+          <button class="btn-secondary" style="margin-left: auto; padding: 2px 10px; font-size: 0.7rem;" onclick="window.showPtzApiModal()">⚡ API Docs</button>
+        </div>
+      </div>
+
+      <!-- Controls Sidebar -->
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        
+        <!-- Direction Control Card -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;">
+          <div class="widget-header" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="font-size: 0.85rem;">Direction & Zoom</h3>
+            <span id="ptzSpeedVal" style="color: var(--accent); font-size: 0.75rem; font-family: var(--mono); font-weight: 600;">50% Speed</span>
+          </div>
+
+          <!-- Mode Switch -->
+          <div style="display: flex; background: rgba(0,0,0,0.3); padding: 3px; border-radius: 6px; margin-bottom: 14px;">
+            <button class="ptz-mode-btn active" data-mode="continuous" style="flex:1; background:var(--accent); color:#000; border:none; padding:5px 8px; border-radius:4px; font-size:0.72rem; font-weight:600; cursor:pointer;">Hold to Move</button>
+            <button class="ptz-mode-btn" data-mode="step" style="flex:1; background:transparent; color:var(--muted); border:none; padding:5px 8px; border-radius:4px; font-size:0.72rem; font-weight:600; cursor:pointer;">Single Click (Nudge)</button>
+          </div>
+
+          <!-- 8-Way D-Pad -->
+          <div style="display: flex; justify-content: center; margin: 10px 0;">
+            <div style="display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(3, 56px); gap: 6px;">
+              <button class="ptz-dpad-btn btn-secondary" data-dir="upleft" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;">↖</button>
+              <button class="ptz-dpad-btn btn-secondary" data-dir="up" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;">▲</button>
+              <button class="ptz-dpad-btn btn-secondary" data-dir="upright" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;">↗</button>
+
+              <button class="ptz-dpad-btn btn-secondary" data-dir="left" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;">◀</button>
+              <button class="btn-danger" id="ptzBtnStop" style="display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:bold; cursor:pointer;">STOP</button>
+              <button class="ptz-dpad-btn btn-secondary" data-dir="right" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;">▶</button>
+
+              <button class="ptz-dpad-btn btn-secondary" data-dir="downleft" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;">↙</button>
+              <button class="ptz-dpad-btn btn-secondary" data-dir="down" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;">▼</button>
+              <button class="ptz-dpad-btn btn-secondary" data-dir="downright" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;">↘</button>
+            </div>
+          </div>
+
+          <!-- Zoom -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px;">
+            <button class="btn-secondary" id="ptzBtnZoomIn" style="padding: 8px;">🔍 Zoom In</button>
+            <button class="btn-secondary" id="ptzBtnZoomOut" style="padding: 8px;">🔍 Zoom Out</button>
+          </div>
+
+          <!-- Speed Slider -->
+          <div style="margin-top: 14px;">
+            <div style="display:flex; justify-content:space-between; font-size:0.72rem; color:var(--muted); margin-bottom:4px;">
+              <span>Speed</span>
+              <span>10% - 100%</span>
+            </div>
+            <input type="range" id="ptzSpeedSlider" min="0.1" max="1.0" step="0.05" value="0.5" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
+          </div>
+        </div>
+
+        <!-- Presets Card -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;">
+          <div class="widget-header" style="margin-bottom: 10px;">
+            <h3 style="font-size: 0.85rem;">Saved Presets</h3>
+          </div>
+          <div id="ptzPresetList" style="display:flex; flex-direction:column; gap:6px; max-height:140px; overflow-y:auto; margin-bottom:10px;">
+            <div style="color:var(--muted); font-size:.72rem; text-align:center;">Loading presets...</div>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <input type="text" id="ptzPresetNameInput" placeholder="Preset name" style="flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.75rem; padding:6px 10px; border-radius:6px; outline:none;">
+            <button class="btn-primary" id="ptzBtnAddPreset" style="padding:6px 12px; font-size:0.72rem;">Save</button>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
+  <!-- PTZ API Modal -->
+  <div id="ptzApiModal" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; z-index:99999; backdrop-filter:blur(6px);">
+    <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:580px; max-width:90vw; padding:20px; position:relative; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <button onclick="window.closePtzApiModal()" style="position:absolute; top:14px; right:14px; background:transparent; border:none; color:var(--muted); font-size:1.2rem; cursor:pointer;">✕</button>
+      <h3 style="color:var(--accent); font-size:1rem; margin-bottom:6px;">⚡ REST API Endpoints for Frontend UI</h3>
+      <p style="font-size:0.75rem; color:var(--muted); margin-bottom:12px;">Full CORS enabled. Call these from React, Vue, Angular, or Vanilla JS:</p>
+      
+      <div style="font-size:0.75rem; font-weight:600; margin-top:8px;">1. Continuous Move (On Button Down):</div>
+      <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0 8px; overflow-x:auto;">fetch("/api/ptz/move", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ direction: "left", speed: 0.5 }) // up, down, left, right...
+});</pre>
+
+      <div style="font-size:0.75rem; font-weight:600;">2. Stop Move (On Button Up):</div>
+      <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0 8px;">fetch("/api/ptz/stop", { method: "POST" });</pre>
+
+      <div style="font-size:0.75rem; font-weight:600;">3. Step Nudge (On Single Click):</div>
+      <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0;">fetch("/api/ptz/step", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ direction: "up", speed: 0.5, duration: 0.35 })
+});</pre>
+    </div>
+  </div>
+
   <script src="/static/js/detection.js?v=7.0"></script>
   <script src="/static/js/location_dashboard.js?v=5.0"></script>
+  <script src="/static/js/ptz_controller.js?v=1.0"></script>
 
   <script>
     var streamsArray = [];
@@ -1423,6 +1542,8 @@
             loadDevicesWidget();
             renderLocationWidgets();
             notifyDetectionReady();
+          } else if (tabId === 'ptz') {
+            if (window.initPtzController) window.initPtzController();
           }
         });
       });
