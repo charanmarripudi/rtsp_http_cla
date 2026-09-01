@@ -71,10 +71,43 @@
     });
 
     listEl.querySelectorAll(".ptz-remove-row").forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const i = parseInt(btn.getAttribute("data-index"), 10);
-        ptzCameras.splice(i, 1);
-        renderPtzCamerasConfigList();
+        const camToRemove = ptzCameras[i];
+        if (!camToRemove) return;
+        if (!confirm(`Are you sure you want to remove ${camToRemove.label || 'this camera'}?`)) return;
+
+        try {
+          showStatusToast("Removing camera...");
+          if (camToRemove.id) {
+            await fetch(`/api/ptz/cameras/${camToRemove.id}`, { method: "DELETE" }).catch(() => { });
+          }
+          ptzCameras.splice(i, 1);
+
+          // Save remaining cameras to backend
+          const res = await fetch("/api/ptz/cameras", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(ptzCameras),
+          });
+          const data = await res.json();
+          if (data.status === "success" && data.cameras) {
+            ptzCameras = data.cameras;
+          }
+
+          renderPtzCameraSelect();
+          if (ptzCameras.length > 0) {
+            switchActivePtzCamera(0);
+          } else {
+            activePtzCamera = null;
+            const video = document.getElementById("ptzLiveVideo");
+            if (video) video.src = "";
+            showStatusToast("All PTZ cameras removed.");
+          }
+          showStatusToast("Camera removed successfully!");
+        } catch (e) {
+          showStatusToast("Error removing camera: " + e.message, true);
+        }
       };
     });
   }
@@ -157,7 +190,7 @@
     if (!video || !activePtzCamera) return;
 
     const cid = `ptz${camIndex}`;
-    
+
     // Use exact RTSP URL entered for this camera
     let rtspUrl = activePtzCamera.rtsp;
 
@@ -168,7 +201,7 @@
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cid: cid, rtsp: rtspUrl }),
-    }).catch(() => {});
+    }).catch(() => { });
 
     // Ensure video element properties
     delete video.dataset.currentUrl;
@@ -185,7 +218,7 @@
       try {
         ptzHls.detachMedia();
         ptzHls.destroy();
-      } catch (_) {}
+      } catch (_) { }
       ptzHls = null;
     }
 
@@ -211,7 +244,7 @@
       });
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(() => {});
+        video.play().catch(() => { });
       });
 
       hls.on(Hls.Events.ERROR, (_, data) => {
@@ -229,7 +262,7 @@
       });
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = streamUrl;
-      video.play().catch(() => {});
+      video.play().catch(() => { });
     }
   }
 
@@ -478,7 +511,7 @@
         try {
           showStatusToast("Removing camera...");
           if (camToRemove.id) {
-            await fetch(`/api/ptz/cameras/${camToRemove.id}`, { method: "DELETE" }).catch(() => {});
+            await fetch(`/api/ptz/cameras/${camToRemove.id}`, { method: "DELETE" }).catch(() => { });
           }
           ptzCameras.splice(idx, 1);
 
@@ -648,7 +681,7 @@
       );
       const data = await res.json();
       let presets = data.presets || [];
-      
+
       const customPresets = presets.filter(p => p.name && !p.name.startsWith("PRESET_"));
       const displayPresets = customPresets.length > 0 ? customPresets : presets.slice(0, 6);
 
@@ -734,7 +767,7 @@
             if (tiltEl) tiltEl.textContent = Number(data.tilt).toFixed(2);
             if (zoomEl) zoomEl.textContent = Number(data.zoom).toFixed(2);
           }
-        } catch (e) {}
+        } catch (e) { }
       }
     }
     telemetryTimer = setInterval(poll, 2000);
