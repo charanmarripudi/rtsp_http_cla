@@ -1,4 +1,4 @@
-// Multi-Camera ONVIF PTZ Controller Module
+// Multi-Camera ONVIF PTZ Controller Module with Main/Sub Stream Quality Switcher
 (function () {
   let currentMode = "continuous";
   let currentSpeed = 0.5;
@@ -6,7 +6,8 @@
   let isMoving = false;
   let ptzCameras = [];
   let activePtzCamera = null;
-  let ptzHlsInstance = null;
+  let currentStreamType = "main"; // "main" (HD) or "sub" (SD/Fast)
+  let availableStreams = null;
 
   window.initPtzController = async function () {
     initPtzControls();
@@ -58,7 +59,7 @@
     };
   }
 
-  function switchActivePtzCamera(index) {
+  async function switchActivePtzCamera(index) {
     if (!ptzCameras[index]) return;
     activePtzCamera = ptzCameras[index];
 
@@ -73,78 +74,83 @@
       titleEl.textContent = activePtzCamera.label || "AMBICAM PTZ Preview";
     }
 
+    // Fetch dynamic main/sub streams from ONVIF
+    await fetchDynamicStreams();
+
     // Start video stream for this PTZ camera
-    playPtzStream(activePtzCamera, index);
+    playPtzStream(index);
 
     // Load presets for this specific PTZ camera
     loadPtzPresets();
   }
 
-  function playPtzStream(cam, index) {
+  async function fetchDynamicStreams() {
+    if (!activePtzCamera) return;
+    try {
+      const res = await fetch(
+        `/api/ptz/streams?ip=${activePtzCamera.ip}&port=${activePtzCamera.port || 8888}&username=${encodeURIComponent(
+          activePtzCamera.username || "admin"
+        )}&password=${encodeURIComponent(activePtzCamera.password || "")}`
+      );
+      const data = await res.json();
+      if (data.status === "success" && data.streams) {
+        availableStreams = data.streams;
+      }
+    } catch (e) {
+      console.warn("Could not query dynamic streams via ONVIF:", e);
+    }
+  }
+
+  function playPtzStream(camIndex) {
     const video = document.getElementById("ptzLiveVideo");
-    if (!video) return;
+    if (!video || !activePtzCamera) return;
 
     const overlay = document.getElementById("ptzVideoOverlay");
     if (overlay) {
       overlay.style.display = "block";
-      overlay.textContent = "Connecting to live PTZ stream...";
+      overlay.textContent = "Loading stream...";
     }
 
-    const cid = `ptz${index}`;
-    const hlsUrl = `/hls/stream${cid}_raw/playlist.m3u8?t=${Date.now()}`;
+    const cid = `ptz${camIndex}`;
+    
+    // Choose RTSP URL (Main stream vs Sub stream)
+    let rtspUrl = activePtzCamera.rtsp;
+    if (availableStreams && availableStreams[currentStreamType] && availableStreams[currentStreamType].rtsp_url) {
+      rtspUrl = availableStreams[currentStreamType].rtsp_url;
+    }
 
-    // Make sure backend has started FFmpeg transcoding for this PTZ RTSP URL
+    const hlsUrl = `/hls/stream${cid}_raw/playlist.m3u8`;
+
+    // Ensure backend raw stream is active
     fetch("/api/ptz/cameras/start-stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cid: cid, rtsp: cam.rtsp }),
+      body: JSON.stringify({ cid: cid, rtsp: rtspUrl }),
     }).catch(() => {});
 
-    if (ptzHlsInstance) {
-      ptzHlsInstance.destroy();
-      ptzHlsInstance = null;
-    }
+    // Hook up play events to auto-dismiss overlay
+    video.onplaying = () => {
+      if (overlay) overlay.style.display = "none";
+    };
+    video.onloadeddata = () => {
+      if (overlay) overlay.style.display = "none";
+    };
 
-    // Try playing HLS with retry polling until playlist is ready
-    let attempts = 0;
-    function tryLoad() {
-      attempts++;
-      if (Hls.isSupported()) {
-        const hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: true,
-          liveSyncDurationCount: 1,
-          liveMaxLatencyDurationCount: 3,
-        });
-        ptzHlsInstance = hls;
-        hls.loadSource(hlsUrl);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          video.play().catch(() => {});
-          if (overlay) overlay.style.display = "none";
-        });
-        hls.on(Hls.Events.ERROR, (event, data) => {
-          if (data.fatal) {
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR && attempts < 15) {
-              setTimeout(tryLoad, 1000);
-            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-              hls.recoverMediaError();
-            } else {
-              hls.destroy();
-            }
-          }
-        });
-      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = hlsUrl;
-        video.addEventListener("loadedmetadata", () => {
-          video.play().catch(() => {});
-          if (overlay) overlay.style.display = "none";
-        });
-      }
+    // Use standardized playHLS from detection.js
+    if (typeof playHLS === "function") {
+      playHLS(video, hlsUrl, "ptz_stream");
+    } else if (Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+      hls.loadSource(hlsUrl + "?t=" + Date.now());
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {});
+        if (overlay) overlay.style.display = "none";
+      });
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = hlsUrl + "?t=" + Date.now();
+      video.play().catch(() => {});
     }
-
-    // Give FFmpeg 500ms to produce first segment
-    setTimeout(tryLoad, 500);
   }
 
   function initPtzControls() {
@@ -157,11 +163,24 @@
       });
     }
 
+    // Direction Mode Switch (Hold vs Step)
     document.querySelectorAll(".ptz-mode-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         document.querySelectorAll(".ptz-mode-btn").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         currentMode = btn.getAttribute("data-mode");
+      });
+    });
+
+    // Stream Quality Switcher (Main 1080p vs Sub SD)
+    document.querySelectorAll(".ptz-stream-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        document.querySelectorAll(".ptz-stream-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentStreamType = btn.getAttribute("data-stream");
+        const select = document.getElementById("ptzCameraSelect");
+        const idx = select ? parseInt(select.value, 10) : 0;
+        playPtzStream(idx);
       });
     });
 

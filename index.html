@@ -1118,9 +1118,13 @@
       <!-- Video Card -->
       <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column;">
         <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
-          <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
             <h3 id="ptzCameraTitle" style="font-size: 0.9rem;">AMBICAM PTZ 1</h3>
             <select id="ptzCameraSelect" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; font-size: 0.75rem; border-radius: 6px; outline: none; cursor: pointer;"></select>
+            <div style="display: flex; gap: 3px; background: rgba(0,0,0,0.3); padding: 2px; border-radius: 6px; border: 1px solid var(--border);">
+              <button class="ptz-stream-btn active" data-stream="main" style="background: var(--accent); color: #000; border: none; padding: 3px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; cursor: pointer;">HD 1080p</button>
+              <button class="ptz-stream-btn" data-stream="sub" style="background: transparent; color: var(--muted); border: none; padding: 3px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; cursor: pointer;">SD Fast</button>
+            </div>
             <button class="btn-secondary" id="ptzBtnOpenAddCam" style="padding: 3px 8px; font-size: 0.7rem;">+ Add Camera</button>
           </div>
           <span id="ptzCameraIpLabel" style="font-family: var(--mono); font-size: 0.72rem; color: var(--muted);">192.168.96.30:8888 (ONVIF)</span>

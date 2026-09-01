@@ -2670,6 +2670,12 @@ try:
         client = get_ptz_client_for_camera(ip, port, username, password)
         return client.remove_preset(token)
 
+    @app.get("/api/ptz/streams")
+    def api_ptz_streams(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+        """Dynamically retrieves Main Stream and Sub Stream RTSP URLs via ONVIF."""
+        client = get_ptz_client_for_camera(ip, port, username, password)
+        return client.get_stream_uris()
+
     @app.get("/api/ptz/info")
     def api_ptz_info(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
         client = get_ptz_client_for_camera(ip, port, username, password)
@@ -2677,7 +2683,8 @@ try:
             "camera_ip": ip,
             "onvif_port": port,
             "device_info": client.get_device_info(),
-            "status": client.get_status()
+            "status": client.get_status(),
+            "streams": client.get_stream_uris()
         }
 except Exception as _e:
     print(f"[ONVIF-PTZ] Warning: Could not initialize ONVIF client in server.py: {_e}")

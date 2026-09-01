@@ -203,6 +203,40 @@ class OnvifPtzClient:
             status, resp = self._soap_request(self.ptz_url, body)
             return {"status": "success", "action": "remove_preset", "preset_token": preset_token}
 
+    def get_stream_uris(self):
+        """Dynamically retrieves Main Stream and Sub Stream RTSP URLs via ONVIF GetStreamUri."""
+        uris = {}
+        for token, label in [("PROFILE_000", "main"), ("PROFILE_001", "sub")]:
+            body = f"""
+            <trt:GetStreamUri>
+              <trt:StreamSetup>
+                <tt:Stream>RTP-Unicast</tt:Stream>
+                <tt:Transport>
+                  <tt:Protocol>RTSP</tt:Protocol>
+                </tt:Transport>
+              </trt:StreamSetup>
+              <trt:ProfileToken>{token}</trt:ProfileToken>
+            </trt:GetStreamUri>"""
+            try:
+                status, resp = self._soap_request(self.media_url, body)
+                uri_match = re.search(r'<[^:]*:Uri>(.*?)</[^:]*:Uri>', resp)
+                if uri_match:
+                    raw_uri = uri_match.group(1).strip()
+                    if self.username and "@" not in raw_uri:
+                        prefix = f"{self.username}:{self.password}@" if self.password else f"{self.username}@"
+                        formatted_uri = raw_uri.replace("rtsp://", f"rtsp://{prefix}")
+                    else:
+                        formatted_uri = raw_uri
+                    uris[label] = {
+                        "profile_token": token,
+                        "label": "Main Stream (1080p)" if label == "main" else "Sub Stream (Fast/SD)",
+                        "rtsp_url": formatted_uri,
+                        "raw_uri": raw_uri
+                    }
+            except Exception as e:
+                uris[label] = {"error": str(e)}
+        return {"status": "success", "streams": uris}
+
     def get_device_info(self):
         body = """<tds:GetDeviceInformation/>"""
         try:
@@ -220,3 +254,4 @@ class OnvifPtzClient:
             }
         except Exception as e:
             return {"status": "error", "error": str(e)}
+
