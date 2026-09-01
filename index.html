@@ -1117,14 +1117,17 @@
       
       <!-- Video Card -->
       <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column;">
-        <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center;">
-          <div class="widget-title">
-            <h3>AMBICAM PTZ Live Preview</h3>
+        <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <h3 id="ptzCameraTitle" style="font-size: 0.9rem;">AMBICAM PTZ 1</h3>
+            <select id="ptzCameraSelect" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; font-size: 0.75rem; border-radius: 6px; outline: none; cursor: pointer;"></select>
+            <button class="btn-secondary" id="ptzBtnOpenAddCam" style="padding: 3px 8px; font-size: 0.7rem;">+ Add Camera</button>
           </div>
-          <span style="font-family: var(--mono); font-size: 0.72rem; color: var(--muted);">192.168.96.30:8888 (ONVIF)</span>
+          <span id="ptzCameraIpLabel" style="font-family: var(--mono); font-size: 0.72rem; color: var(--muted);">192.168.96.30:8888 (ONVIF)</span>
         </div>
         <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center;">
           <video id="ptzLiveVideo" autoplay muted playsinline controls style="width: 100%; height: 100%; object-fit: fill;"></video>
+          <div id="ptzVideoOverlay" style="position: absolute; color: var(--muted); font-size: 0.85rem; pointer-events: none; background: rgba(0,0,0,0.6); padding: 8px 14px; border-radius: 6px;">Connecting to live stream...</div>
         </div>
         <div style="display: flex; gap: 16px; padding: 10px 16px; font-size: 0.75rem; color: var(--muted); border-top: 1px solid var(--border); background: rgba(0,0,0,0.2);">
           <div>Pan: <strong id="ptzTelemetryPan" style="color: var(--accent);">0.00</strong></div>
@@ -1202,6 +1205,48 @@
     </div>
   </div>
 
+  <!-- Modal: Add PTZ Camera -->
+  <div id="ptzAddCamModal" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; z-index:99999; backdrop-filter:blur(6px);">
+    <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:480px; max-width:90vw; padding:20px; position:relative; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <button onclick="window.closeAddCamModal()" style="position:absolute; top:14px; right:14px; background:transparent; border:none; color:var(--muted); font-size:1.2rem; cursor:pointer;">✕</button>
+      <h3 style="color:var(--accent); font-size:1rem; margin-bottom:12px;">+ Add ONVIF PTZ Camera</h3>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div>
+          <label style="font-size:0.72rem; color:var(--muted);">Camera Label</label>
+          <input type="text" id="newPtzLabel" placeholder="e.g. Warehouse PTZ 2" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
+        </div>
+        <div>
+          <label style="font-size:0.72rem; color:var(--muted);">RTSP Stream URL</label>
+          <input type="text" id="newPtzRtsp" placeholder="rtsp://admin:@192.168.96.30:554/ch0_0.264" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
+        </div>
+        <div style="display:grid; grid-template-columns:2fr 1fr; gap:10px;">
+          <div>
+            <label style="font-size:0.72rem; color:var(--muted);">Camera ONVIF IP</label>
+            <input type="text" id="newPtzIp" placeholder="192.168.96.30" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
+          </div>
+          <div>
+            <label style="font-size:0.72rem; color:var(--muted);">ONVIF Port</label>
+            <input type="text" id="newPtzPort" value="8888" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div>
+            <label style="font-size:0.72rem; color:var(--muted);">Username</label>
+            <input type="text" id="newPtzUser" value="admin" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
+          </div>
+          <div>
+            <label style="font-size:0.72rem; color:var(--muted);">Password</label>
+            <input type="password" id="newPtzPass" placeholder="Optional" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
+          </div>
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
+          <button class="btn-secondary" onclick="window.closeAddCamModal()" style="padding:6px 14px;">Cancel</button>
+          <button class="btn-primary" id="ptzBtnSaveNewCam" style="padding:6px 16px;">Save Camera</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- PTZ API Modal -->
   <div id="ptzApiModal" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; z-index:99999; backdrop-filter:blur(6px);">
     <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:580px; max-width:90vw; padding:20px; position:relative; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
@@ -1213,17 +1258,21 @@
       <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0 8px; overflow-x:auto;">fetch("/api/ptz/move", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ direction: "left", speed: 0.5 }) // up, down, left, right...
+  body: JSON.stringify({ direction: "left", speed: 0.5, ip: "192.168.96.30", port: 8888 })
 });</pre>
 
       <div style="font-size:0.75rem; font-weight:600;">2. Stop Move (On Button Up):</div>
-      <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0 8px;">fetch("/api/ptz/stop", { method: "POST" });</pre>
+      <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0 8px;">fetch("/api/ptz/stop", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ ip: "192.168.96.30", port: 8888 })
+});</pre>
 
       <div style="font-size:0.75rem; font-weight:600;">3. Step Nudge (On Single Click):</div>
       <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0;">fetch("/api/ptz/step", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ direction: "up", speed: 0.5, duration: 0.35 })
+  body: JSON.stringify({ direction: "up", speed: 0.5, duration: 0.35, ip: "192.168.96.30", port: 8888 })
 });</pre>
     </div>
   </div>
