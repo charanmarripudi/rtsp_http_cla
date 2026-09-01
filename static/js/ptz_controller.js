@@ -121,11 +121,8 @@
 
     const cid = `ptz${camIndex}`;
     
-    // Choose RTSP URL (Main stream vs Sub stream)
+    // Use exact RTSP URL entered for this camera
     let rtspUrl = activePtzCamera.rtsp;
-    if (availableStreams && availableStreams[currentStreamType] && availableStreams[currentStreamType].rtsp_url) {
-      rtspUrl = availableStreams[currentStreamType].rtsp_url;
-    }
 
     const hlsUrl = `/hls/stream${cid}_raw/playlist.m3u8`;
 
@@ -351,6 +348,26 @@
           }
         } catch (e) {
           showStatusToast("Failed to add camera: " + e.message, true);
+        }
+      });
+    }
+
+    const btnSaveCams = document.getElementById("ptzBtnSaveCameras");
+    if (btnSaveCams) {
+      btnSaveCams.addEventListener("click", async () => {
+        try {
+          showStatusToast("Saving PTZ Cameras...");
+          const res = await fetch("/api/ptz/cameras", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(ptzCameras),
+          });
+          const data = await res.json();
+          if (data.status === "success") {
+            showStatusToast("PTZ Cameras Saved Successfully!");
+          }
+        } catch (e) {
+          showStatusToast("Error saving PTZ cameras: " + e.message, true);
         }
       });
     }
