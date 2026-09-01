@@ -137,7 +137,9 @@
     }).catch(() => {});
 
     // Ensure video element properties
+    delete video.dataset.currentUrl;
     video.muted = true;
+    video.defaultMuted = true;
     video.playsInline = true;
     video.autoplay = true;
     video.setAttribute("muted", "");
@@ -155,6 +157,11 @@
 
     if (typeof playHLS === "function") {
       playHLS(video, hlsUrl, "ptz_" + camIndex);
+      setTimeout(() => {
+        if (video && video.paused) {
+          video.play().catch(() => {});
+        }
+      }, 500);
       return;
     }
 
