@@ -2602,16 +2602,30 @@ try:
     def post_ptz_cameras_api(payload: list = Body(default=[])):
         if not isinstance(payload, list):
             raise HTTPException(status_code=400, detail="Expected list of PTZ camera objects")
-        save_ptz_cameras(payload)
-        for idx, cam in enumerate(payload):
-            cid = f"ptz{idx}"
-            rtsp = normalize_ptz_rtsp(cam.get("rtsp", ""))
-            if rtsp:
-                start_raw_stream(cid, rtsp)
-                cam["hls_raw"] = f"/hls/stream{cid}_raw/playlist.m3u8"
-        return {"status": "success", "cameras": payload}
+        processed_cams = []
+        for idx, item in enumerate(payload):
+            if isinstance(item, dict):
+                rtsp = (item.get("rtsp") or "").strip()
+                label = (item.get("label") or f"PTZ Camera {idx + 1}").strip()
+                if rtsp:
+                    info = parse_rtsp_for_onvif(rtsp)
+                    normalized_url = info["rtsp"]
+                    cid = f"ptz{idx}"
+                    cam_obj = {
+                        "id": item.get("id") or f"ptz-{int(time.time())}-{idx}",
+                        "label": label,
+                        "rtsp": normalized_url,
+                        "ip": info["ip"],
+                        "port": info["port"],
+                        "username": info["username"],
+                        "password": info["password"],
+                        "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"
+                    }
+                    processed_cams.append(cam_obj)
+                    start_raw_stream(cid, normalized_url)
+        save_ptz_cameras(processed_cams)
+        return {"status": "success", "cameras": processed_cams}
 
-    @app.post("/api/ptz/cameras/save")
     @app.post("/api/ptz/cameras/add")
     def api_add_ptz_camera_by_rtsp(d: dict = Body(default={})):
         rtsp = d.get("rtsp", "").strip()
