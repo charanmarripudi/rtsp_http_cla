@@ -1129,14 +1129,14 @@
           </div>
           <span id="ptzCameraIpLabel" style="font-family: var(--mono); font-size: 0.72rem; color: var(--muted);">192.168.96.30:8888 (ONVIF)</span>
         </div>
-        <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center;">
-          <video id="ptzLiveVideo" autoplay muted playsinline controls style="width: 100%; height: 100%; object-fit: fill;"></video>
-          <div id="ptzVideoOverlay" style="position: absolute; color: var(--muted); font-size: 0.85rem; pointer-events: none; background: rgba(0,0,0,0.6); padding: 8px 14px; border-radius: 6px;">Connecting to live stream...</div>
+        <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+          <video id="ptzLiveVideo" autoplay muted playsinline controls style="width: 100%; height: 100%; object-fit: fill; background: #000;"></video>
         </div>
-        <div style="display: flex; gap: 16px; padding: 10px 16px; font-size: 0.75rem; color: var(--muted); border-top: 1px solid var(--border); background: rgba(0,0,0,0.2);">
+        <div style="display: flex; gap: 16px; padding: 10px 16px; font-size: 0.75rem; color: var(--muted); border-top: 1px solid var(--border); background: rgba(0,0,0,0.2); align-items: center;">
           <div>Pan: <strong id="ptzTelemetryPan" style="color: var(--accent);">0.00</strong></div>
           <div>Tilt: <strong id="ptzTelemetryTilt" style="color: var(--accent);">0.00</strong></div>
           <div>Zoom: <strong id="ptzTelemetryZoom" style="color: var(--accent);">0.00</strong></div>
+          <button class="btn-secondary" style="padding: 2px 10px; font-size: 0.7rem;" onclick="window.reloadPtzStream()">🔄 Reload Feed</button>
           <button class="btn-secondary" style="margin-left: auto; padding: 2px 10px; font-size: 0.7rem;" onclick="window.showPtzApiModal()">⚡ API Docs</button>
         </div>
       </div>
@@ -1213,39 +1213,20 @@
   <div id="ptzAddCamModal" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; z-index:99999; backdrop-filter:blur(6px);">
     <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:480px; max-width:90vw; padding:20px; position:relative; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
       <button onclick="window.closeAddCamModal()" style="position:absolute; top:14px; right:14px; background:transparent; border:none; color:var(--muted); font-size:1.2rem; cursor:pointer;">✕</button>
-      <h3 style="color:var(--accent); font-size:1rem; margin-bottom:12px;">+ Add ONVIF PTZ Camera</h3>
-      <div style="display:flex; flex-direction:column; gap:10px;">
+      <h3 style="color:var(--accent); font-size:1rem; margin-bottom:6px;">+ Add ONVIF PTZ Camera</h3>
+      <p style="font-size:0.75rem; color:var(--muted); margin-bottom:14px;">Enter the RTSP stream URL. ONVIF IP, Port, and credentials will be parsed automatically:</p>
+      <div style="display:flex; flex-direction:column; gap:12px;">
         <div>
-          <label style="font-size:0.72rem; color:var(--muted);">Camera Label</label>
-          <input type="text" id="newPtzLabel" placeholder="e.g. Warehouse PTZ 2" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
+          <label style="font-size:0.75rem; color:var(--text); font-weight:500;">RTSP Stream URL <span style="color:var(--accent);">*</span></label>
+          <input type="text" id="newPtzRtsp" placeholder="rtsp://admin:@192.168.96.30:554/ch0_0.264" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.8rem; padding:9px 12px; border-radius:6px; outline:none; margin-top:4px;">
         </div>
         <div>
-          <label style="font-size:0.72rem; color:var(--muted);">RTSP Stream URL</label>
-          <input type="text" id="newPtzRtsp" placeholder="rtsp://admin:@192.168.96.30:554/ch0_0.264" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
+          <label style="font-size:0.72rem; color:var(--muted);">Camera Label (Optional)</label>
+          <input type="text" id="newPtzLabel" placeholder="e.g. PTZ Camera 2" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
         </div>
-        <div style="display:grid; grid-template-columns:2fr 1fr; gap:10px;">
-          <div>
-            <label style="font-size:0.72rem; color:var(--muted);">Camera ONVIF IP</label>
-            <input type="text" id="newPtzIp" placeholder="192.168.96.30" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
-          </div>
-          <div>
-            <label style="font-size:0.72rem; color:var(--muted);">ONVIF Port</label>
-            <input type="text" id="newPtzPort" value="8888" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
-          </div>
-        </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-          <div>
-            <label style="font-size:0.72rem; color:var(--muted);">Username</label>
-            <input type="text" id="newPtzUser" value="admin" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
-          </div>
-          <div>
-            <label style="font-size:0.72rem; color:var(--muted);">Password</label>
-            <input type="password" id="newPtzPass" placeholder="Optional" style="width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.78rem; padding:8px 10px; border-radius:6px; outline:none; margin-top:4px;">
-          </div>
-        </div>
-        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
           <button class="btn-secondary" onclick="window.closeAddCamModal()" style="padding:6px 14px;">Cancel</button>
-          <button class="btn-primary" id="ptzBtnSaveNewCam" style="padding:6px 16px;">Save Camera</button>
+          <button class="btn-primary" id="ptzBtnSaveNewCam" style="padding:6px 16px;">Add Camera</button>
         </div>
       </div>
     </div>

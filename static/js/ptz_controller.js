@@ -108,15 +108,16 @@
     }
   }
 
+  window.reloadPtzStream = function () {
+    const select = document.getElementById("ptzCameraSelect");
+    const idx = select ? parseInt(select.value, 10) : 0;
+    playPtzStream(idx);
+    showStatusToast("Reloading Live Feed...");
+  };
+
   function playPtzStream(camIndex) {
     const video = document.getElementById("ptzLiveVideo");
     if (!video || !activePtzCamera) return;
-
-    const overlay = document.getElementById("ptzVideoOverlay");
-    if (overlay) {
-      overlay.style.display = "flex";
-      overlay.innerHTML = '<span style="color:var(--accent);">●</span>&nbsp;Connecting to Live ONVIF Feed...';
-    }
 
     const cid = `ptz${camIndex}`;
     
@@ -137,6 +138,8 @@
 
     // Ensure video element properties
     video.muted = true;
+    video.playsInline = true;
+    video.autoplay = true;
     video.setAttribute("muted", "");
     video.setAttribute("playsinline", "");
     video.setAttribute("autoplay", "");
@@ -158,7 +161,7 @@
         lowLatencyMode: true,
         startPosition: -1,
         liveSyncDurationCount: 2.0,
-        liveMaxLatencyDurationCount: 5,
+        liveMaxLatencyDurationCount: 6,
         liveDurationInfinity: true,
         manifestLoadingTimeOut: 15000,
         manifestLoadingMaxRetry: 10,
@@ -172,9 +175,7 @@
       });
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().then(() => {
-          if (overlay) overlay.style.display = "none";
-        }).catch(() => {});
+        video.play().catch(() => {});
       });
 
       hls.on(Hls.Events.ERROR, (_, data) => {
@@ -192,18 +193,8 @@
       });
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = streamUrl;
-      video.play().then(() => {
-        if (overlay) overlay.style.display = "none";
-      }).catch(() => {});
+      video.play().catch(() => {});
     }
-
-    // Secondary listener for video play
-    video.onplaying = () => {
-      if (overlay) overlay.style.display = "none";
-    };
-    video.ontimeupdate = () => {
-      if (overlay && video.currentTime > 0) overlay.style.display = "none";
-    };
   }
 
   function showStatusToast(msg, isError = false) {
@@ -308,7 +299,7 @@
       });
     }
 
-    // Add New Camera Modal
+    // Add New Camera Modal (Only RTSP URL needed!)
     const btnOpenAddCam = document.getElementById("ptzBtnOpenAddCam");
     if (btnOpenAddCam) {
       btnOpenAddCam.addEventListener("click", () => {
@@ -319,46 +310,36 @@
     const btnSaveNewCam = document.getElementById("ptzBtnSaveNewCam");
     if (btnSaveNewCam) {
       btnSaveNewCam.addEventListener("click", async () => {
-        const label = document.getElementById("newPtzLabel").value.trim() || `PTZ Camera ${ptzCameras.length + 1}`;
         const rtsp = document.getElementById("newPtzRtsp").value.trim();
-        const ip = document.getElementById("newPtzIp").value.trim();
-        const port = parseInt(document.getElementById("newPtzPort").value.trim(), 10) || 8888;
-        const user = document.getElementById("newPtzUser").value.trim() || "admin";
-        const pass = document.getElementById("newPtzPass").value.trim() || "";
+        const label = document.getElementById("newPtzLabel").value.trim();
 
-        if (!rtsp || !ip) {
-          alert("Please enter both RTSP URL and Camera ONVIF IP");
+        if (!rtsp) {
+          alert("Please enter the RTSP Stream URL");
           return;
         }
 
-        const newCam = {
-          id: `ptz-${Date.now()}`,
-          label: label,
-          rtsp: rtsp,
-          ip: ip,
-          port: port,
-          username: user,
-          password: pass,
-        };
-
-        ptzCameras.push(newCam);
-
         try {
-          await fetch("/api/ptz/cameras", {
+          showStatusToast("Adding camera & connecting to ONVIF...");
+          const res = await fetch("/api/ptz/cameras/add", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(ptzCameras),
+            body: JSON.stringify({ rtsp: rtsp, label: label }),
           });
-          showStatusToast(`Added ${label}!`);
+          const data = await res.json();
+          if (data.status === "success" && data.cameras) {
+            ptzCameras = data.cameras;
+            document.getElementById("newPtzRtsp").value = "";
+            document.getElementById("newPtzLabel").value = "";
+            document.getElementById("ptzAddCamModal").style.display = "none";
+            renderPtzCameraSelect();
+            switchActivePtzCamera(ptzCameras.length - 1);
+            const select = document.getElementById("ptzCameraSelect");
+            if (select) select.value = ptzCameras.length - 1;
+            showStatusToast(`Camera added successfully!`);
+          }
         } catch (e) {
-          console.error("Failed to save PTZ cameras:", e);
+          showStatusToast("Failed to add camera: " + e.message, true);
         }
-
-        document.getElementById("ptzAddCamModal").style.display = "none";
-        renderPtzCameraSelect();
-        switchActivePtzCamera(ptzCameras.length - 1);
-        const select = document.getElementById("ptzCameraSelect");
-        if (select) select.value = ptzCameras.length - 1;
       });
     }
   }
@@ -500,7 +481,6 @@
       const data = await res.json();
       let presets = data.presets || [];
       
-      // Filter custom named presets and top presets so we don't render 255 items
       const customPresets = presets.filter(p => p.name && !p.name.startsWith("PRESET_"));
       const displayPresets = customPresets.length > 0 ? customPresets : presets.slice(0, 6);
 
@@ -613,7 +593,6 @@
     return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  // Auto initialize when DOM is ready
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
       if (!isControlsBound) bindPtzControls();

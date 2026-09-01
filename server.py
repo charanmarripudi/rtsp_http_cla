@@ -2570,6 +2570,42 @@ try:
                 cam["hls_raw"] = f"/hls/stream{cid}_raw/playlist.m3u8"
         return {"status": "success", "cameras": payload}
 
+    def parse_rtsp_for_onvif(rtsp_url):
+        rtsp_url = rtsp_url.strip()
+        match = re.search(r'rtsp://(?:([^:]+)(?::([^@]*))?@)?([^:/]+)(?::(\d+))?', rtsp_url)
+        if match:
+            user = match.group(1) or "admin"
+            pwd = match.group(2) or ""
+            ip = match.group(3) or "192.168.96.30"
+            return {"ip": ip, "username": user, "password": pwd, "port": 8888}
+        return {"ip": "192.168.96.30", "username": "admin", "password": "", "port": 8888}
+
+    @app.post("/api/ptz/cameras/add")
+    def api_add_ptz_camera_by_rtsp(d: dict = Body(default={})):
+        rtsp = d.get("rtsp", "").strip()
+        label = d.get("label", "").strip()
+        if not rtsp:
+            raise HTTPException(status_code=400, detail="Missing RTSP URL")
+        info = parse_rtsp_for_onvif(rtsp)
+        cams = read_ptz_cameras()
+        idx = len(cams)
+        new_label = label if label else f"PTZ Camera {idx + 1}"
+        cid = f"ptz{idx}"
+        new_cam = {
+            "id": f"ptz-{int(time.time())}",
+            "label": new_label,
+            "rtsp": rtsp,
+            "ip": info["ip"],
+            "port": info["port"],
+            "username": info["username"],
+            "password": info["password"],
+            "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"
+        }
+        cams.append(new_cam)
+        save_ptz_cameras(cams)
+        start_raw_stream(cid, rtsp)
+        return {"status": "success", "camera": new_cam, "cameras": cams}
+
     @app.post("/api/ptz/cameras/start-stream")
     def start_ptz_stream_api(d: dict = Body(default={})):
         cid = d.get("cid", "ptz0")
