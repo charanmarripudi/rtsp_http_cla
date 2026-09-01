@@ -1,5 +1,6 @@
-// Multi-Camera ONVIF PTZ Controller Module with Main/Sub Stream Quality Switcher
+// Ultra-Responsive Multi-Camera ONVIF PTZ Controller Module
 (function () {
+  let isControlsBound = false;
   let currentMode = "continuous";
   let currentSpeed = 0.5;
   let currentDuration = 0.35;
@@ -8,10 +9,16 @@
   let activePtzCamera = null;
   let currentStreamType = "main"; // "main" (HD) or "sub" (SD/Fast)
   let availableStreams = null;
+  let ptzHls = null;
 
+  // Called when tab is activated or page loaded
   window.initPtzController = async function () {
-    initPtzControls();
+    if (!isControlsBound) {
+      bindPtzControls();
+      isControlsBound = true;
+    }
     await loadPtzCameras();
+    startTelemetryPolling();
   };
 
   async function loadPtzCameras() {
@@ -74,8 +81,8 @@
       titleEl.textContent = activePtzCamera.label || "AMBICAM PTZ Preview";
     }
 
-    // Fetch dynamic main/sub streams from ONVIF
-    await fetchDynamicStreams();
+    // Fetch dynamic main/sub streams from ONVIF in background
+    fetchDynamicStreams();
 
     // Start video stream for this PTZ camera
     playPtzStream(index);
@@ -107,8 +114,8 @@
 
     const overlay = document.getElementById("ptzVideoOverlay");
     if (overlay) {
-      overlay.style.display = "block";
-      overlay.textContent = "Loading stream...";
+      overlay.style.display = "flex";
+      overlay.innerHTML = '<span style="color:var(--accent);">●</span>&nbsp;Connecting to Live ONVIF Feed...';
     }
 
     const cid = `ptz${camIndex}`;
@@ -121,39 +128,102 @@
 
     const hlsUrl = `/hls/stream${cid}_raw/playlist.m3u8`;
 
-    // Ensure backend raw stream is active
+    // Ensure backend raw stream is running for this RTSP URL
     fetch("/api/ptz/cameras/start-stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cid: cid, rtsp: rtspUrl }),
     }).catch(() => {});
 
-    // Hook up play events to auto-dismiss overlay
+    // Ensure video element properties
+    video.muted = true;
+    video.setAttribute("muted", "");
+    video.setAttribute("playsinline", "");
+    video.setAttribute("autoplay", "");
+
+    // Destroy existing HLS instance on this video
+    if (ptzHls) {
+      try {
+        ptzHls.detachMedia();
+        ptzHls.destroy();
+      } catch (_) {}
+      ptzHls = null;
+    }
+
+    const streamUrl = hlsUrl + "?t=" + Date.now();
+
+    if (typeof Hls !== "undefined" && Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        startPosition: -1,
+        liveSyncDurationCount: 2.0,
+        liveMaxLatencyDurationCount: 5,
+        liveDurationInfinity: true,
+        manifestLoadingTimeOut: 15000,
+        manifestLoadingMaxRetry: 10,
+        manifestLoadingRetryDelay: 600,
+      });
+      ptzHls = hls;
+
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        hls.loadSource(streamUrl);
+      });
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().then(() => {
+          if (overlay) overlay.style.display = "none";
+        }).catch(() => {});
+      });
+
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            setTimeout(() => {
+              if (ptzHls === hls) hls.loadSource(streamUrl);
+            }, 1000);
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls.recoverMediaError();
+          } else {
+            hls.destroy();
+          }
+        }
+      });
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = streamUrl;
+      video.play().then(() => {
+        if (overlay) overlay.style.display = "none";
+      }).catch(() => {});
+    }
+
+    // Secondary listener for video play
     video.onplaying = () => {
       if (overlay) overlay.style.display = "none";
     };
-    video.onloadeddata = () => {
-      if (overlay) overlay.style.display = "none";
+    video.ontimeupdate = () => {
+      if (overlay && video.currentTime > 0) overlay.style.display = "none";
     };
-
-    // Use standardized playHLS from detection.js
-    if (typeof playHLS === "function") {
-      playHLS(video, hlsUrl, "ptz_stream");
-    } else if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-      hls.loadSource(hlsUrl + "?t=" + Date.now());
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(() => {});
-        if (overlay) overlay.style.display = "none";
-      });
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = hlsUrl + "?t=" + Date.now();
-      video.play().catch(() => {});
-    }
   }
 
-  function initPtzControls() {
+  function showStatusToast(msg, isError = false) {
+    let toast = document.getElementById("ptzStatusToast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "ptzStatusToast";
+      toast.style.cssText = "position:fixed; bottom:20px; right:20px; background:rgba(18,24,38,0.95); border:1px solid var(--accent); color:var(--text); padding:8px 16px; border-radius:8px; font-size:0.78rem; z-index:99999; box-shadow:0 4px 16px rgba(0,0,0,0.5); pointer-events:none; transition:opacity 0.3s ease;";
+      document.body.appendChild(toast);
+    }
+    toast.style.borderColor = isError ? "var(--danger)" : "var(--accent)";
+    toast.innerHTML = (isError ? "⚠️ " : "⚡ ") + msg;
+    toast.style.opacity = "1";
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => {
+      toast.style.opacity = "0";
+    }, 2000);
+  }
+
+  function bindPtzControls() {
     const speedSlider = document.getElementById("ptzSpeedSlider");
     const speedVal = document.getElementById("ptzSpeedVal");
     if (speedSlider) {
@@ -169,6 +239,7 @@
         document.querySelectorAll(".ptz-mode-btn").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         currentMode = btn.getAttribute("data-mode");
+        showStatusToast(`Control mode: ${currentMode === "continuous" ? "Hold to Move" : "Single Click (Nudge)"}`);
       });
     });
 
@@ -178,19 +249,24 @@
         document.querySelectorAll(".ptz-stream-btn").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         currentStreamType = btn.getAttribute("data-stream");
+        showStatusToast(`Switching to ${currentStreamType === "main" ? "HD 1080p Main Stream" : "SD Fast Sub Stream"}...`);
         const select = document.getElementById("ptzCameraSelect");
         const idx = select ? parseInt(select.value, 10) : 0;
         playPtzStream(idx);
       });
     });
 
+    // D-Pad Direction Buttons
     document.querySelectorAll(".ptz-dpad-btn[data-dir]").forEach((btn) => {
       const dir = btn.getAttribute("data-dir");
       bindAction(btn, () => ptzMove(dir), () => ptzStop());
     });
 
     const stopBtn = document.getElementById("ptzBtnStop");
-    if (stopBtn) stopBtn.addEventListener("click", () => ptzStop());
+    if (stopBtn) stopBtn.addEventListener("click", () => {
+      ptzStop();
+      showStatusToast("Camera Stopped");
+    });
 
     const btnZoomIn = document.getElementById("ptzBtnZoomIn");
     const btnZoomOut = document.getElementById("ptzBtnZoomOut");
@@ -202,8 +278,12 @@
       btnAddPreset.addEventListener("click", async () => {
         const input = document.getElementById("ptzPresetNameInput");
         const name = input.value.trim();
-        if (!name || !activePtzCamera) return;
+        if (!name || !activePtzCamera) {
+          showStatusToast("Please enter a preset name", true);
+          return;
+        }
         try {
+          showStatusToast(`Saving preset "${name}"...`);
           const res = await fetch("/api/ptz/presets/set", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -211,21 +291,24 @@
               preset_name: name,
               ip: activePtzCamera.ip,
               port: activePtzCamera.port,
-              username: activePtzCamera.username,
-              password: activePtzCamera.password,
+              username: activePtzCamera.username || "admin",
+              password: activePtzCamera.password || "",
             }),
           });
           if (res.ok) {
             input.value = "";
+            showStatusToast(`Preset "${name}" Saved!`);
             await loadPtzPresets();
+          } else {
+            showStatusToast("Failed to save preset", true);
           }
         } catch (e) {
-          console.error("Set Preset Error:", e);
+          showStatusToast("Preset error: " + e.message, true);
         }
       });
     }
 
-    // Add New Camera Button
+    // Add New Camera Modal
     const btnOpenAddCam = document.getElementById("ptzBtnOpenAddCam");
     if (btnOpenAddCam) {
       btnOpenAddCam.addEventListener("click", () => {
@@ -266,6 +349,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(ptzCameras),
           });
+          showStatusToast(`Added ${label}!`);
         } catch (e) {
           console.error("Failed to save PTZ cameras:", e);
         }
@@ -316,13 +400,14 @@
   async function ptzMove(direction) {
     if (!activePtzCamera) return;
     isMoving = true;
+    showStatusToast(`Moving ${direction.toUpperCase()} (${Math.round(currentSpeed * 100)}%)...`);
     const payload = {
       direction: direction,
       speed: currentSpeed,
       ip: activePtzCamera.ip,
       port: activePtzCamera.port,
-      username: activePtzCamera.username,
-      password: activePtzCamera.password,
+      username: activePtzCamera.username || "admin",
+      password: activePtzCamera.password || "",
     };
     if (currentMode === "continuous") {
       try {
@@ -351,13 +436,14 @@
   async function ptzZoom(direction) {
     if (!activePtzCamera) return;
     isMoving = true;
+    showStatusToast(`Zoom ${direction.toUpperCase()}...`);
     const payload = {
       direction: direction,
       speed: currentSpeed,
       ip: activePtzCamera.ip,
       port: activePtzCamera.port,
-      username: activePtzCamera.username,
-      password: activePtzCamera.password,
+      username: activePtzCamera.username || "admin",
+      password: activePtzCamera.password || "",
     };
     if (currentMode === "continuous") {
       try {
@@ -393,8 +479,8 @@
         body: JSON.stringify({
           ip: activePtzCamera.ip,
           port: activePtzCamera.port,
-          username: activePtzCamera.username,
-          password: activePtzCamera.password,
+          username: activePtzCamera.username || "admin",
+          password: activePtzCamera.password || "",
         }),
       });
     } catch (e) {
@@ -408,24 +494,29 @@
     try {
       const res = await fetch(
         `/api/ptz/presets?ip=${activePtzCamera.ip}&port=${activePtzCamera.port}&username=${encodeURIComponent(
-          activePtzCamera.username || ""
+          activePtzCamera.username || "admin"
         )}&password=${encodeURIComponent(activePtzCamera.password || "")}`
       );
       const data = await res.json();
-      const presets = data.presets || [];
-      if (presets.length === 0) {
+      let presets = data.presets || [];
+      
+      // Filter custom named presets and top presets so we don't render 255 items
+      const customPresets = presets.filter(p => p.name && !p.name.startsWith("PRESET_"));
+      const displayPresets = customPresets.length > 0 ? customPresets : presets.slice(0, 6);
+
+      if (displayPresets.length === 0) {
         listEl.innerHTML =
-          '<div style="color: var(--muted); font-size: 0.75rem; text-align: center; padding: 10px;">No presets saved yet.</div>';
+          '<div style="color: var(--muted); font-size: 0.75rem; text-align: center; padding: 8px;">No custom presets saved. Click "Save" to add one.</div>';
         return;
       }
-      listEl.innerHTML = presets
+      listEl.innerHTML = displayPresets
         .map(
           (p) => `
-        <div class="preset-item" style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.2); border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:0.78rem;">
-          <span>📍 ${escapeHtml(p.name || "Preset " + p.token)}</span>
+        <div class="preset-item" style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.3); border:1px solid var(--border); padding:5px 10px; border-radius:6px; font-size:0.75rem;">
+          <span style="font-weight:500;">📍 ${escapeHtml(p.name || "Preset " + p.token)}</span>
           <div style="display:flex; gap:6px;">
-            <button class="btn-secondary" style="padding:2px 8px; font-size:0.7rem; color:var(--accent);" onclick="window.ptzGotoPreset('${p.token}')">Goto</button>
-            <button class="btn-danger" style="padding:2px 6px; font-size:0.7rem;" onclick="window.ptzDeletePreset('${p.token}')">✕</button>
+            <button class="btn-secondary" style="padding:2px 8px; font-size:0.68rem; color:var(--accent);" onclick="window.ptzGotoPreset('${p.token}')">Goto</button>
+            <button class="btn-danger" style="padding:2px 6px; font-size:0.68rem;" onclick="window.ptzDeletePreset('${p.token}')">✕</button>
           </div>
         </div>
       `
@@ -439,6 +530,7 @@
   window.ptzGotoPreset = async function (token) {
     if (!activePtzCamera) return;
     try {
+      showStatusToast(`Moving to Preset ${token}...`);
       await fetch("/api/ptz/presets/goto", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -447,8 +539,8 @@
           speed: 1.0,
           ip: activePtzCamera.ip,
           port: activePtzCamera.port,
-          username: activePtzCamera.username,
-          password: activePtzCamera.password,
+          username: activePtzCamera.username || "admin",
+          password: activePtzCamera.password || "",
         }),
       });
     } catch (e) {
@@ -459,25 +551,30 @@
   window.ptzDeletePreset = async function (token) {
     if (!activePtzCamera) return;
     try {
+      showStatusToast(`Deleting preset ${token}...`);
       await fetch(
         `/api/ptz/presets/${token}?ip=${activePtzCamera.ip}&port=${activePtzCamera.port}&username=${encodeURIComponent(
-          activePtzCamera.username || ""
+          activePtzCamera.username || "admin"
         )}&password=${encodeURIComponent(activePtzCamera.password || "")}`,
         { method: "DELETE" }
       );
       await loadPtzPresets();
+      showStatusToast("Preset deleted");
     } catch (e) {
       console.error("Delete Preset Error:", e);
     }
   };
 
-  function initPtzTelemetry() {
+  let telemetryTimer = null;
+  function startTelemetryPolling() {
+    if (telemetryTimer) return;
     async function poll() {
-      if (document.getElementById("tab-ptz") && document.getElementById("tab-ptz").style.display !== "none" && activePtzCamera) {
+      const tabPtz = document.getElementById("tab-ptz");
+      if (tabPtz && tabPtz.style.display !== "none" && activePtzCamera) {
         try {
           const res = await fetch(
             `/api/ptz/status?ip=${activePtzCamera.ip}&port=${activePtzCamera.port}&username=${encodeURIComponent(
-              activePtzCamera.username || ""
+              activePtzCamera.username || "admin"
             )}&password=${encodeURIComponent(activePtzCamera.password || "")}`
           );
           const data = await res.json();
@@ -492,7 +589,8 @@
         } catch (e) {}
       }
     }
-    setInterval(poll, 2000);
+    telemetryTimer = setInterval(poll, 2000);
+    poll();
   }
 
   window.showPtzApiModal = function () {
@@ -513,5 +611,14 @@
   function escapeHtml(str) {
     if (!str) return "";
     return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // Auto initialize when DOM is ready
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      if (!isControlsBound) bindPtzControls();
+    });
+  } else {
+    bindPtzControls();
   }
 })();
