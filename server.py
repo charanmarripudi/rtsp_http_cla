@@ -2555,7 +2555,7 @@ try:
             try:
                 with open(PTZ_CAMERAS_FILE, "r") as f:
                     data = json.load(f)
-                    if isinstance(data, list) and len(data) > 0: return data
+                    if isinstance(data, list): return data
             except: pass
         return [
             {
