@@ -2571,6 +2571,8 @@ try:
         return {"status": "success", "cameras": payload}
 
     def parse_rtsp_for_onvif(rtsp_url):
+        import re
+        import time
         rtsp_url = rtsp_url.strip()
         match = re.search(r'rtsp://(?:([^:]+)(?::([^@]*))?@)?([^:/]+)(?::(\d+))?', rtsp_url)
         if match:
