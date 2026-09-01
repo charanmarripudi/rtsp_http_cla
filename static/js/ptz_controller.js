@@ -459,6 +459,57 @@
         }
       };
     }
+
+    const btnRemoveActive = document.getElementById("ptz-btn-remove-active");
+    if (btnRemoveActive) {
+      btnRemoveActive.onclick = async () => {
+        const select = document.getElementById("ptzCameraSelect");
+        const idx = select ? parseInt(select.value, 10) : 0;
+        if (!ptzCameras[idx]) {
+          showStatusToast("No camera selected to remove", true);
+          return;
+        }
+
+        const camToRemove = ptzCameras[idx];
+        if (!confirm(`Are you sure you want to remove ${camToRemove.label || 'this camera'}?`)) {
+          return;
+        }
+
+        try {
+          showStatusToast("Removing camera...");
+          if (camToRemove.id) {
+            await fetch(`/api/ptz/cameras/${camToRemove.id}`, { method: "DELETE" }).catch(() => {});
+          }
+          ptzCameras.splice(idx, 1);
+
+          // Save remaining cameras to backend
+          const res = await fetch("/api/ptz/cameras", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(ptzCameras),
+          });
+          const data = await res.json();
+          if (data.status === "success" && data.cameras) {
+            ptzCameras = data.cameras;
+          }
+
+          renderPtzCameraSelect();
+          if (ptzCameras.length > 0) {
+            const nextIdx = Math.min(idx, ptzCameras.length - 1);
+            if (select) select.value = nextIdx;
+            switchActivePtzCamera(nextIdx);
+          } else {
+            activePtzCamera = null;
+            const video = document.getElementById("ptzLiveVideo");
+            if (video) video.src = "";
+            showStatusToast("All PTZ cameras removed.");
+          }
+          showStatusToast("Camera removed successfully!");
+        } catch (e) {
+          showStatusToast("Error removing camera: " + e.message, true);
+        }
+      };
+    }
   }
 
   function bindAction(el, startFn, stopFn) {
