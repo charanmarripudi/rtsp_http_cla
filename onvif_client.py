@@ -106,7 +106,8 @@ class OnvifPtzClient:
         else:
             return {"status": "error", "message": f"Unknown zoom direction '{direction}'"}
 
-        body = f"""
+        # Try ContinuousMove first for hold-to-zoom
+        body_cont = f"""
         <tptz:ContinuousMove>
           <tptz:ProfileToken>{self.profile_token}</tptz:ProfileToken>
           <tptz:Velocity>
@@ -115,10 +116,36 @@ class OnvifPtzClient:
           </tptz:Velocity>
         </tptz:ContinuousMove>"""
         with self._lock:
-            status, resp = self._soap_request(self.ptz_url, body)
+            status, resp = self._soap_request(self.ptz_url, body_cont)
             if status == 200:
                 return {"status": "success", "action": "zoom", "direction": direction, "speed": speed, "http_status": status}
-            return {"status": "error", "action": "zoom", "message": "ONVIF request failed", "http_status": status}
+            
+            # Fallback: ContinuousMove without PanTilt tag
+            body_cont_simple = f"""
+            <tptz:ContinuousMove>
+              <tptz:ProfileToken>{self.profile_token}</tptz:ProfileToken>
+              <tptz:Velocity>
+                <tt:Zoom x="{z:.2f}" xmlns:tt="http://www.onvif.org/ver10/schema"/>
+              </tptz:Velocity>
+            </tptz:ContinuousMove>"""
+            status2, resp2 = self._soap_request(self.ptz_url, body_cont_simple)
+            if status2 == 200:
+                return {"status": "success", "action": "zoom", "direction": direction, "speed": speed, "http_status": status2}
+            
+            # Fallback: RelativeMove
+            step_z = z * 0.2
+            body_rel = f"""
+            <tptz:RelativeMove>
+              <tptz:ProfileToken>{self.profile_token}</tptz:ProfileToken>
+              <tptz:Translation>
+                <tt:Zoom x="{step_z:.2f}" xmlns:tt="http://www.onvif.org/ver10/schema"/>
+              </tptz:Translation>
+            </tptz:RelativeMove>"""
+            status3, resp3 = self._soap_request(self.ptz_url, body_rel)
+            if status3 == 200:
+                return {"status": "success", "action": "zoom", "direction": direction, "speed": speed, "http_status": status3}
+
+            return {"status": "error", "action": "zoom", "message": "ONVIF zoom request failed", "http_status": status}
 
     def stop(self):
         body = f"""
@@ -140,6 +167,29 @@ class OnvifPtzClient:
         return self.stop()
 
     def zoom_step(self, direction: str, speed: float = 0.5, duration: float = 0.8):
+        speed = max(0.05, min(1.0, float(speed)))
+        z = 0.0
+        dir_lower = direction.lower().strip()
+        if dir_lower in ["in", "zoomin"]: z = speed
+        elif dir_lower in ["out", "zoomout"]: z = -speed
+        else:
+            return {"status": "error", "message": f"Unknown zoom direction '{direction}'"}
+
+        # Try RelativeMove first for single-click step zoom
+        step_z = z * 0.3
+        body_rel = f"""
+        <tptz:RelativeMove>
+          <tptz:ProfileToken>{self.profile_token}</tptz:ProfileToken>
+          <tptz:Translation>
+            <tt:Zoom x="{step_z:.2f}" xmlns:tt="http://www.onvif.org/ver10/schema"/>
+          </tptz:Translation>
+        </tptz:RelativeMove>"""
+        with self._lock:
+            status, resp = self._soap_request(self.ptz_url, body_rel)
+            if status == 200:
+                return {"status": "success", "action": "zoom_step", "direction": direction, "mode": "relative", "http_status": 200}
+
+        # Fallback to ContinuousMove pulse if RelativeMove is unsupported
         duration = max(0.3, min(3.0, float(duration)))
         self.zoom(direction, speed)
         time.sleep(duration)
