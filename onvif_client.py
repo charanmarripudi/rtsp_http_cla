@@ -105,6 +105,7 @@ class OnvifPtzClient:
         <tptz:ContinuousMove>
           <tptz:ProfileToken>{self.profile_token}</tptz:ProfileToken>
           <tptz:Velocity>
+            <tt:PanTilt x="0.00" y="0.00" xmlns:tt="http://www.onvif.org/ver10/schema"/>
             <tt:Zoom x="{z:.2f}" xmlns:tt="http://www.onvif.org/ver10/schema"/>
           </tptz:Velocity>
         </tptz:ContinuousMove>"""
@@ -129,8 +130,8 @@ class OnvifPtzClient:
         time.sleep(duration)
         return self.stop()
 
-    def zoom_step(self, direction: str, speed: float = 0.5, duration: float = 0.35):
-        duration = max(0.1, min(3.0, float(duration)))
+    def zoom_step(self, direction: str, speed: float = 0.5, duration: float = 0.8):
+        duration = max(0.3, min(3.0, float(duration)))
         self.zoom(direction, speed)
         time.sleep(duration)
         return self.stop()

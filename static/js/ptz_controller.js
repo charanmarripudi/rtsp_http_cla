@@ -839,7 +839,7 @@
         console.error("PTZ Zoom Error:", e);
       }
     } else {
-      payload.duration = currentDuration;
+      payload.duration = Math.max(0.8, currentDuration * 2.0);
       try {
         await fetch("/api/ptz/zoom-step", {
           method: "POST",
