@@ -526,7 +526,12 @@
             body: JSON.stringify(ptzCameras),
           });
           const data = await res.json();
-          if (data.status === "success") {
+          if (data.status === "success" && data.cameras) {
+            ptzCameras = data.cameras;
+            localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
+            renderPtzCameraSelect();
+            renderPtzCamerasConfigList();
+            await switchActivePtzCamera(0);
             showStatusToast("PTZ Cameras Saved Successfully!");
           }
         } catch (e) {
@@ -534,45 +539,6 @@
         }
       });
     }
-
-    // Inline Manage PTZ Cameras Handlers (Location-Style)
-    const btnAddRow = document.getElementById("ptz-btn-add-row");
-    if (btnAddRow) {
-      btnAddRow.onclick = () => {
-        ptzCameras.push({
-          rtsp: "",
-          label: `PTZ Camera ${ptzCameras.length + 1}`
-        });
-        renderPtzCamerasConfigList();
-      };
-    }
-
-  function syncPtzToOfflineStreams(cams) {
-    try {
-      let offline = [];
-      const cached = localStorage.getItem("offline_streams");
-      if (cached) {
-        offline = JSON.parse(cached);
-        if (!Array.isArray(offline)) offline = [];
-      }
-      cams.forEach(cam => {
-        const u = (cam.rtsp || "").trim();
-        if (u) {
-          const exists = offline.some(item => (item.rtsp || "").trim() === u);
-          if (!exists) {
-            offline.push({
-              rtsp: u,
-              location: cam.label || "PTZ Camera",
-              device_id: "RPI-001",
-              device_ip: "192.168.96.36",
-              device_status: "online"
-            });
-          }
-        }
-      });
-      localStorage.setItem("offline_streams", JSON.stringify(offline));
-    } catch (_) {}
-  }
 
   const btnSaveList = document.getElementById("ptz-btn-save-list");
   if (btnSaveList) {
@@ -610,7 +576,6 @@
         if (data.status === "success" && data.cameras) {
           ptzCameras = data.cameras;
           localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
-          syncPtzToOfflineStreams(ptzCameras);
           renderPtzCameraSelect();
           renderPtzCamerasConfigList();
           await switchActivePtzCamera(0);
