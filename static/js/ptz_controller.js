@@ -279,14 +279,14 @@
     }
   }
 
-  window.reloadPtzStream = function () {
+  window.reloadPtzStream = async function () {
     const select = document.getElementById("ptzCameraSelect");
     const idx = select ? parseInt(select.value, 10) : 0;
-    playPtzStream(idx);
     showStatusToast("Reloading Live Feed...");
+    await playPtzStream(idx);
   };
 
-  function playPtzStream(camIndex) {
+  async function playPtzStream(camIndex) {
     const video = document.getElementById("ptzLiveVideo");
     if (!video || !activePtzCamera) return;
 
@@ -294,15 +294,18 @@
     
     // Use exact RTSP URL entered for this camera
     let rtspUrl = activePtzCamera.rtsp;
+    if (!rtspUrl) return;
 
     const hlsUrl = `/hls/stream${cid}_raw/playlist.m3u8`;
 
-    // Ensure backend raw stream is running for this RTSP URL
-    fetch("/api/ptz/cameras/start-stream", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cid: cid, rtsp: rtspUrl }),
-    }).catch(() => {});
+    // Ensure backend raw stream is running for this RTSP URL before attaching HLS player
+    try {
+      await fetch("/api/ptz/cameras/start-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cid: cid, rtsp: rtspUrl }),
+      });
+    } catch (_) {}
 
     // Ensure video element properties
     delete video.dataset.currentUrl;
