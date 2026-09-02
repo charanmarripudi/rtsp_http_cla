@@ -761,7 +761,7 @@ def monitor_raw_streams_loop():
             print(f"[MONITOR] Error: {e}")
         time.sleep(5)
 
-def stop_raw_stream(i, protect_rtsps=None):
+def stop_raw_stream(i, **kwargs):
     cid = str(i)
     if cid in running:
         proc_info = running.get(cid)
@@ -769,29 +769,15 @@ def stop_raw_stream(i, protect_rtsps=None):
             _async_kill(proc_info.get("proc"))
         running.pop(cid, None)
         _clean_camera_dirs(cid)
-    # Check if it's in our cid_to_rtsp
-    if cid in cid_to_rtsp:
-        rtsp = cid_to_rtsp[cid]
-        if protect_rtsps and rtsp in protect_rtsps:
-            # Do NOT kill the FFmpeg process as this RTSP stream is still needed by other cameras
-            cid_to_rtsp.pop(cid, None)
-            return
-        # Check if this is the last cid using this rtsp
-        count = sum(1 for k, v in cid_to_rtsp.items() if v == rtsp)
-        if count <= 1:
-            cached = rtsp_cache.pop(rtsp, None)
-            if cached:
-                proc = cached["proc"]
-                if proc.poll() is None:
-                    _async_kill(proc)
-                # Clean up the main dir
-                sd = cached["sd"]
-                import shutil
-                try:
-                    shutil.rmtree(sd)
-                except:
-                    pass
-        cid_to_rtsp.pop(cid, None)
+
+    if cid in raw_streams_procs:
+        proc = raw_streams_procs[cid].get("proc")
+        if proc:
+            try:
+                proc.kill()
+                proc.wait(timeout=2.0)
+            except: pass
+        del raw_streams_procs[cid]
 
 @app.on_event("startup")
 async def startup_event():
