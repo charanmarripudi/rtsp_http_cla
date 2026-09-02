@@ -1885,29 +1885,34 @@ def delete_location(
     location: Optional[str] = Query(default=None),
     id: Optional[str] = Query(default=None),
     location_id: Optional[str] = Query(default=None),
+    index: Optional[int] = Query(default=None),
     d: Optional[dict] = Body(default=None)
 ):
     """
     Flexible delete location API.
-    Supports Query parameters or JSON body. Matches by location name, id, or location_id.
+    Supports Query parameters or JSON body. Matches by location name, id, location_id, or index.
     """
     global _locations_cache, _streams_metadata_cache, _streams_location_index_cache
     
     body = d or {}
     target_name = str(location or body.get("location") or "").strip().lower()
     target_id = str(id or location_id or body.get("id") or body.get("location_id") or "").strip()
+    target_idx = index if index is not None else body.get("index")
 
     current_locations = read_locations()
     deleted_locations = []
 
-    for loc in current_locations:
-        loc_id = str(loc.get("id") or "").strip()
-        loc_name = str(loc.get("location") or "").strip().lower()
+    if target_idx is not None and isinstance(target_idx, int) and 0 <= target_idx < len(current_locations):
+        deleted_locations.append(current_locations[target_idx])
+    else:
+        for loc in current_locations:
+            loc_id = str(loc.get("id") or "").strip()
+            loc_name = str(loc.get("location") or "").strip().lower()
 
-        if target_id and loc_id == target_id:
-            deleted_locations.append(loc)
-        elif target_name and loc_name == target_name:
-            deleted_locations.append(loc)
+            if target_id and loc_id == target_id:
+                deleted_locations.append(loc)
+            elif target_name and loc_name == target_name:
+                deleted_locations.append(loc)
 
     if deleted_locations:
         deleted_ids = {str(loc.get("id")).strip() for loc in deleted_locations if loc.get("id")}

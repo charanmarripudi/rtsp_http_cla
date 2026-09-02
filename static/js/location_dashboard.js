@@ -456,10 +456,11 @@ class LocationDashboard {
         return row;
     }
 
-    removeLocation(item, idx) {
+    async removeLocation(item, idx) {
         const id = this.locationId(idx, item);
+        const locName = item ? item.location : "";
         this.locations.splice(idx, 1);
-        this.streams = this.streams.filter(stream => stream.location_id !== id && stream.location !== item.location);
+        this.streams = this.streams.filter(stream => stream.location_id !== id && stream.location !== locName);
 
         const streamIds = this.streams.map(s => String(s.id));
         Object.keys(this.cameraModels).forEach(cid => {
@@ -467,10 +468,18 @@ class LocationDashboard {
         });
 
         this.renderLocationForm();
-        this.renderLocationWidgets();
+        this.renderLocationWidgets(true);
 
-        this.saveLocations(false);
-        this.saveCameras(false);
+        try {
+            await fetch(`/api/locations?id=${encodeURIComponent(id || '')}&location=${encodeURIComponent(locName || '')}&index=${idx}`, {
+                method: "DELETE"
+            });
+        } catch (err) {
+            console.error("Delete location API call failed:", err);
+        }
+
+        await this.saveLocations(false);
+        await this.saveCameras(false);
     }
 
     renderLocationWidgets(force = false) {
