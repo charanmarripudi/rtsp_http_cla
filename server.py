@@ -2649,21 +2649,6 @@ try:
 
     def sync_ptz_to_streams(cams):
         try:
-            active_ptz_urls = {(c.get("rtsp") or "").strip() for c in cams if isinstance(c, dict) and (c.get("rtsp") or "").strip()}
-
-            conf_urls = []
-            if os.path.exists(STREAMS_CONF):
-                with open(STREAMS_CONF) as fp:
-                    conf_urls = [line.strip() for line in fp if line.strip()]
-
-            updated_conf = list(conf_urls)
-            for u in active_ptz_urls:
-                if u not in updated_conf:
-                    updated_conf.append(u)
-
-            with open(STREAMS_CONF, "w") as fp:
-                fp.write("\n".join(updated_conf) + "\n")
-
             json_streams = []
             if os.path.exists(STREAMS_JSON):
                 try:
@@ -2690,6 +2675,11 @@ try:
                     existing_json_urls.add(u)
 
             write_json_atomic(STREAMS_JSON, updated_json)
+
+            # STREAMS_CONF is ALWAYS strictly derived from STREAMS_JSON to guarantee 1-to-1 index alignment
+            conf_urls = [entry["rtsp"].strip() for entry in updated_json if isinstance(entry, dict) and entry.get("rtsp")]
+            with open(STREAMS_CONF, "w") as fp:
+                fp.write("\n".join(conf_urls) + "\n")
 
             global _streams_metadata_cache, _streams_location_index_cache
             with config_cache_lock:
