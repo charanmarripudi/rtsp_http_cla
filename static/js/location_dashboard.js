@@ -456,7 +456,7 @@ class LocationDashboard {
         return row;
     }
 
-    removeLocation(item, idx) {
+    async removeLocation(item, idx) {
         const id = this.locationId(idx, item);
         const locName = item ? item.location : "";
 
@@ -465,9 +465,15 @@ class LocationDashboard {
         this.renderLocationForm();
 
         // Non-blocking background API call
-        fetch(`/api/locations?id=${encodeURIComponent(id || '')}&location=${encodeURIComponent(locName || '')}&index=${idx}`, {
-            method: "DELETE"
-        }).catch(err => console.error("Delete location error:", err));
+        try {
+            await fetch(`/api/locations?id=${encodeURIComponent(id || '')}&location=${encodeURIComponent(locName || '')}&index=${idx}`, {
+                method: "DELETE"
+            });
+        } catch (err) {
+            console.error("Delete location error:", err);
+        }
+
+        this.saveLocations(false);
     }
 
     renderLocationWidgets(force = false) {

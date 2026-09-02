@@ -658,75 +658,43 @@ def check_device_online(ip: str, timeout: float = 3.0, expected_device_id: Optio
 # CAMERA STATE
 # ─────────────────────────────────────────────────────────────
 running = {}
-# Cache: rtsp_url → process info:
-rtsp_cache = {}  # key: rtsp url (normalized) → {"proc": subprocess, "sd": stream_dir}
-# Map from camera id to rtsp url (to share the same segments
-cid_to_rtsp = {}
+raw_streams_procs = {}
 
 def start_raw_stream(i, u):
-    # Normalize RTSP URL to use as cache key
-    normalized_rtsp = u.strip()
     cid = str(i)
-    cid_to_rtsp[cid] = normalized_rtsp
-    
-    # Check if we already have a running FFmpeg for this RTSP
-    if normalized_rtsp in rtsp_cache:
-        cached = rtsp_cache[normalized_rtsp]
-        if cached["proc"].poll() is None:
-            # Still running, just symlink our stream dir to cached dir
-            our_sd = os.path.join(HLS_DIR, f"stream{cid}_raw")
-            cached_sd = cached["sd"]
-            # Remove old dir if exists
-            import shutil
-            if os.path.lexists(our_sd):
-                if os.path.islink(our_sd):
-                    os.unlink(our_sd)
-                elif os.path.isdir(our_sd):
-                    shutil.rmtree(our_sd)
-                else:
-                    os.remove(our_sd)
-            # Symlink
-            os.symlink(os.path.basename(cached_sd), our_sd)
+    normalized_rtsp = u.strip()
+
+    if cid in raw_streams_procs:
+        curr = raw_streams_procs[cid]
+        if curr["proc"].poll() is None and curr["rtsp"] == normalized_rtsp:
             return
         else:
-            # Proc died, remove from cache
-            del rtsp_cache[normalized_rtsp]
-    
-    # New RTSP, start new FFmpeg
+            try:
+                curr["proc"].kill()
+            except: pass
+            del raw_streams_procs[cid]
+
     sd = os.path.join(HLS_DIR, f"stream{cid}_raw")
-    # Clean old segments but do not delete the parent directory to prevent 404s
     import shutil
     if os.path.lexists(sd):
-        if os.path.islink(sd):
-            os.unlink(sd)
-            os.makedirs(sd, exist_ok=True)
-        else:
-            for f in glob.glob(os.path.join(sd, "*")):
-                try:
-                    if os.path.isdir(f): shutil.rmtree(f)
-                    else: os.remove(f)
-                except: pass
+        for f in glob.glob(os.path.join(sd, "*")):
+            try:
+                if os.path.isdir(f): shutil.rmtree(f)
+                else: os.remove(f)
+            except: pass
     else:
         os.makedirs(sd, exist_ok=True)
-    # Step 1: Clean old files in raw stream dir
-    for f in glob.glob(os.path.join(sd, "*")):
-        try: os.remove(f)
-        except: pass
-    # Step 2: Log file
+    
     log_file = os.path.join(sd, "ffmpeg.log")
     try: os.remove(log_file)
     except: pass
     session_id = int(time.time())
-    import platform
-    is_rpi_sys = platform.system() == "Linux" and platform.machine() in ["aarch64", "armv7l"]
 
-    # Use optimized software libx264 to guarantee browser compatibility (SPS/PPS headers)
-    # on both Raspberry Pi and local environments, while keeping CPU load low via 12 FPS and fast bilinear scaling.
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
         "-rtsp_transport", "tcp",
         "-probesize", "1.5M", "-analyzeduration", "1.5M",
-        "-i", u,
+        "-i", normalized_rtsp,
         "-an",
         "-vf", "scale=1280:720:flags=fast_bilinear,format=yuv420p,setdar=16/9",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
@@ -743,22 +711,9 @@ def start_raw_stream(i, u):
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started at 1280x720 (720p HD), 12 FPS, 1000k bitrate (Optimized software libx264)")
+    print(f"[LOG] Camera {cid} raw stream started at 1280x720 (720p HD), 12 FPS ({normalized_rtsp})")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
-    rtsp_cache[normalized_rtsp] = {"proc": proc, "sd": sd, "start_time": int(time.time())}
-    # Also, symlink any other cids already mapped to this rtsp
-    for other_cid, other_rtsp in list(cid_to_rtsp.items()):
-        if other_rtsp == normalized_rtsp and other_cid != cid:
-            other_sd = os.path.join(HLS_DIR, f"stream{other_cid}_raw")
-            import shutil
-            if os.path.lexists(other_sd):
-                if os.path.islink(other_sd):
-                    os.unlink(other_sd)
-                elif os.path.isdir(other_sd):
-                    shutil.rmtree(other_sd)
-                else:
-                    os.remove(other_sd)
-            os.symlink(os.path.basename(sd), other_sd)
+    raw_streams_procs[cid] = {"proc": proc, "rtsp": normalized_rtsp, "sd": sd, "start_time": int(time.time())}
 
 def monitor_raw_streams_loop():
     time.sleep(10)
@@ -768,27 +723,16 @@ def monitor_raw_streams_loop():
             for i, u in enumerate(conf_urls):
                 cid = str(i)
                 normalized_rtsp = u.strip()
+                if not normalized_rtsp: continue
                 
-                # Check if this camera or any other camera sharing this RTSP URL has detection active
-                rtsp_detection_active = False
-                for other_cid in list(running.keys()):
-                    try:
-                        other_idx = int(other_cid)
-                        if other_idx < len(conf_urls):
-                            other_rtsp = conf_urls[other_idx].strip()
-                            if other_rtsp == normalized_rtsp:
-                                if running[other_cid].get("proc") and running[other_cid]["proc"].poll() is None:
-                                    rtsp_detection_active = True
-                                    break
-                    except: pass
-                
-                if rtsp_detection_active:
+                # Check if detection is active on this camera
+                if cid in running and running[cid].get("proc") and running[cid]["proc"].poll() is None:
                     continue
-                
+
                 is_running = False
-                if normalized_rtsp in rtsp_cache:
-                    cached = rtsp_cache[normalized_rtsp]
-                    if cached["proc"].poll() is None:
+                if cid in raw_streams_procs:
+                    curr = raw_streams_procs[cid]
+                    if curr["proc"].poll() is None and curr["rtsp"] == normalized_rtsp:
                         is_running = True
                 
                 if not is_running:
@@ -1890,7 +1834,7 @@ def delete_location(
 ):
     """
     Flexible delete location API.
-    Supports Query parameters or JSON body. Matches by location name, id, location_id, or index.
+    Supports Query parameters or JSON body. Matches by index, location name, id, or location_id.
     """
     global _locations_cache, _streams_metadata_cache, _streams_location_index_cache
     
@@ -1920,7 +1864,7 @@ def delete_location(
 
         final_locations = [
             loc for loc in current_locations
-            if str(loc.get("id")).strip() not in deleted_ids and str(loc.get("location")).strip().lower() not in deleted_names
+            if loc not in deleted_locations and str(loc.get("id")).strip() not in deleted_ids and str(loc.get("location")).strip().lower() not in deleted_names
         ]
 
         write_json_atomic(LOCATIONS_JSON, final_locations)
