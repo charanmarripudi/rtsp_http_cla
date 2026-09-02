@@ -22,26 +22,26 @@
   };
 
   async function loadPtzCameras() {
-    // 1. Instantly load from localStorage cache if available
+    // 1. Load cached first for instant response
     try {
       const cached = localStorage.getItem("ptz_cameras_cache");
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) {
           ptzCameras = parsed;
-          renderPtzCameraSelect();
-          renderPtzCamerasConfigList();
         }
       }
     } catch (_) {}
 
-    // 2. Fetch latest from backend API
+    // 2. Fetch latest from backend API (single source of truth)
     try {
       const res = await fetch("/api/ptz/cameras");
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        ptzCameras = data;
-        localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          ptzCameras = data;
+          localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
+        }
       }
     } catch (e) {
       console.warn("Failed to fetch PTZ cameras from API:", e);
@@ -65,9 +65,9 @@
 
     renderPtzCameraSelect();
     renderPtzCamerasConfigList();
-    if (ptzCameras.length > 0 && !activePtzCamera) {
-      switchActivePtzCamera(0);
-    }
+
+    const activeIdx = activePtzCamera ? ptzCameras.findIndex(c => c.id === activePtzCamera.id) : 0;
+    await switchActivePtzCamera(activeIdx >= 0 ? activeIdx : 0);
   }
 
   function renderPtzCamerasConfigList() {
@@ -96,7 +96,6 @@
       listEl.appendChild(div);
     });
 
-    // Live update memory & localStorage on input
     listEl.querySelectorAll(".ptz-rtsp-input").forEach(input => {
       input.oninput = (e) => {
         const i = parseInt(e.target.getAttribute("data-index"), 10);
@@ -179,7 +178,9 @@
     if (!ptzCameras[index]) return;
     activePtzCamera = ptzCameras[index];
 
-    // Update Header labels
+    const select = document.getElementById("ptzCameraSelect");
+    if (select) select.value = String(index);
+
     const ipLabel = document.getElementById("ptzCameraIpLabel");
     if (ipLabel) {
       ipLabel.textContent = `${activePtzCamera.ip}:${activePtzCamera.port || 8888} (ONVIF)`;
@@ -190,14 +191,87 @@
       titleEl.textContent = activePtzCamera.label || "AMBICAM PTZ Preview";
     }
 
-    // Fetch dynamic main/sub streams from ONVIF in background
     fetchDynamicStreams();
-
-    // Start video stream for this PTZ camera
-    playPtzStream(index);
-
-    // Load presets for this specific PTZ camera
+    await playPtzStream(index);
     loadPtzPresets();
+  }
+
+  async function playPtzStream(camIndex) {
+    const video = document.getElementById("ptzLiveVideo");
+    if (!video || !activePtzCamera) return;
+
+    const cid = `ptz${camIndex}`;
+    let rtspUrl = activePtzCamera.rtsp;
+    const hlsUrl = `/hls/stream${cid}_raw/playlist.m3u8`;
+
+    try {
+      await fetch("/api/ptz/cameras/start-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cid: cid, rtsp: rtspUrl }),
+      });
+    } catch (_) {}
+
+    delete video.dataset.currentUrl;
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    video.setAttribute("muted", "");
+    video.setAttribute("playsinline", "");
+    video.setAttribute("autoplay", "");
+
+    if (ptzHls) {
+      try {
+        ptzHls.detachMedia();
+        ptzHls.destroy();
+      } catch (_) {}
+      ptzHls = null;
+    }
+
+    const streamUrl = hlsUrl + "?t=" + Date.now();
+
+    if (typeof Hls !== "undefined" && Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        startPosition: -1,
+        liveSyncDurationCount: 2.0,
+        liveMaxLatencyDurationCount: 6,
+        liveDurationInfinity: true,
+        manifestLoadingTimeOut: 15000,
+        manifestLoadingMaxRetry: 10,
+        manifestLoadingRetryDelay: 600,
+      });
+      ptzHls = hls;
+
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        hls.loadSource(streamUrl);
+      });
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {});
+      });
+
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              setTimeout(() => { if (ptzHls) ptzHls.loadSource(streamUrl); }, 1000);
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              ptzHls.recoverMediaError();
+              break;
+            default:
+              break;
+          }
+        }
+      });
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = streamUrl;
+      video.play().catch(() => {});
+    }
   }
 
   async function fetchDynamicStreams() {
