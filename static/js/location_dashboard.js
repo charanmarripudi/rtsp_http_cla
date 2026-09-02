@@ -168,7 +168,6 @@ class LocationDashboardStore {
         this.streams = data.streams || [];
         this.allModels = data.models || [];
         this.cameraModels = data.cameraModels || {};
-        this.seedLocationsFromStreams();
     }
 
     loadOffline() {

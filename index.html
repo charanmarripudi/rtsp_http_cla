@@ -1347,14 +1347,6 @@
         lastHeartbeat = now;
       }, 2000);
 
-      // Auto-refresh page on tab focus/visibility change (recovers backgrounded streams)
-      document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") {
-          console.log("Tab became visible - refreshing page to recover streams...");
-          window.location.reload();
-        }
-      });
-
       // Periodic Auto-refresh (every 30 minutes) to clear HLS buffer/memory leak
       setInterval(() => {
         const dashboardTab = document.getElementById("tab-dashboard");
