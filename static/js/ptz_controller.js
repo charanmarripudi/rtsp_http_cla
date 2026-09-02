@@ -24,45 +24,18 @@
   async function loadPtzCameras() {
     let loaded = [];
 
-    // 1. Try reading from /api/ptz/cameras (primary PTZ endpoint)
+    // 1. Read directly from /api/ptz/cameras (isolated PTZ endpoint)
     try {
       const res = await fetch("/api/ptz/cameras");
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           loaded = data;
         }
       }
     } catch (_) {}
 
-    // 2. Fallback: Check /api/streams (Location Cameras endpoint - single source of truth)
-    if (loaded.length === 0) {
-      try {
-        const res = await fetch("/api/streams");
-        if (res.ok) {
-          const streams = await res.json();
-          if (Array.isArray(streams) && streams.length > 0) {
-            streams.forEach((s, idx) => {
-              const u = s.rtsp || "";
-              if (s.is_ptz || u.includes("192.168.96.30") || u.includes("ch0_")) {
-                loaded.push({
-                  id: s.location_id || `ptz-${idx}`,
-                  label: s.location || s.label || `PTZ Camera ${idx + 1}`,
-                  rtsp: u,
-                  ip: "192.168.96.30",
-                  port: 8888,
-                  username: "admin",
-                  password: "",
-                  hls_raw: s.hls_raw || `/hls/streamptz${idx}_raw/playlist.m3u8`
-                });
-              }
-            });
-          }
-        }
-      } catch (_) {}
-    }
-
-    // 3. Fallback: Check ptz_cameras_cache in localStorage
+    // 2. Fallback: Check ptz_cameras_cache in localStorage
     if (loaded.length === 0) {
       try {
         const cached = localStorage.getItem("ptz_cameras_cache");
@@ -75,57 +48,14 @@
       } catch (_) {}
     }
 
-    // 4. Fallback: Check offline_streams in localStorage (Location Cameras fallback)
-    if (loaded.length === 0) {
-      try {
-        const localStreams = localStorage.getItem("offline_streams");
-        if (localStreams) {
-          const streams = JSON.parse(localStreams);
-          if (Array.isArray(streams)) {
-            streams.forEach((s, idx) => {
-              const u = s.rtsp || "";
-              if (u.includes("192.168.96.30") || u.includes("ch0_")) {
-                loaded.push({
-                  id: `ptz-${idx}`,
-                  label: s.location || `PTZ Camera ${idx + 1}`,
-                  rtsp: u,
-                  ip: "192.168.96.30",
-                  port: 8888,
-                  username: "admin",
-                  password: "",
-                  hls_raw: `/hls/streamptz${idx}_raw/playlist.m3u8`
-                });
-              }
-            });
-          }
-        }
-      } catch (_) {}
-    }
-
-    // 5. Default fallback camera
-    if (loaded.length === 0) {
-      loaded = [
-        {
-          id: "ptz-0",
-          label: "AMBICAM PTZ 1",
-          rtsp: "rtsp://admin:@192.168.96.30:554/ch0_0.264",
-          ip: "192.168.96.30",
-          port: 8888,
-          username: "admin",
-          password: "",
-          hls_raw: "/hls/streamptz0_raw/playlist.m3u8",
-        },
-      ];
-    }
-
     ptzCameras = loaded;
     localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
 
     renderPtzCameraSelect();
     renderPtzCamerasConfigList();
-
-    const activeIdx = activePtzCamera ? ptzCameras.findIndex(c => c.id === activePtzCamera.id) : 0;
-    await switchActivePtzCamera(activeIdx >= 0 ? activeIdx : 0);
+    if (ptzCameras.length > 0) {
+      await switchActivePtzCamera(0);
+    }
   }
 
   function renderPtzCamerasConfigList() {

@@ -1247,29 +1247,6 @@ def save_streams(
         entries = read_streams_metadata()
 
         # 4. Duplicate RTSP URLs are permitted to allow testing identical streams in multiple locations
-        pass
-
-    # 5. Preserve configured ONVIF PTZ cameras across bulk saves
-    try:
-        ptz_cams = read_ptz_cameras()
-        existing_rtsps = {e.get("rtsp") for e in entries if isinstance(e, dict) and e.get("rtsp")}
-        for idx, ptz in enumerate(ptz_cams):
-            u = (ptz.get("rtsp") or "").strip()
-            if u and u not in existing_rtsps:
-                entries.append({
-                    "rtsp": u,
-                    "location": ptz.get("label") or f"PTZ Camera {idx + 1}",
-                    "location_id": ptz.get("id") or f"ptz-{idx}",
-                    "is_ptz": True,
-                    "ptz_ip": ptz.get("ip", "192.168.96.30"),
-                    "device_id": "RPI-001",
-                    "device_ip": "192.168.96.36",
-                    "device_status": "online"
-                })
-                existing_rtsps.add(u)
-    except Exception as e:
-        logger.error(f"Error preserving PTZ cameras in save_streams: {e}")
-
     # Common persistence logic
     old_metadata = read_streams_metadata()
     old_cid_to_rtsp = {str(i): (e.get("rtsp") or "").strip() for i, e in enumerate(old_metadata) if isinstance(e, dict)}
@@ -2582,47 +2559,6 @@ try:
     PTZ_CAMERAS_USER_FILE = os.path.join(BASE_DIR, "ptz_cameras_user.json")
     PTZ_CAMERAS_FILE = os.path.join(BASE_DIR, "ptz_cameras.json")
 
-    def sync_ptz_to_streams(cams):
-        try:
-            json_streams = []
-            if os.path.exists(STREAMS_JSON):
-                try:
-                    with open(STREAMS_JSON) as fp:
-                        data = json.load(fp)
-                        if isinstance(data, list): json_streams = data
-                except: pass
-
-            existing_json_urls = {e.get("rtsp") for e in json_streams if isinstance(e, dict) and e.get("rtsp")}
-            updated_json = list(json_streams)
-            for idx, cam in enumerate(cams):
-                u = (cam.get("rtsp") or "").strip()
-                if u and u not in existing_json_urls:
-                    updated_json.append({
-                        "rtsp": u,
-                        "location": cam.get("label") or f"PTZ Camera {idx + 1}",
-                        "location_id": cam.get("id") or f"ptz-{idx}",
-                        "is_ptz": True,
-                        "ptz_ip": cam.get("ip", "192.168.96.30"),
-                        "device_id": "RPI-001",
-                        "device_ip": "192.168.96.36",
-                        "device_status": "online"
-                    })
-                    existing_json_urls.add(u)
-
-            write_json_atomic(STREAMS_JSON, updated_json)
-
-            # STREAMS_CONF is ALWAYS strictly derived from STREAMS_JSON to guarantee 1-to-1 index alignment
-            conf_urls = [entry["rtsp"].strip() for entry in updated_json if isinstance(entry, dict) and entry.get("rtsp")]
-            with open(STREAMS_CONF, "w") as fp:
-                fp.write("\n".join(conf_urls) + "\n")
-
-            global _streams_metadata_cache, _streams_location_index_cache
-            with config_cache_lock:
-                _streams_metadata_cache = None
-                _streams_location_index_cache = None
-        except Exception as e:
-            logger.error(f"Error syncing PTZ to streams: {e}")
-
     def read_ptz_cameras():
         if os.path.exists(PTZ_CAMERAS_USER_FILE):
             try:
@@ -2634,52 +2570,15 @@ try:
             try:
                 with open(PTZ_CAMERAS_FILE, "r") as f:
                     data = json.load(f)
-                    if isinstance(data, list) and len(data) > 0: return data
+                    if isinstance(data, list): return data
             except: pass
-
-        # Fallback: recover PTZ cameras from streams.json
-        ptz_from_streams = []
-        if os.path.exists(STREAMS_JSON):
-            try:
-                with open(STREAMS_JSON) as fp:
-                    st_data = json.load(fp)
-                    if isinstance(st_data, list):
-                        for idx, s in enumerate(st_data):
-                            if isinstance(s, dict) and (s.get("is_ptz") or "ch0_" in s.get("rtsp", "")):
-                                info = parse_rtsp_for_onvif(s.get("rtsp", ""))
-                                ptz_from_streams.append({
-                                    "id": s.get("location_id") or f"ptz-{idx}",
-                                    "label": s.get("location") or f"PTZ Camera {idx + 1}",
-                                    "rtsp": info["rtsp"],
-                                    "ip": info["ip"],
-                                    "port": info["port"],
-                                    "username": info["username"],
-                                    "password": info["password"],
-                                    "hls_raw": f"/hls/streamptz{idx}_raw/playlist.m3u8"
-                                })
-            except: pass
-        if len(ptz_from_streams) > 0:
-            return ptz_from_streams
-
-        return [
-            {
-                "id": "ptz-0",
-                "label": "AMBICAM PTZ 1",
-                "rtsp": "rtsp://admin:@192.168.96.30:554/ch0_0.264",
-                "ip": "192.168.96.30",
-                "port": 8888,
-                "username": "admin",
-                "password": "",
-                "hls_raw": "/hls/streamptz0_raw/playlist.m3u8"
-            }
-        ]
+        return []
 
     def save_ptz_cameras(cams):
         write_json_atomic(PTZ_CAMERAS_USER_FILE, cams)
         try:
             write_json_atomic(PTZ_CAMERAS_FILE, cams)
         except: pass
-        sync_ptz_to_streams(cams)
 
     def get_ptz_client_for_camera(ip="192.168.96.30", port=8888, user="admin", password=""):
         key = f"{ip}:{port}:{user}"
