@@ -2611,11 +2611,28 @@ try:
 
     def sync_ptz_to_streams(cams):
         try:
+            active_ptz_urls = {(c.get("rtsp") or "").strip() for c in cams if isinstance(c, dict) and (c.get("rtsp") or "").strip()}
+
             conf_urls = []
             if os.path.exists(STREAMS_CONF):
                 with open(STREAMS_CONF) as fp:
                     conf_urls = [line.strip() for line in fp if line.strip()]
-            
+
+            updated_conf = []
+            for u in conf_urls:
+                if u.startswith("rtsp://") and ("192.168.96.30" in u or "ch0_" in u):
+                    if u in active_ptz_urls:
+                        updated_conf.append(u)
+                else:
+                    updated_conf.append(u)
+
+            for u in active_ptz_urls:
+                if u not in updated_conf:
+                    updated_conf.append(u)
+
+            with open(STREAMS_CONF, "w") as fp:
+                fp.write("\n".join(updated_conf) + "\n")
+
             json_streams = []
             if os.path.exists(STREAMS_JSON):
                 try:
@@ -2624,21 +2641,17 @@ try:
                         if isinstance(data, list): json_streams = data
                 except: pass
 
-            ptz_urls = set()
-            for cam in cams:
-                u = (cam.get("rtsp") or "").strip()
-                if u: ptz_urls.add(u)
+            updated_json = []
+            for item in json_streams:
+                if isinstance(item, dict):
+                    u = (item.get("rtsp") or "").strip()
+                    if item.get("is_ptz") or "192.168.96.30" in u or "ch0_" in u:
+                        if u in active_ptz_urls:
+                            updated_json.append(item)
+                    else:
+                        updated_json.append(item)
 
-            updated_conf = list(conf_urls)
-            for u in ptz_urls:
-                if u not in updated_conf:
-                    updated_conf.append(u)
-
-            with open(STREAMS_CONF, "w") as fp:
-                fp.write("\n".join(updated_conf) + "\n")
-
-            existing_json_urls = {e.get("rtsp") for e in json_streams if isinstance(e, dict) and e.get("rtsp")}
-            updated_json = list(json_streams)
+            existing_json_urls = {e.get("rtsp") for e in updated_json if isinstance(e, dict) and e.get("rtsp")}
             for idx, cam in enumerate(cams):
                 u = (cam.get("rtsp") or "").strip()
                 if u and u not in existing_json_urls:
@@ -2668,7 +2681,7 @@ try:
             try:
                 with open(PTZ_CAMERAS_USER_FILE, "r") as f:
                     data = json.load(f)
-                    if isinstance(data, list) and len(data) > 0: return data
+                    if isinstance(data, list): return data
             except: pass
         if os.path.exists(PTZ_CAMERAS_FILE):
             try:

@@ -199,9 +199,8 @@ start() {
     echo "  STARTING SYSTEM"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # Configurations now persist between runs. Reset logic removed.
-
-    generate_streams_json
+    # Configurations now persist between runs. Server.py manages streams.json.
+    # generate_streams_json
 
     #######################################################
     # START PYTHON SERVER
