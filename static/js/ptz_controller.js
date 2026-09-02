@@ -540,6 +540,17 @@
       });
     }
 
+    const btnAddRow = document.getElementById("ptz-btn-add-row");
+    if (btnAddRow) {
+      btnAddRow.onclick = () => {
+        ptzCameras.push({
+          rtsp: "",
+          label: `PTZ Camera ${ptzCameras.length + 1}`
+        });
+        renderPtzCamerasConfigList();
+      };
+    }
+
   const btnSaveList = document.getElementById("ptz-btn-save-list");
   if (btnSaveList) {
     btnSaveList.onclick = async () => {
