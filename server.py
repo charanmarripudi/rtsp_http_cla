@@ -2618,14 +2618,7 @@ try:
                 with open(STREAMS_CONF) as fp:
                     conf_urls = [line.strip() for line in fp if line.strip()]
 
-            updated_conf = []
-            for u in conf_urls:
-                if u.startswith("rtsp://") and ("192.168.96.30" in u or "ch0_" in u):
-                    if u in active_ptz_urls:
-                        updated_conf.append(u)
-                else:
-                    updated_conf.append(u)
-
+            updated_conf = list(conf_urls)
             for u in active_ptz_urls:
                 if u not in updated_conf:
                     updated_conf.append(u)
@@ -2641,17 +2634,8 @@ try:
                         if isinstance(data, list): json_streams = data
                 except: pass
 
-            updated_json = []
-            for item in json_streams:
-                if isinstance(item, dict):
-                    u = (item.get("rtsp") or "").strip()
-                    if item.get("is_ptz") or "192.168.96.30" in u or "ch0_" in u:
-                        if u in active_ptz_urls:
-                            updated_json.append(item)
-                    else:
-                        updated_json.append(item)
-
-            existing_json_urls = {e.get("rtsp") for e in updated_json if isinstance(e, dict) and e.get("rtsp")}
+            existing_json_urls = {e.get("rtsp") for e in json_streams if isinstance(e, dict) and e.get("rtsp")}
+            updated_json = list(json_streams)
             for idx, cam in enumerate(cams):
                 u = (cam.get("rtsp") or "").strip()
                 if u and u not in existing_json_urls:
@@ -2748,7 +2732,6 @@ try:
 
     def parse_rtsp_for_onvif(rtsp_url):
         import re
-        import time
         rtsp_url = normalize_ptz_rtsp(rtsp_url)
         match = re.search(r'rtsp://(?:([^:]+)(?::([^@]*))?@)?([^:/]+)(?::(\d+))?', rtsp_url)
         if match:
