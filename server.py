@@ -1272,7 +1272,7 @@ def save_streams(
 
     # Common persistence logic
     old_metadata = read_streams_metadata()
-    old_cid_to_rtsp = dict(cid_to_rtsp)  # Snapshot of current state
+    old_cid_to_rtsp = {str(i): (e.get("rtsp") or "").strip() for i, e in enumerate(old_metadata) if isinstance(e, dict)}
     urls = [entry["rtsp"] for entry in entries if entry.get("rtsp")]
     open(STREAMS_CONF, "w").write("\n".join(urls))
     write_json_atomic(STREAMS_JSON, entries)
@@ -1288,7 +1288,7 @@ def save_streams(
         if old_u != u:  # If RTSP changed OR new stream
             # Stop old if it was running
             if old_u is not None:
-                stop_raw_stream(int(cid), protect_rtsps=urls)
+                stop_raw_stream(int(cid))
                 # Clean both detected/raw only if this cid had a different RTSP before
                 _clean_camera_dirs(str(cid))
             start_raw_stream(i, u)
@@ -1340,7 +1340,7 @@ def save_streams(
             continue
         idx = int(cid)
         if idx > max_new_idx:
-            stop_raw_stream(idx, protect_rtsps=urls)
+            stop_raw_stream(idx)
             _clean_camera_dirs(cid)
     
     return get_streams(location_id=location_id, location=location)
