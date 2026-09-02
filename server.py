@@ -2825,113 +2825,173 @@ try:
             return {"status": "started", "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"}
         raise HTTPException(status_code=400, detail="Missing RTSP URL")
 
+    def _parse_ptz_request_params(d: dict):
+        d = d if isinstance(d, dict) else {}
+        ip = (d.get("ip") or "").strip()
+        port = d.get("port")
+        user = (d.get("username") or d.get("user") or "admin").strip()
+        pwd = (d.get("password") or d.get("pwd") or "").strip()
+
+        cam_id = d.get("camera_id") or d.get("id") or d.get("cid")
+        rtsp_url = (d.get("rtsp") or "").strip()
+
+        if not ip and (cam_id or rtsp_url):
+            try:
+                cams = read_ptz_cameras()
+                target_cam = None
+                if cam_id:
+                    for c in cams:
+                        if str(c.get("id")) == str(cam_id) or str(c.get("location_id")) == str(cam_id):
+                            target_cam = c
+                            break
+                if not target_cam and rtsp_url:
+                    for c in cams:
+                        if c.get("rtsp") == rtsp_url:
+                            target_cam = c
+                            break
+                if target_cam:
+                    ip = target_cam.get("ip") or "192.168.96.30"
+                    port = target_cam.get("port") or 8888
+                    user = target_cam.get("username") or "admin"
+                    pwd = target_cam.get("password") or ""
+            except: pass
+
+        if not ip:
+            ip = "192.168.96.30"
+
+        try:
+            port = int(port) if port is not None and str(port).strip() != "" else 8888
+        except:
+            port = 8888
+
+        try:
+            speed = float(d.get("speed")) if d.get("speed") is not None and str(d.get("speed")).strip() != "" else 0.5
+        except:
+            speed = 0.5
+
+        try:
+            duration = float(d.get("duration")) if d.get("duration") is not None and str(d.get("duration")).strip() != "" else 0.35
+        except:
+            duration = 0.35
+
+        direction = (d.get("direction") or "up").strip()
+
+        return ip, port, user, pwd, direction, speed, duration
+
     @app.post("/api/ptz/move")
     def api_ptz_move(d: dict = Body(default={})):
-        direction = d.get("direction", "up")
-        speed = float(d.get("speed", 0.5))
-        ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
-        user = d.get("username", "admin")
-        pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.move(direction, speed)
+        try:
+            ip, port, user, pwd, direction, speed, _ = _parse_ptz_request_params(d)
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.move(direction, speed)
+        except Exception as e:
+            return {"status": "error", "message": str(e), "http_status": 400}
 
     @app.post("/api/ptz/step")
     def api_ptz_step(d: dict = Body(default={})):
-        direction = d.get("direction", "up")
-        speed = float(d.get("speed", 0.5))
-        duration = float(d.get("duration", 0.35))
-        ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
-        user = d.get("username", "admin")
-        pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.step(direction, speed, duration)
+        try:
+            ip, port, user, pwd, direction, speed, duration = _parse_ptz_request_params(d)
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.step(direction, speed, duration)
+        except Exception as e:
+            return {"status": "error", "message": str(e), "http_status": 400}
 
     @app.post("/api/ptz/stop")
     def api_ptz_stop(d: dict = Body(default={})):
-        ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
-        user = d.get("username", "admin")
-        pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.stop()
+        try:
+            ip, port, user, pwd, _, _, _ = _parse_ptz_request_params(d)
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.stop()
+        except Exception as e:
+            return {"status": "error", "message": str(e), "http_status": 400}
 
     @app.post("/api/ptz/zoom")
     def api_ptz_zoom(d: dict = Body(default={})):
-        direction = d.get("direction", "in")
-        speed = float(d.get("speed", 0.5))
-        ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
-        user = d.get("username", "admin")
-        pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.zoom(direction, speed)
+        try:
+            ip, port, user, pwd, direction, speed, _ = _parse_ptz_request_params(d)
+            if direction not in ["in", "out", "zoomin", "zoomout"]:
+                direction = "in"
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.zoom(direction, speed)
+        except Exception as e:
+            return {"status": "error", "message": str(e), "http_status": 400}
 
     @app.post("/api/ptz/zoom-step")
     def api_ptz_zoom_step(d: dict = Body(default={})):
-        direction = d.get("direction", "in")
-        speed = float(d.get("speed", 0.5))
-        duration = float(d.get("duration", 0.35))
-        ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
-        user = d.get("username", "admin")
-        pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.zoom_step(direction, speed, duration)
+        try:
+            ip, port, user, pwd, direction, speed, duration = _parse_ptz_request_params(d)
+            if direction not in ["in", "out", "zoomin", "zoomout"]:
+                direction = "in"
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.zoom_step(direction, speed, duration)
+        except Exception as e:
+            return {"status": "error", "message": str(e), "http_status": 400}
 
     @app.get("/api/ptz/status")
     def api_ptz_status(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
-        client = get_ptz_client_for_camera(ip, port, username, password)
-        return client.get_status()
+        try:
+            client = get_ptz_client_for_camera(ip, port, username, password)
+            return client.get_status()
+        except Exception as e:
+            return {"status": "offline", "error": str(e)}
 
     @app.get("/api/ptz/presets")
     def api_ptz_presets(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
-        client = get_ptz_client_for_camera(ip, port, username, password)
-        return client.get_presets()
+        try:
+            client = get_ptz_client_for_camera(ip, port, username, password)
+            return client.get_presets()
+        except Exception as e:
+            return {"status": "error", "presets": [], "error": str(e)}
 
     @app.post("/api/ptz/presets/goto")
     def api_ptz_goto_preset(d: dict = Body(default={})):
-        preset_token = d.get("preset_token", "1")
-        speed = float(d.get("speed", 1.0))
-        ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
-        user = d.get("username", "admin")
-        pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.goto_preset(preset_token, speed)
+        try:
+            ip, port, user, pwd, _, speed, _ = _parse_ptz_request_params(d)
+            preset_token = str(d.get("preset_token") or d.get("token") or "1")
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.goto_preset(preset_token, speed)
+        except Exception as e:
+            return {"status": "error", "message": str(e), "http_status": 400}
 
     @app.post("/api/ptz/presets/set")
     def api_ptz_set_preset(d: dict = Body(default={})):
-        name = d.get("preset_name", "Preset")
-        ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
-        user = d.get("username", "admin")
-        pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.set_preset(name)
+        try:
+            ip, port, user, pwd, _, _, _ = _parse_ptz_request_params(d)
+            name = str(d.get("preset_name") or d.get("name") or "Preset")
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.set_preset(name)
+        except Exception as e:
+            return {"status": "error", "message": str(e), "http_status": 400}
 
     @app.delete("/api/ptz/presets/{token}")
     def api_ptz_delete_preset(token: str, ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
-        client = get_ptz_client_for_camera(ip, port, username, password)
-        return client.remove_preset(token)
+        try:
+            client = get_ptz_client_for_camera(ip, port, username, password)
+            return client.remove_preset(token)
+        except Exception as e:
+            return {"status": "error", "message": str(e), "http_status": 400}
 
     @app.get("/api/ptz/streams")
     def api_ptz_streams(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
-        """Dynamically retrieves Main Stream and Sub Stream RTSP URLs via ONVIF."""
-        client = get_ptz_client_for_camera(ip, port, username, password)
-        return client.get_stream_uris()
+        try:
+            client = get_ptz_client_for_camera(ip, port, username, password)
+            return client.get_stream_uris()
+        except Exception as e:
+            return {"status": "error", "streams": {}, "error": str(e)}
 
     @app.get("/api/ptz/info")
     def api_ptz_info(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
-        client = get_ptz_client_for_camera(ip, port, username, password)
-        return {
-            "camera_ip": ip,
-            "onvif_port": port,
-            "device_info": client.get_device_info(),
-            "status": client.get_status(),
-            "streams": client.get_stream_uris()
-        }
+        try:
+            client = get_ptz_client_for_camera(ip, port, username, password)
+            return {
+                "camera_ip": ip,
+                "onvif_port": port,
+                "device_info": client.get_device_info(),
+                "status": client.get_status(),
+                "streams": client.get_stream_uris()
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
 except Exception as _e:
     print(f"[ONVIF-PTZ] Warning: Could not initialize ONVIF client in server.py: {_e}")
 
