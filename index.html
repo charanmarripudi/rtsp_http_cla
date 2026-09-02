@@ -1548,35 +1548,42 @@
       const tabBtns = document.querySelectorAll(".tab-btn");
       const tabContents = document.querySelectorAll(".tab-content");
 
+      function switchTab(tabId) {
+        localStorage.setItem("active_dashboard_tab", tabId);
+        tabBtns.forEach(b => {
+          if (b.getAttribute("data-tab") === tabId) b.classList.add("active");
+          else b.classList.remove("active");
+        });
+
+        tabContents.forEach(tc => {
+          if (tc.id === `tab-${tabId}`) {
+            tc.style.display = tabId === 'dashboard' ? 'flex' : 'block';
+          } else {
+            tc.style.display = 'none';
+          }
+        });
+
+        if (tabId === 'dashboard') {
+          loadDevicesWidget();
+          renderLocationWidgets();
+          notifyDetectionReady();
+        } else if (tabId === 'ptz') {
+          setTimeout(() => {
+            if (window.initPtzController) window.initPtzController();
+          }, 50);
+        }
+      }
+
       tabBtns.forEach(btn => {
         btn.addEventListener("click", () => {
           const tabId = btn.getAttribute("data-tab");
-
-          tabBtns.forEach(b => b.classList.remove("active"));
-          btn.classList.add("active");
-
-          tabContents.forEach(tc => {
-            if (tc.id === `tab-${tabId}`) {
-              tc.style.display = tabId === 'dashboard' ? 'flex' : 'block';
-            } else {
-              tc.style.display = 'none';
-            }
-          });
-
-          if (tabId === 'dashboard') {
-            loadDevicesWidget();
-            renderLocationWidgets();
-            notifyDetectionReady();
-          } else if (tabId === 'ptz') {
-            if (window.initPtzController) window.initPtzController();
-          }
+          switchTab(tabId);
         });
       });
 
-      // Pre-initialize PTZ controller on load
-      if (window.initPtzController) {
-        window.initPtzController();
-      }
+      // Restore last active tab on load (default to 'locations')
+      const savedTab = localStorage.getItem("active_dashboard_tab") || "locations";
+      switchTab(savedTab);
 
       // ── CAMERA LIST CONFIG LOGIC ──
       const camerasEditList = document.getElementById("cameras-edit-list");
