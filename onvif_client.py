@@ -45,8 +45,9 @@ class OnvifPtzClient:
 
     def _soap_request(self, endpoint_url, body_xml, timeout=3.0):
         """Sends a SOAP XML request to the ONVIF service endpoint."""
-        header_xml = self._create_ws_security_header()
-        envelope = f"""<?xml version="1.0" encoding="utf-8"?>
+        try:
+            header_xml = self._create_ws_security_header()
+            envelope = f"""<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
             xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"
             xmlns:trt="http://www.onvif.org/ver10/media/wsdl"
@@ -57,13 +58,15 @@ class OnvifPtzClient:
     {body_xml}
   </s:Body>
 </s:Envelope>"""
-        req = urllib.request.Request(
-            endpoint_url,
-            data=envelope.encode("utf-8"),
-            headers={"Content-Type": "application/soap+xml; charset=utf-8"}
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.read().decode("utf-8", errors="ignore")
+            req = urllib.request.Request(
+                endpoint_url,
+                data=envelope.encode("utf-8"),
+                headers={"Content-Type": "application/soap+xml; charset=utf-8"}
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status, resp.read().decode("utf-8", errors="ignore")
+        except Exception as e:
+            return 504, f"<error>{str(e)}</error>"
 
     def move(self, direction: str, speed: float = 0.5):
         speed = max(0.05, min(1.0, float(speed)))
@@ -79,7 +82,7 @@ class OnvifPtzClient:
         elif dir_lower in ["downleft", "leftdown"]: x, y = -speed, -speed
         elif dir_lower in ["downright", "rightdown"]: x, y = speed, -speed
         else:
-            raise ValueError(f"Unknown direction '{direction}'. Supported: up, down, left, right, upleft, upright, downleft, downright")
+            return {"status": "error", "message": f"Unknown direction '{direction}'"}
 
         body = f"""
         <tptz:ContinuousMove>
@@ -90,7 +93,9 @@ class OnvifPtzClient:
         </tptz:ContinuousMove>"""
         with self._lock:
             status, resp = self._soap_request(self.ptz_url, body)
-            return {"status": "success", "action": "move", "direction": direction, "speed": speed, "http_status": status}
+            if status == 200:
+                return {"status": "success", "action": "move", "direction": direction, "speed": speed, "http_status": status}
+            return {"status": "error", "action": "move", "message": "ONVIF request failed", "http_status": status}
 
     def zoom(self, direction: str, speed: float = 0.5):
         speed = max(0.05, min(1.0, float(speed)))
@@ -99,7 +104,7 @@ class OnvifPtzClient:
         if dir_lower in ["in", "zoomin"]: z = speed
         elif dir_lower in ["out", "zoomout"]: z = -speed
         else:
-            raise ValueError(f"Unknown zoom direction '{direction}'. Supported: in, out")
+            return {"status": "error", "message": f"Unknown zoom direction '{direction}'"}
 
         body = f"""
         <tptz:ContinuousMove>
@@ -111,7 +116,9 @@ class OnvifPtzClient:
         </tptz:ContinuousMove>"""
         with self._lock:
             status, resp = self._soap_request(self.ptz_url, body)
-            return {"status": "success", "action": "zoom", "direction": direction, "speed": speed, "http_status": status}
+            if status == 200:
+                return {"status": "success", "action": "zoom", "direction": direction, "speed": speed, "http_status": status}
+            return {"status": "error", "action": "zoom", "message": "ONVIF request failed", "http_status": status}
 
     def stop(self):
         body = f"""
@@ -122,7 +129,9 @@ class OnvifPtzClient:
         </tptz:Stop>"""
         with self._lock:
             status, resp = self._soap_request(self.ptz_url, body)
-            return {"status": "success", "action": "stop", "http_status": status}
+            if status == 200:
+                return {"status": "success", "action": "stop", "http_status": status}
+            return {"status": "error", "action": "stop", "message": "ONVIF request failed", "http_status": status}
 
     def step(self, direction: str, speed: float = 0.5, duration: float = 0.35):
         duration = max(0.1, min(3.0, float(duration)))
