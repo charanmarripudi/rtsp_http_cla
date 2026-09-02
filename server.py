@@ -1417,77 +1417,73 @@ def save_streams(
 
 @app.delete("/api/streams")
 def delete_stream(
-    rtsp: str = Query(...),
-    location_id: str = Query(...),
-    location: str = Query(...)
+    rtsp: Optional[str] = Query(default=None),
+    location_id: Optional[str] = Query(default=None),
+    location: Optional[str] = Query(default=None),
+    id: Optional[str] = Query(default=None),
+    index: Optional[int] = Query(default=None),
+    d: Optional[dict] = Body(default=None)
 ):
     """
-    Strictly delete a camera stream. 
-    Requires RTSP URL, location_id, AND location name to match exactly.
+    Flexible delete camera stream API.
+    Supports Query parameters or JSON body. Matches by rtsp, location_id, id, location name, or index.
     """
     global _streams_metadata_cache, _streams_location_index_cache
     
+    body = d or {}
+    req_rtsp = str(rtsp or body.get("rtsp") or "").strip()
+    req_loc_id = str(location_id or id or body.get("location_id") or body.get("id") or "").strip()
+    req_loc_name = str(location or body.get("location") or "").strip().lower()
+    req_idx = index if index is not None else body.get("index")
+
     current_metadata = read_streams_metadata()
     exists_idx = -1
-    
-    # Input cleanup
-    req_rtsp = rtsp.strip()
-    req_loc_id = location_id.strip()
-    req_loc_name = location.strip().lower()
-    
-    for i, entry in enumerate(current_metadata):
-        # Strict matching logic: All three must match the record in our database
-        stored_rtsp = entry.get("rtsp", "")
-        stored_loc_id = str(entry.get("location_id", "")).strip()
-        stored_loc_name = str(entry.get("location", "")).strip().lower()
-        
-        if stored_rtsp == req_rtsp and stored_loc_id == req_loc_id and stored_loc_name == req_loc_name:
-            exists_idx = i
-            break
-            
-    if exists_idx >= 0:
-        # Snapshot of current state before removal
-        old_cid_to_rtsp = dict(cid_to_rtsp)
 
-        # Remove from metadata
-        current_metadata.pop(exists_idx)
-        
-        # Save changes
+    if req_idx is not None and isinstance(req_idx, int) and 0 <= req_idx < len(current_metadata):
+        exists_idx = req_idx
+    else:
+        for i, entry in enumerate(current_metadata):
+            stored_rtsp = (entry.get("rtsp") or "").strip()
+            stored_loc_id = str(entry.get("location_id") or entry.get("id") or "").strip()
+            stored_loc_name = str(entry.get("location") or "").strip().lower()
+
+            if req_rtsp and stored_rtsp == req_rtsp:
+                exists_idx = i
+                break
+            if req_loc_id and stored_loc_id == req_loc_id:
+                exists_idx = i
+                break
+            if req_loc_name and stored_loc_name == req_loc_name:
+                exists_idx = i
+                break
+
+    if exists_idx >= 0:
+        removed_item = current_metadata.pop(exists_idx)
+        removed_rtsp = (removed_item.get("rtsp") or "").strip()
+
         urls = [entry["rtsp"] for entry in current_metadata if entry.get("rtsp")]
-        open(STREAMS_CONF, "w").write("\n".join(urls))
+        with open(STREAMS_CONF, "w") as sf:
+            sf.write("\n".join(urls) + "\n")
         write_json_atomic(STREAMS_JSON, current_metadata)
-        
+
+        try:
+            ptz_cams = read_ptz_cameras()
+            updated_ptz = [c for c in ptz_cams if (c.get("rtsp") or "").strip() != removed_rtsp and str(c.get("id")) != str(removed_item.get("location_id"))]
+            if len(updated_ptz) != len(ptz_cams):
+                write_json_atomic(PTZ_CAMERAS_USER_FILE, updated_ptz)
+                try: write_json_atomic(PTZ_CAMERAS_FILE, updated_ptz)
+                except: pass
+        except Exception as e:
+            logger.error(f"Error updating PTZ user storage on stream delete: {e}")
+
         with config_cache_lock:
             _streams_metadata_cache = [dict(entry) for entry in current_metadata]
             _streams_location_index_cache = build_stream_location_index(_streams_metadata_cache)
-            
-        # Re-link/shift running streams to match new indices without disrupting active processes
-        for i, u in enumerate(urls):
-            cid = str(i)
-            old_u = old_cid_to_rtsp.get(cid)
-            if old_u != u:  # RTSP changed or shifted
-                if old_u is not None:
-                    stop_raw_stream(int(cid), protect_rtsps=urls)
-                    _clean_camera_dirs(str(cid))
-                start_raw_stream(i, u)
-        
-        # Stop any index that is now out of bounds
-        max_new_idx = len(urls) - 1
-        for cid in list(old_cid_to_rtsp.keys()):
-            if not str(cid).isdigit():
-                continue
-            idx = int(cid)
-            if idx > max_new_idx:
-                stop_raw_stream(idx, protect_rtsps=urls)
-                _clean_camera_dirs(cid)
-                
+
+        stop_raw_stream(exists_idx)
         return {"status": "deleted", "message": "Camera removed successfully."}
-    
-    return {
-        "status": "failed", 
-        "message": "Deletion denied. Provided RTSP, Location ID, or Location Name does not match our records.",
-        "hint": "Ensure all 3 parameters are correct."
-    }
+
+    return {"status": "failed", "message": "Camera stream not found matching provided parameters."}
 
 @app.get("/api/status")
 def get_status():
@@ -1885,48 +1881,90 @@ def save_locations(
     return {"status": "saved", "count": len(final_locations), "locations": final_locations}
 
 @app.delete("/api/locations")
-def delete_location(location: str = Query(...)):
-    """Delete a location by its name."""
+def delete_location(
+    location: Optional[str] = Query(default=None),
+    id: Optional[str] = Query(default=None),
+    location_id: Optional[str] = Query(default=None),
+    d: Optional[dict] = Body(default=None)
+):
+    """
+    Flexible delete location API.
+    Supports Query parameters or JSON body. Matches by location name, id, or location_id.
+    """
     global _locations_cache, _streams_metadata_cache, _streams_location_index_cache
+    
+    body = d or {}
+    target_name = str(location or body.get("location") or "").strip().lower()
+    target_id = str(id or location_id or body.get("id") or body.get("location_id") or "").strip()
+
     current_locations = read_locations()
-    target_name = location.strip().lower()
-    
-    deleted_locations = [loc for loc in current_locations if str(loc.get("location", "")).strip().lower() == target_name]
-    
+    deleted_locations = []
+
+    for loc in current_locations:
+        loc_id = str(loc.get("id") or "").strip()
+        loc_name = str(loc.get("location") or "").strip().lower()
+
+        if target_id and loc_id == target_id:
+            deleted_locations.append(loc)
+        elif target_name and loc_name == target_name:
+            deleted_locations.append(loc)
+
     if deleted_locations:
-        final_locations = [loc for loc in current_locations if str(loc.get("location", "")).strip().lower() != target_name]
+        deleted_ids = {str(loc.get("id")).strip() for loc in deleted_locations if loc.get("id")}
+        deleted_names = {str(loc.get("location")).strip().lower() for loc in deleted_locations if loc.get("location")}
+
+        final_locations = [
+            loc for loc in current_locations
+            if str(loc.get("id")).strip() not in deleted_ids and str(loc.get("location")).strip().lower() not in deleted_names
+        ]
+
         write_json_atomic(LOCATIONS_JSON, final_locations)
         with config_cache_lock:
             _locations_cache = [dict(item) for item in final_locations]
-            
-        # Clean up associated streams
-        deleted_ids = {str(loc.get("id")).strip() for loc in deleted_locations if loc.get("id")}
-        deleted_names = {str(loc.get("location")).strip().lower() for loc in deleted_locations if loc.get("location")}
-        
+
+        # Clean up associated camera streams
         streams_metadata = read_streams_metadata()
         streams_changed = False
+        removed_rtsps = set()
+
         for idx in range(len(streams_metadata) - 1, -1, -1):
             stream = streams_metadata[idx]
             s_loc_id = str(stream.get("location_id") or "").strip()
             s_loc_name = str(stream.get("location") or "").strip().lower()
-            
+
             if s_loc_id in deleted_ids or s_loc_name in deleted_names:
                 stop_raw_stream(idx)
-                streams_metadata.pop(idx)
+                removed_item = streams_metadata.pop(idx)
+                if removed_item.get("rtsp"):
+                    removed_rtsps.add(removed_item["rtsp"].strip())
                 streams_changed = True
-                
+
         if streams_changed:
             urls = [entry["rtsp"] for entry in streams_metadata if entry.get("rtsp")]
             with open(STREAMS_CONF, "w") as sf:
-                sf.write("\n".join(urls))
+                sf.write("\n".join(urls) + "\n")
             write_json_atomic(STREAMS_JSON, streams_metadata)
+
+            try:
+                ptz_cams = read_ptz_cameras()
+                updated_ptz = [
+                    c for c in ptz_cams
+                    if (c.get("rtsp") or "").strip() not in removed_rtsps and str(c.get("id")) not in deleted_ids
+                ]
+                if len(updated_ptz) != len(ptz_cams):
+                    write_json_atomic(PTZ_CAMERAS_USER_FILE, updated_ptz)
+                    try: write_json_atomic(PTZ_CAMERAS_FILE, updated_ptz)
+                    except: pass
+            except Exception as e:
+                logger.error(f"Error cleaning PTZ user storage on location delete: {e}")
+
             with config_cache_lock:
                 _streams_metadata_cache = [dict(entry) for entry in streams_metadata]
                 _streams_location_index_cache = build_stream_location_index(_streams_metadata_cache)
-                
-        return {"status": "deleted", "location": location}
-    
-    return {"status": "not_found", "message": f"Location '{location}' not found."}
+
+        return {"status": "deleted", "deleted_count": len(deleted_locations), "locations": final_locations}
+
+    return {"status": "not_found", "message": "Location not found matching provided parameters."}
 
 # ─────────────────────────────────────────────────────────────
 # DEVICES & ALERTS
