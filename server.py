@@ -1316,8 +1316,29 @@ def save_streams(
         # Fallback to current state
         entries = read_streams_metadata()
 
-    # 4. Duplicate RTSP URLs are permitted to allow testing identical streams in multiple locations
-    pass
+        # 4. Duplicate RTSP URLs are permitted to allow testing identical streams in multiple locations
+        pass
+
+    # 5. Preserve configured ONVIF PTZ cameras across bulk saves
+    try:
+        ptz_cams = read_ptz_cameras()
+        existing_rtsps = {e.get("rtsp") for e in entries if isinstance(e, dict) and e.get("rtsp")}
+        for idx, ptz in enumerate(ptz_cams):
+            u = (ptz.get("rtsp") or "").strip()
+            if u and u not in existing_rtsps:
+                entries.append({
+                    "rtsp": u,
+                    "location": ptz.get("label") or f"PTZ Camera {idx + 1}",
+                    "location_id": ptz.get("id") or f"ptz-{idx}",
+                    "is_ptz": True,
+                    "ptz_ip": ptz.get("ip", "192.168.96.30"),
+                    "device_id": "RPI-001",
+                    "device_ip": "192.168.96.36",
+                    "device_status": "online"
+                })
+                existing_rtsps.add(u)
+    except Exception as e:
+        logger.error(f"Error preserving PTZ cameras in save_streams: {e}")
 
     # Common persistence logic
     old_metadata = read_streams_metadata()
