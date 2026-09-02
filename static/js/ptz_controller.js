@@ -400,12 +400,14 @@
         enableWorker: true,
         lowLatencyMode: true,
         startPosition: -1,
-        liveSyncDurationCount: 2.0,
-        liveMaxLatencyDurationCount: 6,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 2,
+        maxBufferLength: 1.5,
+        maxMaxBufferLength: 3,
         liveDurationInfinity: true,
-        manifestLoadingTimeOut: 15000,
+        manifestLoadingTimeOut: 10000,
         manifestLoadingMaxRetry: 10,
-        manifestLoadingRetryDelay: 600,
+        manifestLoadingRetryDelay: 500,
       });
       ptzHls = hls;
 
