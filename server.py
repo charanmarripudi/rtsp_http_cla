@@ -907,6 +907,43 @@ def get_stream_start_time(path: str) -> int:
 @app.get("/hls/{path:path}")
 async def serve_hls(path: str):
     fp = os.path.join(HLS_DIR, path)
+
+    # Auto-start stream on demand if playlist.m3u8 is requested and does not exist yet
+    if not os.path.exists(fp) and "playlist.m3u8" in path:
+        try:
+            parts = path.strip("/").split("/")
+            if len(parts) >= 2 and parts[1] == "playlist.m3u8":
+                folder = parts[0]  # e.g. "stream0_raw", "streamptz0_raw", "stream1_raw"
+                cid = folder.replace("stream", "").replace("_raw", "").replace("_detected", "")
+                
+                rtsp_url = None
+                ptz_cams = read_ptz_cameras()
+                for idx, c in enumerate(ptz_cams):
+                    if cid == f"ptz{idx}" or cid == c.get("id") or cid == str(idx):
+                        rtsp_url = c.get("rtsp")
+                        break
+                
+                if not rtsp_url:
+                    streams = read_streams_metadata()
+                    if cid.isdigit():
+                        idx = int(cid)
+                        if 0 <= idx < len(streams):
+                            rtsp_url = streams[idx].get("rtsp")
+                    else:
+                        for s in streams:
+                            if s.get("location_id") == cid:
+                                rtsp_url = s.get("rtsp")
+                                break
+
+                if rtsp_url:
+                    start_raw_stream(cid, rtsp_url)
+                    for _ in range(30):
+                        if os.path.exists(fp):
+                            break
+                        await asyncio.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Auto-start stream on HLS request error: {e}")
+
     if not os.path.exists(fp): return Response(status_code=404)
     mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
     headers = {
