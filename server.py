@@ -1438,11 +1438,16 @@ def start_detection(d: dict):
     loc = sanitize_location(loc) or loc
     
     # Save model assignment to camera_models.json
+    clean_mods = []
+    for m in mods:
+        norm_m = m if m.endswith(".pt") else f"{m}.pt"
+        if norm_m not in clean_mods:
+            clean_mods.append(norm_m)
     if os.path.exists(CAMERA_MODELS_JSON):
         cm = json.load(open(CAMERA_MODELS_JSON))
     else:
         cm = {}
-    cm[cid] = mods
+    cm[cid] = clean_mods
     json.dump(cm, open(CAMERA_MODELS_JSON, "w"), indent=2)
     
     if cid in running: 
@@ -1542,7 +1547,21 @@ def save_cm(d: dict = Body(...)):
     old_cm = json.load(open(CAMERA_MODELS_JSON)) if os.path.exists(CAMERA_MODELS_JSON) else {}
     
     # Save new assignments
-    json.dump(d, open(CAMERA_MODELS_JSON, "w"), indent=2)
+    clean_d = {}
+    if isinstance(d, dict):
+        for k, v in d.items():
+            if isinstance(v, list):
+                clean_v = []
+                for m in v:
+                    norm_m = m if m.endswith(".pt") else f"{m}.pt"
+                    if norm_m not in clean_v:
+                        clean_v.append(norm_m)
+                clean_d[str(k)] = clean_v
+            else:
+                clean_d[str(k)] = v
+    else:
+        clean_d = d
+    json.dump(clean_d, open(CAMERA_MODELS_JSON, "w"), indent=2)
     
     # Stop detection for any cameras that no longer have models
     for cid in list(old_cm.keys()):
