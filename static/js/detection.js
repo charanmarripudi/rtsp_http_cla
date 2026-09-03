@@ -248,14 +248,10 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                 const iNum = parseFloat(iSlider.value);
                                 
                                 meta.model_configs = meta.model_configs || {};
-                                
-                                meta.model_configs[m] = meta.model_configs[m] || {};
-                                meta.model_configs[m].class_configs = meta.model_configs[m].class_configs || {};
-                                meta.model_configs[m].class_configs[cls] = { conf: cNum, iou: iNum };
-                                
-                                meta.model_configs[cleanName] = meta.model_configs[cleanName] || {};
-                                meta.model_configs[cleanName].class_configs = meta.model_configs[cleanName].class_configs || {};
-                                meta.model_configs[cleanName].class_configs[cls] = { conf: cNum, iou: iNum };
+                                const normM = m.endsWith(".pt") ? m : `${m}.pt`;
+                                meta.model_configs[normM] = meta.model_configs[normM] || {};
+                                meta.model_configs[normM].class_configs = meta.model_configs[normM].class_configs || {};
+                                meta.model_configs[normM].class_configs[cls] = { conf: cNum, iou: iNum };
 
                                 if (window.roiDrawStates && window.roiDrawStates[i] && window.roiDrawStates[i].vertices && window.roiDrawStates[i].vertices.length === 2) {
                                     meta.model_configs.roi_polygon = window.roiDrawStates[i].vertices;
@@ -311,8 +307,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             const cNum = parseFloat(cSlider.value);
                             const iNum = parseFloat(iSlider.value);
                             meta.model_configs = meta.model_configs || {};
-                            meta.model_configs[m] = { conf: cNum, iou: iNum };
-                            meta.model_configs[cleanName] = { conf: cNum, iou: iNum };
+                            const normM = m.endsWith(".pt") ? m : `${m}.pt`;
+                            meta.model_configs[normM] = { conf: cNum, iou: iNum };
 
                             if (window.roiDrawStates && window.roiDrawStates[i] && window.roiDrawStates[i].vertices && window.roiDrawStates[i].vertices.length === 2) {
                                 meta.model_configs.roi_polygon = window.roiDrawStates[i].vertices;

@@ -384,21 +384,15 @@ class LocationDashboard {
                         if (mName && cSlider && iSlider) {
                             const cVal = parseFloat(cSlider.value);
                             const iVal = parseFloat(iSlider.value);
-                            const clean = mName.replace(".pt", "");
+                            const normModel = mName.endsWith(".pt") ? mName : `${mName}.pt`;
                             
                             if (cls) {
-                                modelConfigs[mName] = modelConfigs[mName] || {};
-                                modelConfigs[mName].class_configs = modelConfigs[mName].class_configs || {};
-                                modelConfigs[mName].class_configs[cls] = { conf: cVal, iou: iVal };
-
-                                modelConfigs[clean] = modelConfigs[clean] || {};
-                                modelConfigs[clean].class_configs = modelConfigs[clean].class_configs || {};
-                                modelConfigs[clean].class_configs[cls] = { conf: cVal, iou: iVal };
+                                modelConfigs[normModel] = modelConfigs[normModel] || {};
+                                modelConfigs[normModel].class_configs = modelConfigs[normModel].class_configs || {};
+                                modelConfigs[normModel].class_configs[cls] = { conf: cVal, iou: iVal };
                             } else {
-                                const existingPt = modelConfigs[mName] || {};
-                                const existingClean = modelConfigs[clean] || {};
-                                modelConfigs[mName] = Object.assign({}, existingPt, { conf: cVal, iou: iVal });
-                                modelConfigs[clean] = Object.assign({}, existingClean, { conf: cVal, iou: iVal });
+                                const existingPt = modelConfigs[normModel] || {};
+                                modelConfigs[normModel] = Object.assign({}, existingPt, { conf: cVal, iou: iVal });
                             }
                         }
                     });
@@ -699,9 +693,6 @@ class LocationDashboard {
                 if (!stream.model_configs[parentModel]) {
                     stream.model_configs[parentModel] = { conf: 0.40, iou: 0.45, enabled_classes: [] };
                 }
-                if (!stream.model_configs[cleanParent]) {
-                    stream.model_configs[cleanParent] = { conf: 0.40, iou: 0.45, enabled_classes: [] };
-                }
 
                 let active = stream.model_configs[parentModel].enabled_classes || [];
                 if (cb.checked) {
@@ -710,14 +701,13 @@ class LocationDashboard {
                     active = active.filter(x => x !== cls);
                 }
                 stream.model_configs[parentModel].enabled_classes = active;
-                stream.model_configs[cleanParent].enabled_classes = active;
 
                 if (active.length > 0) {
-                    if (!this.cameraModels[key].includes(parentModel) && !this.cameraModels[key].includes(cleanParent)) {
+                    if (!this.cameraModels[key].includes(parentModel)) {
                         this.cameraModels[key].push(parentModel);
                     }
                 } else {
-                    this.cameraModels[key] = this.cameraModels[key].filter(m => m !== parentModel && m !== cleanParent);
+                    this.cameraModels[key] = this.cameraModels[key].filter(m => m !== parentModel);
                 }
                 const seenMod = new Set();
                 this.cameraModels[key] = (this.cameraModels[key] || []).filter(m => {

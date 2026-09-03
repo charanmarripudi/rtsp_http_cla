@@ -1250,6 +1250,19 @@ def save_streams(
     # Common persistence logic
     old_metadata = read_streams_metadata()
     old_cid_to_rtsp = {str(i): (e.get("rtsp") or "").strip() for i, e in enumerate(old_metadata) if isinstance(e, dict)}
+    for entry in entries:
+        if isinstance(entry, dict) and isinstance(entry.get("model_configs"), dict):
+            mc = entry["model_configs"]
+            clean_mc = {}
+            for k, v in mc.items():
+                if k == "roi_polygon":
+                    clean_mc[k] = v
+                    continue
+                norm_k = k if k.endswith(".pt") else f"{k}.pt"
+                if norm_k not in clean_mc:
+                    clean_mc[norm_k] = v
+            entry["model_configs"] = clean_mc
+
     urls = [entry["rtsp"] for entry in entries if entry.get("rtsp")]
     open(STREAMS_CONF, "w").write("\n".join(urls))
     write_json_atomic(STREAMS_JSON, entries)
