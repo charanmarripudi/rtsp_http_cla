@@ -730,6 +730,47 @@ class LocationDashboard {
                     seenMod.add(clean);
                     return true;
                 });
+
+                // Update assigned chips list in UI dynamically in real time!
+                const camBox = document.getElementById(`cam-box-${stream.id}`);
+                if (camBox) {
+                    const chipsList = camBox.querySelector(".assigned-chips-list");
+                    if (chipsList) {
+                        chipsList.innerHTML = "";
+                        const modelConfigs = stream.model_configs || {};
+                        Object.entries(modelConfigs).forEach(([mKey, mVal]) => {
+                            if (mKey === "roi_polygon" || !mVal) return;
+                            const cleanName = mKey.replace(".pt", "");
+                            let enabled = Array.from(new Set((mVal && mVal.enabled_classes) || []));
+                            if (enabled.length === 0 && mVal && mVal.class_configs && typeof mVal.class_configs === "object") {
+                                enabled = Object.keys(mVal.class_configs);
+                            }
+                            if (enabled.length > 0) {
+                                enabled.forEach(c => {
+                                    const cCfg = (mVal.class_configs && mVal.class_configs[c]) || {};
+                                    const cVal = cCfg.conf !== undefined ? parseFloat(cCfg.conf).toFixed(2) : parseFloat(mVal.conf || stream.conf || 0.40).toFixed(2);
+                                    const iVal = cCfg.iou !== undefined ? parseFloat(cCfg.iou).toFixed(2) : parseFloat(mVal.iou || stream.iou || 0.45).toFixed(2);
+
+                                    const card = document.createElement("div");
+                                    card.className = "model-card-box";
+                                    card.setAttribute("data-model", mKey);
+                                    card.setAttribute("data-model-clean", cleanName);
+                                    card.setAttribute("data-class", c);
+                                    card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
+                                    card.innerHTML = `
+                                        <div class="model-chip-header" style="margin-bottom:6px;">
+                                            <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${cleanName} - ${c}</span>
+                                        </div>
+                                        <div class="thresholds compact" style="display:flex;gap:12px;">
+                                            <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
+                                            <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
+                                        </div>`;
+                                    chipsList.appendChild(card);
+                                });
+                            }
+                        });
+                    }
+                }
             }
         });
     }
