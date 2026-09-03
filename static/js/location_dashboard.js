@@ -344,17 +344,24 @@ class LocationDashboard {
 
     async saveCameras(shouldReload = true) {
         const ppeModelsList = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"];
-        Object.keys(this.cameraModels).forEach(cid => {
-            const stream = this.streams.find(s => String(s.id) === cid);
-            if (stream) {
-                this.cameraModels[cid] = this.cameraModels[cid].filter(model => {
-                    if (ppeModelsList.includes(model)) {
-                        const clean = model.replace(".pt", "");
-                        const cfg = (stream.model_configs && (stream.model_configs[model] || stream.model_configs[clean])) || {};
-                        const enabled = cfg.enabled_classes || [];
-                        return enabled.length > 0;
+        this.streams.forEach(stream => {
+            const cid = String(stream.id);
+            this.cameraModels[cid] = this.cameraModels[cid] || [];
+            if (stream.model_configs) {
+                Object.entries(stream.model_configs).forEach(([mKey, mVal]) => {
+                    if (mKey === "roi_polygon" || !mVal) return;
+                    const normM = mKey.endsWith(".pt") ? mKey : `${mKey}.pt`;
+                    let activeClasses = (mVal && mVal.enabled_classes) || [];
+                    if (activeClasses.length === 0 && mVal && mVal.class_configs && typeof mVal.class_configs === "object") {
+                        activeClasses = Object.keys(mVal.class_configs);
                     }
-                    return true;
+                    if (activeClasses.length > 0) {
+                        if (!this.cameraModels[cid].includes(normM)) {
+                            this.cameraModels[cid].push(normM);
+                        }
+                    } else if (ppeModelsList.includes(normM)) {
+                        this.cameraModels[cid] = this.cameraModels[cid].filter(m => m !== normM && m !== mKey);
+                    }
                 });
             }
         });
@@ -701,6 +708,13 @@ class LocationDashboard {
                     active = active.filter(x => x !== cls);
                 }
                 stream.model_configs[parentModel].enabled_classes = active;
+
+                stream.model_configs[parentModel].class_configs = stream.model_configs[parentModel].class_configs || {};
+                if (cb.checked) {
+                    stream.model_configs[parentModel].class_configs[cls] = stream.model_configs[parentModel].class_configs[cls] || { conf: 0.40, iou: 0.45 };
+                } else {
+                    delete stream.model_configs[parentModel].class_configs[cls];
+                }
 
                 if (active.length > 0) {
                     if (!this.cameraModels[key].includes(parentModel)) {
