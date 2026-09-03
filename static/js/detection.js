@@ -206,14 +206,16 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
             uniqueAssigned.forEach(m => {
                 const cleanName = m.replace(".pt", "");
                 const mCfg = modelConfigs[m] || modelConfigs[cleanName] || {};
-                const enabled = mCfg.enabled_classes || [];
-                // Any model with no enabled classes selected is skipped
+                const enabled = Array.from(new Set(mCfg.enabled_classes || []));
                 if (enabled.length === 0) {
                     return;
                 }
 
                 if (enabled.length > 0) {
                     enabled.forEach(cls => {
+                        const existingCard = chipsList.querySelector(`[data-model-clean="${cleanName}"][data-class="${cls}"]`);
+                        if (existingCard) return;
+
                         const cCfg = (mCfg.class_configs && mCfg.class_configs[cls]) || {};
                         const cVal = cCfg.conf !== undefined ? parseFloat(cCfg.conf).toFixed(2) : parseFloat(mCfg.conf || meta.conf || 0.40).toFixed(2);
                         const iVal = cCfg.iou !== undefined ? parseFloat(cCfg.iou).toFixed(2) : parseFloat(mCfg.iou || meta.iou || 0.45).toFixed(2);
@@ -221,6 +223,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                         const card = document.createElement("div");
                         card.className = "model-card-box";
                         card.setAttribute("data-model", m);
+                        card.setAttribute("data-model-clean", cleanName);
                         card.setAttribute("data-class", cls);
                         card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
                         card.innerHTML = `

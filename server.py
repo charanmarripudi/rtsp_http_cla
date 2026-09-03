@@ -391,6 +391,34 @@ def read_streams_metadata():
                 enriched_item["device_ip"] = matching_loc.get("device_ip", "")
                 enriched_item["device_status"] = matching_loc.get("device_status", "offline")
             
+            # Clean duplicate model_configs keys and enabled_classes arrays
+            if isinstance(enriched_item.get("model_configs"), dict):
+                raw_cfg = enriched_item["model_configs"]
+                clean_cfg = {}
+                for k, v in raw_cfg.items():
+                    if k == "roi_polygon":
+                        clean_cfg[k] = v
+                        continue
+                    norm_k = k if k.endswith(".pt") else f"{k}.pt"
+                    if norm_k not in clean_cfg or (isinstance(v, dict) and v.get("enabled_classes") and not clean_cfg[norm_k].get("enabled_classes")):
+                        clean_cfg[norm_k] = dict(v) if isinstance(v, dict) else v
+                    elif isinstance(v, dict):
+                        existing = clean_cfg[norm_k]
+                        if isinstance(existing, dict):
+                            existing_classes = existing.get("enabled_classes") or []
+                            new_classes = v.get("enabled_classes") or []
+                            existing["enabled_classes"] = list(dict.fromkeys(existing_classes + new_classes))
+                            existing_cc = existing.get("class_configs") or {}
+                            new_cc = v.get("class_configs") or {}
+                            existing_cc.update(new_cc)
+                            existing["class_configs"] = existing_cc
+
+                for k, v in clean_cfg.items():
+                    if isinstance(v, dict) and isinstance(v.get("enabled_classes"), list):
+                        v["enabled_classes"] = list(dict.fromkeys(v["enabled_classes"]))
+                
+                enriched_item["model_configs"] = clean_cfg
+
             enriched.append(enriched_item)
         # Update cache with enriched data
         with config_cache_lock:
