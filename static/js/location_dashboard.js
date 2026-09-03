@@ -713,10 +713,19 @@ class LocationDashboard {
                 stream.model_configs[cleanParent].enabled_classes = active;
 
                 if (active.length > 0) {
-                    if (!this.cameraModels[key].includes(parentModel)) this.cameraModels[key].push(parentModel);
+                    if (!this.cameraModels[key].includes(parentModel) && !this.cameraModels[key].includes(cleanParent)) {
+                        this.cameraModels[key].push(parentModel);
+                    }
                 } else {
-                    this.cameraModels[key] = this.cameraModels[key].filter(m => m !== parentModel);
+                    this.cameraModels[key] = this.cameraModels[key].filter(m => m !== parentModel && m !== cleanParent);
                 }
+                const seenMod = new Set();
+                this.cameraModels[key] = (this.cameraModels[key] || []).filter(m => {
+                    const clean = m.replace(".pt", "");
+                    if (seenMod.has(clean)) return false;
+                    seenMod.add(clean);
+                    return true;
+                });
             }
         });
     }

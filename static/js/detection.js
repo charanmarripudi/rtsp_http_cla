@@ -193,7 +193,17 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         if (existingCards.length === 0 || currentModelKeys !== existingModelKeys) {
             chipsList.innerHTML = "";
             const modelConfigs = meta.model_configs || {};
-            assigned.forEach(m => {
+            const uniqueAssigned = [];
+            const seenCleanNames = new Set();
+            (assigned || []).forEach(m => {
+                const clean = m.replace(".pt", "");
+                if (!seenCleanNames.has(clean)) {
+                    seenCleanNames.add(clean);
+                    uniqueAssigned.push(m);
+                }
+            });
+
+            uniqueAssigned.forEach(m => {
                 const cleanName = m.replace(".pt", "");
                 const mCfg = modelConfigs[m] || modelConfigs[cleanName] || {};
                 const enabled = mCfg.enabled_classes || [];
