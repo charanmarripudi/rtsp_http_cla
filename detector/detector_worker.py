@@ -173,7 +173,7 @@ class DetectorWorker:
             return False
         # 1. Absolute Minimum Size Bounds (Rejects single-pixel noise only)
         # Relaxed to allow small/distant detections in 480p/720p scaled streams
-        if bw < 4 or bh < 4 or box_area < 20:
+        if bw < 3 or bh < 3 or box_area < 10:
             return False
         # 2. Maximum Size Bounds (Rejects 80% full-screen hallucinations)
         if box_area > 0.85 * f_area or bh > 0.95 * f_h or bw > 0.95 * f_w:
@@ -204,7 +204,7 @@ class DetectorWorker:
                         enabled_classes = cfg.get("enabled_classes")
                         if (enabled_classes is None or len(enabled_classes) == 0) and isinstance(cfg.get("class_configs"), dict) and len(cfg.get("class_configs")) > 0:
                             enabled_classes = list(cfg.get("class_configs").keys())
-                        m_imgsz = int(cfg.get("imgsz", 640))
+                        m_imgsz = int(cfg.get("imgsz", 960))
 
                 # Dynamically set YOLO predict confidence to the minimum of active class sliders
                 detect_conf = m_conf

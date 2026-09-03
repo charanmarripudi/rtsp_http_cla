@@ -1488,9 +1488,12 @@ def start_detection(d: dict):
 
 @app.post("/api/stop-raw")
 def stop_raw_for_camera(d: dict):
-    cid = str(d.get("camera", ""))
-    _kill_raw_ffmpeg_for_camera(cid)
-    return {"status": "ok", "camera": cid}
+    try:
+        cid = str(d.get("camera", ""))
+        _kill_raw_ffmpeg_for_camera(cid)
+        return {"status": "ok", "camera": cid}
+    except Exception as e:
+        return {"status": "ok", "camera": str(d.get("camera", "")), "warn": str(e)}
 
 @app.post("/api/stop")
 def stop_detection(d: dict):
