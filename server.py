@@ -1275,40 +1275,11 @@ def save_streams(
             new_cfg = entry.get("model_configs", {})
             old_cfg = running[cid].get("model_configs", {})
             if new_cfg != old_cfg:
-                print(f"[API] Camera {cid} configuration updated. Restarting detector with new settings...")
-                conf = float(entry.get("conf", 0.40))
-                iou = float(entry.get("iou", 0.45))
-                loc = entry.get("location", f"Camera {i+1}")
-                
-                # Fetch assigned models
-                if os.path.exists(CAMERA_MODELS_JSON):
-                    try: cm = json.load(open(CAMERA_MODELS_JSON))
-                    except: cm = {}
-                else:
-                    cm = {}
-                mods = cm.get(cid, [])
-                
-                if mods:
-                    # Stop active detector
-                    proc = running[cid].get("proc")
-                    if proc:
-                        try:
-                            proc.kill()
-                            proc.wait(timeout=2.0)
-                        except: pass
-                    running.pop(cid, None)
-                    
-                    # Clean HLS detected directory
-                    _clean_stale_detected_segments(cid)
-                    
-                    # Start fresh detector
-                    model_paths = [os.path.join(BASE_DIR, "models", m) for m in mods]
-                    det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
-                    worker = DetectorWorker(u, det_dir, model_paths, conf=conf, iou=iou, location=loc, model_configs=new_cfg)
-                    thread = threading.Thread(target=worker.run, daemon=True)
-                    thread.start()
-                    proc = ThreadProcWrapper(worker, thread)
-                    running[cid] = {"proc": proc, "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": new_cfg, "start_time": int(time.time())}
+                print(f"[API] Camera {cid} configuration updated. Updating active worker settings...")
+                running[cid]["model_configs"] = new_cfg
+                w = running[cid].get("worker")
+                if w and hasattr(w, "model_configs"):
+                    w.model_configs = new_cfg
     
     # Stop streams that are NO LONGER in the new list
     max_new_idx = len(urls) - 1
@@ -1499,7 +1470,7 @@ def start_detection(d: dict):
     proc = ThreadProcWrapper(worker, thread)
     print(f"[SERVER-TIMER] DetectorWorker thread started for Camera {cid} in {int((time.time() - t_start)*1000)}ms")
     
-    running[cid] = {"proc": proc, "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs, "start_time": int(time.time())}
+    running[cid] = {"proc": proc, "worker": worker, "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs, "start_time": int(time.time())}
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
 
 @app.post("/api/stop-raw")
