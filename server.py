@@ -1258,10 +1258,17 @@ def save_streams(
                 if k == "roi_polygon":
                     clean_mc[k] = v
                     continue
+                if not isinstance(v, dict):
+                    continue
                 norm_k = k if k.endswith(".pt") else f"{k}.pt"
                 if norm_k not in clean_mc:
                     clean_mc[norm_k] = v
-            entry["model_configs"] = clean_mc
+                else:
+                    existing = clean_mc[norm_k]
+                    e_classes = (isinstance(existing, dict) and (existing.get("enabled_classes") or (list(existing.get("class_configs").keys()) if existing.get("class_configs") else []))) or []
+                    v_classes = (isinstance(v, dict) and (v.get("enabled_classes") or (list(v.get("class_configs").keys()) if v.get("class_configs") else []))) or []
+                    if len(v_classes) >= len(e_classes):
+                        clean_mc[norm_k] = v
 
     urls = [entry["rtsp"] for entry in entries if entry.get("rtsp")]
     open(STREAMS_CONF, "w").write("\n".join(urls))
