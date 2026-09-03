@@ -152,7 +152,7 @@ class DetectorWorker:
             "-b:v", "350k", "-maxrate", "400k", "-bufsize", "800k",
             "-g", str(int(self.fps * 2)), 
             "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
+            "-f", "hls", "-hls_time", "1", "-hls_list_size", "5",
             "-hls_flags", "delete_segments+append_list+independent_segments", 
             "-hls_segment_filename", os.path.join(self.output_dir, "segment_%05d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
@@ -204,7 +204,7 @@ class DetectorWorker:
                         enabled_classes = cfg.get("enabled_classes")
                         if (enabled_classes is None or len(enabled_classes) == 0) and isinstance(cfg.get("class_configs"), dict) and len(cfg.get("class_configs")) > 0:
                             enabled_classes = list(cfg.get("class_configs").keys())
-                        m_imgsz = int(cfg.get("imgsz", 960))
+                        m_imgsz = int(cfg.get("imgsz", 640))
 
                 # Dynamically set YOLO predict confidence to the minimum of active class sliders
                 detect_conf = m_conf
