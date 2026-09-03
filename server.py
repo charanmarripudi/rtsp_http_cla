@@ -847,13 +847,13 @@ async def serve_hls(path: str):
                 cid = folder.replace("stream", "").replace("_raw", "").replace("_detected", "")
                 
                 rtsp_url = None
-                ptz_cams = read_ptz_cameras()
-                for idx, c in enumerate(ptz_cams):
-                    if cid == f"ptz{idx}" or cid == c.get("id") or cid == str(idx):
-                        rtsp_url = c.get("rtsp")
-                        break
-                
-                if not rtsp_url:
+                if cid.startswith("ptz"):
+                    ptz_cams = read_ptz_cameras()
+                    for idx, c in enumerate(ptz_cams):
+                        if cid == f"ptz{idx}" or cid == c.get("id"):
+                            rtsp_url = c.get("rtsp")
+                            break
+                else:
                     streams = read_streams_metadata()
                     if cid.isdigit():
                         idx = int(cid)
@@ -1402,22 +1402,39 @@ def get_status():
 
 @app.post("/api/start")
 def start_detection(d: dict):
-    cid, rtsp, conf, iou = str(d["camera"]), d["rtsp"], float(d.get("conf", 0.25)), float(d.get("iou", 0.45))
-    if not is_valid_rtsp_url(rtsp): return {"error": "invalid rtsp"}
+    cid = str(d.get("camera", "0"))
+    rtsp = d.get("rtsp")
+    if not rtsp:
+        if cid.startswith("ptz"):
+            ptz_cams = read_ptz_cameras()
+            for idx, c in enumerate(ptz_cams):
+                if cid == f"ptz{idx}" or cid == c.get("id"):
+                    rtsp = c.get("rtsp")
+                    break
+        else:
+            streams = read_streams_metadata()
+            if cid.isdigit() and int(cid) < len(streams):
+                rtsp = streams[int(cid)].get("rtsp")
+            else:
+                for s in streams:
+                    if str(s.get("id")) == cid or s.get("location_id") == cid:
+                        rtsp = s.get("rtsp")
+                        break
+    if not rtsp or not is_valid_rtsp_url(rtsp):
+        return {"error": "invalid rtsp"}
+        
+    conf, iou = float(d.get("conf", 0.25)), float(d.get("iou", 0.45))
     mods = list(d["models"]) if "models" in d else [d["model"]] if "model" in d else []
     if not mods: return {"error": "no model"}
     
     # Get location from payload, or use saved location from streams.json, or default label
     loc = d.get("location")
     if not loc:
-        # Try to pull saved location from streams metadata
-        # First, search by RTSP URL (more reliable than index)
         metadata = read_streams_metadata()
         for entry in metadata:
             if isinstance(entry, dict) and entry.get("rtsp") == rtsp:
                 loc = entry.get("location")
                 break
-        # If not found by RTSP, try by index (fallback)
         if not loc:
             try:
                 cam_idx = int(cid)
@@ -1425,9 +1442,8 @@ def start_detection(d: dict):
                     loc = metadata[cam_idx].get("location")
             except (ValueError, IndexError):
                 pass
-    # If still no location, use default label
     if not loc:
-        loc = f"Camera {int(cid)+1}"
+        loc = f"Camera {int(cid)+1}" if cid.isdigit() else cid
     loc = sanitize_location(loc) or loc
     
     # Save model assignment to camera_models.json
@@ -1473,7 +1489,7 @@ def start_detection(d: dict):
     print(f"[SERVER-TIMER] Initializing DetectorWorker thread for Camera {cid} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
     t_start = time.time()
     
-    model_paths = [os.path.join(BASE_DIR, "models", m) for m in mods]
+    model_paths = [os.path.join(BASE_DIR, "models", m if m.endswith(".pt") else f"{m}.pt") for m in mods]
     worker = DetectorWorker(rtsp, det_dir, model_paths, conf=conf, iou=iou, location=loc, model_configs=model_configs)
     
     # Run the worker's run() loop in a daemon thread
