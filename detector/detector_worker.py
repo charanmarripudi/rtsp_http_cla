@@ -638,7 +638,7 @@ class DetectorWorker:
                         
                         if ffmpeg.poll() is not None: break
                         try:
-                            ffmpeg.stdin.write(pf)
+                            ffmpeg.stdin.write(pf.tobytes())
                         except: break
                 except:
                     import traceback
