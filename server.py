@@ -1083,12 +1083,18 @@ def fetch_filtered_streams_post(d: Optional[dict] = Body(default={})):
 
 @app.post("/api/streams")
 def save_streams(
-    data: Optional[list] = Body(default=None),
+    data: Optional[Any] = Body(default=None),
     rtsp: Optional[str] = None,
     location: Optional[str] = None,
     location_id: Optional[str] = None
 ):
     global _streams_metadata_cache, _streams_location_index_cache
+    
+    # Extract list if payload is wrapped in a dict
+    if isinstance(data, dict):
+        data = data.get("streams") or data.get("cameras") or data.get("payload") or data.get("data") or [data]
+    if data is not None and not isinstance(data, list):
+        data = [data]
     
     # Load valid locations from locations.json (single source of truth)
     valid_locations = read_locations()
