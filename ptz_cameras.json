@@ -1,7 +1,7 @@
 [
   {
-    "id": "ptz-0",
-    "label": "AMBICAM PTZ 1",
+    "id": "ptz-1788527872-0",
+    "label": "PTZ Camera 1",
     "rtsp": "rtsp://admin:@192.168.96.30:554/ch0_0.264",
     "ip": "192.168.96.30",
     "port": 8888,
