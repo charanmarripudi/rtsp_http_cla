@@ -2,6 +2,7 @@ from fastapi import FastAPI, Body, Query, Request
 from typing import Optional, Tuple, Any
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 import asyncio
 import httpx
 
@@ -344,6 +345,7 @@ if not os.path.exists(ALERTS_JSON): json.dump([], open(ALERTS_JSON, "w"))
 app = FastAPI()
 app.mount("/hls/alerts", StaticFiles(directory=ALERTS_DIR), name="alerts")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # ─────────────────────────────────────────────────────────────
 # HELPERS
@@ -1591,7 +1593,7 @@ async def get_locations(
     device_type: Optional[str] = None,
     id: Optional[str] = None,
     use_heartbeat: bool = True,
-    check_status: bool = True
+    check_status: bool = False
 ):
     """
     Returns all locations with real-time device status.
@@ -2826,7 +2828,22 @@ try:
 except Exception as _e:
     print(f"[ONVIF-PTZ] Warning: Could not initialize ONVIF client in server.py: {_e}")
 
-app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+class CachedStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200 and isinstance(response, FileResponse):
+            try:
+                with open(response.path, "rb") as f:
+                    content = f.read()
+                headers = dict(response.headers)
+                headers["Cache-Control"] = "public, max-age=86400"
+                headers.pop("content-length", None)
+                return Response(content=content, media_type=response.media_type, headers=headers)
+            except Exception:
+                pass
+        return response
+
+app.mount("/static", CachedStaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 # Explicit routes for each HTML page — avoids exposing BASE_DIR (which contains
 # the ever-growing logs/server.log) via StaticFiles, which caused h11
@@ -2836,19 +2853,25 @@ _HTML_FILES = ["index.html", "stream.html", "location_dashboard.html", "alerts.h
 @app.get("/")
 @app.head("/")
 async def serve_root():
-    return FileResponse(
-        os.path.join(BASE_DIR, "index.html"),
+    p = os.path.join(BASE_DIR, "index.html")
+    with open(p, "rb") as f:
+        content = f.read()
+    return Response(
+        content=content,
+        media_type="text/html",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
 
 for _html in _HTML_FILES:
     _html_path = os.path.join(BASE_DIR, _html)
     if os.path.exists(_html_path):
-        # Use a closure to capture the correct path for each file
         def _make_route(p):
             async def _serve():
-                return FileResponse(
-                    p,
+                with open(p, "rb") as f:
+                    content = f.read()
+                return Response(
+                    content=content,
+                    media_type="text/html",
                     headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
                 )
             return _serve
