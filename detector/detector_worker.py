@@ -155,18 +155,18 @@ class DetectorWorker:
             "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
-            "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
+            "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2",
             "-profile:v", "baseline", "-level:v", "3.1",
-            "-b:v", "500k", "-maxrate", "600k", "-bufsize", "1000k",
-            "-g", str(int(self.fps * 2)), 
-            "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
+            "-b:v", "350k", "-maxrate", "400k", "-bufsize", "800k",
+            "-g", str(int(self.fps)), 
+            "-keyint_min", str(int(self.fps)), "-sc_threshold", "0",
+            "-f", "hls", "-hls_time", "1", "-hls_list_size", "5",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, "segment_%05d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 500k", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 350k", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):
