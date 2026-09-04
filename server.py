@@ -1215,45 +1215,53 @@ def save_streams(
                 if entry.get("location"): incoming_locations.add(entry["location"].strip().lower())
                 if entry.get("location_id"): incoming_location_ids.add(str(entry["location_id"]).strip())
         
-        # 2. Merge incoming entries with existing camera metadata to prevent camera loss on restart
-        existing_by_rtsp = {e.get("rtsp"): e for e in current_metadata if isinstance(e, dict) and e.get("rtsp")}
-        existing_by_loc = {e.get("location"): e for e in current_metadata if isinstance(e, dict) and e.get("location")}
-        
-        final_map = {}
-        for idx, old_e in enumerate(current_metadata):
-            cid = str(old_e.get("id") if old_e.get("id") is not None else idx)
-            final_map[cid] = dict(old_e)
-            
-        for new_e in new_entries_to_add:
-            target_cid = None
-            if new_e.get("id") is not None and str(new_e.get("id")) in final_map:
-                target_cid = str(new_e.get("id"))
-            elif new_e.get("rtsp") and new_e.get("rtsp") in existing_by_rtsp:
-                old_m = existing_by_rtsp[new_e["rtsp"]]
-                target_cid = str(old_m.get("id")) if old_m.get("id") is not None else None
-            elif new_e.get("location") and new_e.get("location") in existing_by_loc:
-                old_m = existing_by_loc[new_e["location"]]
-                target_cid = str(old_m.get("id")) if old_m.get("id") is not None else None
+        # 2. Filter out current entries that belong to the same locations
+        # This allows us to "replace" cameras for specific locations without deleting others
+        if location_id is None and location is None:
+            # Merge incoming entries into existing metadata without wiping existing cameras
+            final_entries = list(current_metadata)
+            old_by_id = {str(e.get("id")): i for i, e in enumerate(final_entries) if isinstance(e, dict) and "id" in e}
+            old_by_rtsp = {e.get("rtsp"): i for i, e in enumerate(final_entries) if isinstance(e, dict) and e.get("rtsp")}
+            for entry in new_entries_to_add:
+                entry_id = str(entry.get("id")) if entry.get("id") is not None else None
+                match_idx = (old_by_id.get(entry_id) if entry_id is not None else None)
+                if match_idx is None and entry.get("rtsp"):
+                    match_idx = old_by_rtsp.get(entry.get("rtsp"))
+                if match_idx is not None:
+                    # Update existing camera in place
+                    merged = dict(final_entries[match_idx])
+                    merged.update(entry)
+                    final_entries[match_idx] = merged
+                else:
+                    # New camera -> append
+                    entry["id"] = len(final_entries)
+                    final_entries.append(entry)
+            entries = final_entries
+        else:
+            final_entries = []
+            for old_entry in current_metadata:
+                old_loc = str(old_entry.get("location") or "").strip().lower()
+                old_loc_id = str(old_entry.get("location_id") or "").strip()
                 
-            if target_cid is not None and target_cid in final_map:
-                final_map[target_cid].update(new_e)
-            else:
-                next_id = str(len(final_map))
-                new_e["id"] = int(next_id)
-                final_map[next_id] = new_e
+                if old_loc in incoming_locations or old_loc_id in incoming_location_ids:
+                    # This location is being updated by the incoming data, so we skip the old record
+                    continue
+                final_entries.append(old_entry)
                 
-        final_entries = list(final_map.values())
-        for idx, entry in enumerate(final_entries):
+            # 3. Add the new entries
+            final_entries.extend(new_entries_to_add)
+            entries = final_entries
+    else:
+        # Fallback to current state
+        entries = read_streams_metadata()
+
+    for idx, entry in enumerate(entries):
+        if isinstance(entry, dict):
             entry["id"] = idx
             entry["hls"] = f"/hls/stream{idx}_raw/playlist.m3u8"
             entry["hls_live"] = f"/hls/camera/{idx}/playlist.m3u8"
             entry["hls_raw"] = f"/hls/stream{idx}_raw/playlist.m3u8"
             entry["hls_detected"] = f"/hls/stream{idx}_detected/playlist.m3u8"
-            
-        entries = final_entries
-    else:
-        # Fallback to current state
-        entries = read_streams_metadata()
 
         # 4. Duplicate RTSP URLs are permitted to allow testing identical streams in multiple locations
     # Common persistence logic
