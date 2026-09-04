@@ -554,56 +554,58 @@
       };
     }
 
-  const btnSaveList = document.getElementById("ptz-btn-save-list");
-  if (btnSaveList) {
-    btnSaveList.onclick = async () => {
-      const rows = document.querySelectorAll("#ptz-cameras-edit-list .ptz-edit-row");
-      const payload = [];
-      rows.forEach((row, idx) => {
-        const rtsp = row.querySelector(".ptz-rtsp-input").value.trim();
-        const label = row.querySelector(".ptz-label-input").value.trim();
-        if (rtsp) {
-          payload.push({
-            rtsp: rtsp,
-            label: label || `PTZ Camera ${idx + 1}`
-          });
-        }
-      });
-
-      if (payload.length === 0) {
-        showStatusToast("Please enter at least one RTSP Stream URL", true);
-        return;
-      }
-
-      try {
-        showStatusToast("Saving PTZ Cameras configuration...");
-        btnSaveList.disabled = true;
-        btnSaveList.textContent = "Saving...";
-        const res = await fetch("/api/ptz/cameras", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+    const btnSaveList = document.getElementById("ptz-btn-save-list");
+    if (btnSaveList) {
+      btnSaveList.onclick = async () => {
+        const rows = document.querySelectorAll("#ptz-cameras-edit-list .ptz-edit-row");
+        const payload = [];
+        rows.forEach((row, idx) => {
+          const rtspEl = row.querySelector(".ptz-rtsp-input");
+          const labelEl = row.querySelector(".ptz-label-input");
+          const rtsp = rtspEl ? rtspEl.value.trim() : "";
+          const label = labelEl ? labelEl.value.trim() : "";
+          if (rtsp) {
+            payload.push({
+              rtsp: rtsp,
+              label: label || `PTZ Camera ${idx + 1}`
+            });
+          }
         });
-        const data = await res.json();
-        btnSaveList.disabled = false;
-        btnSaveList.textContent = "Save Cameras";
-        if (data.status === "success" && data.cameras) {
-          ptzCameras = data.cameras;
-          localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
-          renderPtzCameraSelect();
-          renderPtzCamerasConfigList();
-          await switchActivePtzCamera(0);
-          showStatusToast("PTZ Cameras Saved & Connected Successfully!");
-        } else {
-          showStatusToast("Failed to save PTZ cameras", true);
+
+        if (payload.length === 0) {
+          showStatusToast("Please enter at least one RTSP Stream URL", true);
+          return;
         }
-      } catch (e) {
-        btnSaveList.disabled = false;
-        btnSaveList.textContent = "Save Cameras";
-        showStatusToast("Save error: " + e.message, true);
-      }
-    };
-  }
+
+        try {
+          showStatusToast("Saving PTZ Cameras configuration...");
+          btnSaveList.disabled = true;
+          btnSaveList.textContent = "Saving...";
+          const res = await fetch("/api/ptz/cameras", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          btnSaveList.disabled = false;
+          btnSaveList.textContent = "Save Cameras";
+          if (data.status === "success" && data.cameras) {
+            ptzCameras = data.cameras;
+            localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
+            renderPtzCameraSelect();
+            renderPtzCamerasConfigList();
+            await switchActivePtzCamera(0);
+            showStatusToast("PTZ Cameras Saved & Connected Successfully!");
+          } else {
+            showStatusToast("Failed to save PTZ cameras", true);
+          }
+        } catch (e) {
+          btnSaveList.disabled = false;
+          btnSaveList.textContent = "Save Cameras";
+          showStatusToast("Save error: " + e.message, true);
+        }
+      };
+    }
 
     const btnRemoveActive = document.getElementById("ptz-btn-remove-active");
     if (btnRemoveActive) {
@@ -653,9 +655,72 @@
         } catch (e) {
           showStatusToast("Error removing camera: " + e.message, true);
         }
-      };
-    }
   }
+
+  // Document Click Delegation for PTZ Add & Save Buttons
+  document.addEventListener("click", (e) => {
+    const addRowBtn = e.target.closest("#ptz-btn-add-row");
+    if (addRowBtn) {
+      ptzCameras.push({
+        rtsp: "",
+        label: `PTZ Camera ${ptzCameras.length + 1}`
+      });
+      renderPtzCamerasConfigList();
+      return;
+    }
+
+    const saveListBtn = e.target.closest("#ptz-btn-save-list");
+    if (saveListBtn) {
+      const rows = document.querySelectorAll("#ptz-cameras-edit-list .ptz-edit-row");
+      const payload = [];
+      rows.forEach((row, idx) => {
+        const rtspEl = row.querySelector(".ptz-rtsp-input");
+        const labelEl = row.querySelector(".ptz-label-input");
+        const rtsp = rtspEl ? rtspEl.value.trim() : "";
+        const label = labelEl ? labelEl.value.trim() : "";
+        if (rtsp) {
+          payload.push({
+            rtsp: rtsp,
+            label: label || `PTZ Camera ${idx + 1}`
+          });
+        }
+      });
+
+      if (payload.length === 0) {
+        showStatusToast("Please enter at least one RTSP Stream URL", true);
+        return;
+      }
+
+      showStatusToast("Saving PTZ Cameras configuration...");
+      saveListBtn.disabled = true;
+      saveListBtn.textContent = "Saving...";
+      fetch("/api/ptz/cameras", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      .then(res => res.json())
+      .then(async data => {
+        saveListBtn.disabled = false;
+        saveListBtn.textContent = "Save Cameras";
+        if (data.status === "success" && data.cameras) {
+          ptzCameras = data.cameras;
+          localStorage.setItem("ptz_cameras_cache", JSON.stringify(ptzCameras));
+          renderPtzCameraSelect();
+          renderPtzCamerasConfigList();
+          await switchActivePtzCamera(0);
+          showStatusToast("PTZ Cameras Saved & Connected Successfully!");
+        } else {
+          showStatusToast("Failed to save PTZ cameras", true);
+        }
+      })
+      .catch(err => {
+        saveListBtn.disabled = false;
+        saveListBtn.textContent = "Save Cameras";
+        showStatusToast("Save error: " + err.message, true);
+      });
+    }
+  });
 
   function bindAction(el, startFn, stopFn) {
     el.addEventListener("mousedown", (e) => {
