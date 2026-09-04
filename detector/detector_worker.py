@@ -142,23 +142,31 @@ class DetectorWorker:
 
     def _create_ffmpeg(self):
         os.makedirs(self.output_dir, exist_ok=True)
-        # Fast, low-latency HLS transcode configuration matching raw streams (480p @ 350k bitrate)
+        # Clean stale HLS segments & playlist from previous session so player never loops old streams
+        import glob
+        for f in glob.glob(os.path.join(self.output_dir, "*")):
+            try:
+                if os.path.isfile(f) or os.path.islink(f):
+                    os.remove(f)
+            except Exception:
+                pass
+
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
-            "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2",
+            "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "baseline", "-level:v", "3.1",
-            "-b:v", "350k", "-maxrate", "400k", "-bufsize", "800k",
-            "-g", str(int(self.fps)), 
-            "-keyint_min", str(int(self.fps)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "1", "-hls_list_size", "5",
-            "-hls_flags", "delete_segments+append_list+independent_segments", 
+            "-b:v", "500k", "-maxrate", "600k", "-bufsize", "1000k",
+            "-g", str(int(self.fps * 2)), 
+            "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
+            "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
+            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, "segment_%05d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 350k", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 500k", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):
@@ -171,11 +179,10 @@ class DetectorWorker:
     def _is_valid_box(self, conf_val, m_conf, bw, bh, box_area, f_w, f_h, f_area):
         if conf_val < m_conf:
             return False
-        # 1. Absolute Minimum Size Bounds (Rejects single-pixel noise only)
-        # Relaxed to allow small/distant detections in 480p/720p scaled streams
+        # Absolute Minimum Size Bounds (Rejects single-pixel noise only)
         if bw < 3 or bh < 3 or box_area < 10:
             return False
-        # 2. Maximum Size Bounds (Rejects 80% full-screen hallucinations)
+        # Maximum Size Bounds (Rejects 80% full-screen hallucinations)
         if box_area > 0.85 * f_area or bh > 0.95 * f_h or bw > 0.95 * f_w:
             return False
         return True
@@ -195,16 +202,14 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                m_imgsz = 960
+                m_imgsz = 640
                 if isinstance(self.model_configs, dict):
                     cfg = self.model_configs.get(m_name) or self.model_configs.get(m_clean) or self.model_configs.get(m_name.lower())
                     if cfg and isinstance(cfg, dict):
                         m_conf = float(cfg.get("conf", self.conf))
                         m_iou = float(cfg.get("iou", self.iou))
                         enabled_classes = cfg.get("enabled_classes")
-                        if (enabled_classes is None or len(enabled_classes) == 0) and isinstance(cfg.get("class_configs"), dict) and len(cfg.get("class_configs")) > 0:
-                            enabled_classes = list(cfg.get("class_configs").keys())
-                        m_imgsz = int(cfg.get("imgsz", 960))
+                        m_imgsz = int(cfg.get("imgsz", 640))
 
                 # Dynamically set YOLO predict confidence to the minimum of active class sliders
                 detect_conf = m_conf

@@ -702,7 +702,7 @@ def start_raw_stream(i, u):
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
         "-profile:v", "baseline", "-level:v", "3.1",
         "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
-        "-threads", "2",
+        "-threads", "1",
         "-r", "12",
         "-g", "24", "-keyint_min", "24", "-sc_threshold", "0",
         "-f", "hls",
