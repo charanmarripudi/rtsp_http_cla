@@ -2621,376 +2621,402 @@ def get_analytics_by_usecase(d: dict = Body(default={})):
     return res.get("by_usecase", {}) 
 
 # ─────────────────────────────────────────────────────────────
-# ONVIF PTZ CAMERA CONTROL APIS
-# ─────────────────────────────────────────────────────────────
 # ONVIF PTZ CAMERA CONTROL & MULTI-CAMERA APIS
 # ─────────────────────────────────────────────────────────────
-try:
-    from onvif_client import OnvifPtzClient
-    _ptz_clients = {}
+_ptz_clients = {}
 
-    PTZ_CAMERAS_USER_FILE = os.path.join(BASE_DIR, "ptz_cameras_user.json")
-    PTZ_CAMERAS_FILE = os.path.join(BASE_DIR, "ptz_cameras.json")
+PTZ_CAMERAS_USER_FILE = os.path.join(BASE_DIR, "ptz_cameras_user.json")
+PTZ_CAMERAS_FILE = os.path.join(BASE_DIR, "ptz_cameras.json")
 
-    def read_ptz_cameras():
-        if os.path.exists(PTZ_CAMERAS_USER_FILE):
-            try:
-                with open(PTZ_CAMERAS_USER_FILE, "r") as f:
-                    data = json.load(f)
-                    if isinstance(data, list): return data
-            except: pass
-        if os.path.exists(PTZ_CAMERAS_FILE):
-            try:
-                with open(PTZ_CAMERAS_FILE, "r") as f:
-                    data = json.load(f)
-                    if isinstance(data, list): return data
-            except: pass
-        return []
-
-    def sync_ptz_to_streams(cams):
+def read_ptz_cameras():
+    if os.path.exists(PTZ_CAMERAS_USER_FILE):
         try:
-            conf_urls = []
-            if os.path.exists(STREAMS_CONF):
-                with open(STREAMS_CONF) as fp:
-                    conf_urls = [line.strip() for line in fp if line.strip()]
-            
-            json_streams = []
-            if os.path.exists(STREAMS_JSON):
-                try:
-                    with open(STREAMS_JSON) as fp:
-                        data = json.load(fp)
-                        if isinstance(data, list): json_streams = data
-                except: pass
-
-            ptz_urls = set()
-            for cam in cams:
-                u = (cam.get("rtsp") or "").strip()
-                if u: ptz_urls.add(u)
-
-            updated_conf = list(conf_urls)
-            for u in ptz_urls:
-                if u not in updated_conf:
-                    updated_conf.append(u)
-
-            with open(STREAMS_CONF, "w") as fp:
-                fp.write("\n".join(updated_conf) + "\n")
-
-            existing_json_urls = {e.get("rtsp") for e in json_streams if isinstance(e, dict) and e.get("rtsp")}
-            updated_json = list(json_streams)
-            for idx, cam in enumerate(cams):
-                u = (cam.get("rtsp") or "").strip()
-                if u and u not in existing_json_urls:
-                    updated_json.append({
-                        "rtsp": u,
-                        "location": cam.get("label") or f"PTZ Camera {idx + 1}",
-                        "location_id": cam.get("id") or f"ptz-{idx}",
-                        "is_ptz": True,
-                        "ptz_ip": cam.get("ip", "192.168.96.30"),
-                        "device_id": "RPI-001",
-                        "device_ip": "192.168.96.36",
-                        "device_status": "online"
-                    })
-                    existing_json_urls.add(u)
-
-            write_json_atomic(STREAMS_JSON, updated_json)
-
-            global _streams_metadata_cache, _streams_location_index_cache
-            with config_cache_lock:
-                _streams_metadata_cache = None
-                _streams_location_index_cache = None
-        except Exception as e:
-            print(f"[PTZ] Error syncing PTZ to streams: {e}")
-
-    def save_ptz_cameras(cams):
-        write_json_atomic(PTZ_CAMERAS_USER_FILE, cams)
-        try:
-            write_json_atomic(PTZ_CAMERAS_FILE, cams)
+            with open(PTZ_CAMERAS_USER_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, list): return data
         except: pass
-        sync_ptz_to_streams(cams)
-
-    def get_ptz_client_for_camera(ip="192.168.96.30", port=8888, user="admin", password=""):
-        key = f"{ip}:{port}:{user}"
-        if key not in _ptz_clients:
-            _ptz_clients[key] = OnvifPtzClient(ip=ip, port=port, username=user, password=password)
-        return _ptz_clients[key]
-
-    def normalize_ptz_rtsp(rtsp_url):
-        rtsp_url = (rtsp_url or "").strip()
-        if "://" in rtsp_url and "@" not in rtsp_url:
-            rtsp_url = rtsp_url.replace("rtsp://", "rtsp://admin:@")
-        return rtsp_url
-
-    def parse_rtsp_for_onvif(rtsp_url):
-        import re
-        rtsp_url = normalize_ptz_rtsp(rtsp_url)
-        match = re.search(r'rtsp://(?:([^:]+)(?::([^@]*))?@)?([^:/]+)(?::(\d+))?', rtsp_url)
-        if match:
-            user = match.group(1) or "admin"
-            pwd = match.group(2) or ""
-            ip = match.group(3) or "192.168.96.30"
-            return {"ip": ip, "username": user, "password": pwd, "port": 8888, "rtsp": rtsp_url}
-        return {"ip": "192.168.96.30", "username": "admin", "password": "", "port": 8888, "rtsp": rtsp_url}
-
-    @app.get("/api/ptz/cameras")
-    @app.get("/api/cameras")
-    @app.get("/cameras")
-    def get_ptz_cameras_api():
-        cams = read_ptz_cameras()
-        for idx, cam in enumerate(cams):
-            cid = f"ptz{idx}"
-            rtsp = normalize_ptz_rtsp(cam.get("rtsp", ""))
-            if rtsp:
-                try:
-                    start_raw_stream(cid, rtsp)
-                except Exception: pass
-                cam["hls_raw"] = f"/hls/stream{cid}_raw/playlist.m3u8"
-        return cams
-
-    @app.post("/api/ptz/cameras")
-    @app.post("/api/cameras")
-    @app.post("/cameras")
-    def post_ptz_cameras_api(payload: Any = Body(default=[])):
+    if os.path.exists(PTZ_CAMERAS_FILE):
         try:
-            cams_input = payload
-            if isinstance(payload, dict):
-                cams_input = payload.get("cameras") or payload.get("payload") or payload.get("data") or [payload]
-            if not isinstance(cams_input, list):
-                cams_input = [cams_input]
-                
-            processed_cams = []
-            for idx, item in enumerate(cams_input):
-                if isinstance(item, dict):
-                    rtsp = (item.get("rtsp") or item.get("stream_url") or item.get("url") or "").strip()
-                    label = (item.get("label") or item.get("name") or item.get("camera_name") or f"PTZ Camera {idx + 1}").strip()
-                    if rtsp:
-                        info = parse_rtsp_for_onvif(rtsp)
-                        normalized_url = info["rtsp"]
-                        cid = f"ptz{idx}"
-                        cam_obj = {
-                            "id": item.get("id") or item.get("camera_id") or f"ptz-{int(time.time())}-{idx}",
-                            "label": label,
-                            "rtsp": normalized_url,
-                            "ip": item.get("ip") or item.get("device_ip") or info["ip"],
-                            "port": item.get("port") or item.get("onvif_port") or info["port"],
-                            "username": item.get("username") or item.get("user") or item.get("onvif_username") or info["username"],
-                            "password": item.get("password") or item.get("pwd") or item.get("onvif_password") or info["password"],
-                            "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"
-                        }
-                        processed_cams.append(cam_obj)
-                        try:
-                            start_raw_stream(cid, normalized_url)
-                        except Exception as _e:
-                            print(f"[PTZ] Raw stream start note: {_e}")
-            save_ptz_cameras(processed_cams)
-            return {"status": "success", "cameras": processed_cams}
-        except Exception as e:
-            print(f"[PTZ] Error in post_ptz_cameras_api: {e}")
-            return {"status": "error", "message": str(e), "cameras": []}
+            with open(PTZ_CAMERAS_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, list): return data
+        except: pass
+    return []
 
-    @app.post("/api/ptz/cameras/add")
-    @app.post("/api/cameras/add")
-    @app.post("/cameras/add")
-    def api_add_ptz_camera_by_rtsp(d: dict = Body(default={})):
-        try:
-            rtsp = (d.get("rtsp") or d.get("stream_url") or d.get("url") or "").strip()
-            label = (d.get("label") or d.get("name") or d.get("camera_name") or "").strip()
-            if not rtsp:
-                raise HTTPException(status_code=400, detail="Missing RTSP URL")
-            info = parse_rtsp_for_onvif(rtsp)
-            normalized_url = info["rtsp"]
-            cams = read_ptz_cameras()
-            idx = len(cams)
-            new_label = label if label else f"PTZ Camera {idx + 1}"
-            cid = f"ptz{idx}"
-            new_cam = {
-                "id": d.get("id") or d.get("camera_id") or f"ptz-{int(time.time())}",
-                "label": new_label,
-                "rtsp": normalized_url,
-                "ip": d.get("ip") or d.get("device_ip") or info["ip"],
-                "port": d.get("port") or d.get("onvif_port") or info["port"],
-                "username": d.get("username") or d.get("user") or d.get("onvif_username") or info["username"],
-                "password": d.get("password") or d.get("pwd") or d.get("onvif_password") or info["password"],
-                "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"
-            }
-            cams.append(new_cam)
-            save_ptz_cameras(cams)
+def sync_ptz_to_streams(cams):
+    try:
+        conf_urls = []
+        if os.path.exists(STREAMS_CONF):
+            with open(STREAMS_CONF) as fp:
+                conf_urls = [line.strip() for line in fp if line.strip()]
+        
+        json_streams = []
+        if os.path.exists(STREAMS_JSON):
             try:
-                start_raw_stream(cid, normalized_url)
-            except Exception: pass
-            return {"status": "success", "camera": new_cam, "cameras": cams}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-    @app.delete("/api/ptz/cameras/{cam_id}")
-    @app.delete("/api/cameras/{cam_id}")
-    @app.delete("/cameras/{cam_id}")
-    def delete_ptz_camera_api(cam_id: str):
-        try:
-            cams = read_ptz_cameras()
-            new_cams = [c for c in cams if str(c.get("id")) != str(cam_id)]
-            save_ptz_cameras(new_cams)
-            return {"status": "success", "message": f"Camera {cam_id} removed", "cameras": new_cams}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-    @app.post("/api/ptz/cameras/start-stream")
-    def start_ptz_stream_api(d: dict = Body(default={})):
-        cid = d.get("cid", "ptz0")
-        rtsp = normalize_ptz_rtsp(d.get("rtsp", "rtsp://admin:@192.168.96.30:554/ch0_0.264"))
-        if rtsp:
-            start_raw_stream(cid, rtsp)
-            return {"status": "started", "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"}
-        raise HTTPException(status_code=400, detail="Missing RTSP URL")
-
-    def _parse_ptz_request_params(d: dict):
-        d = d if isinstance(d, dict) else {}
-        ip = (d.get("ip") or d.get("device_ip") or "").strip()
-        port = d.get("port") or d.get("onvif_port")
-        user = (d.get("username") or d.get("user") or d.get("onvif_username") or "admin").strip()
-        pwd = (d.get("password") or d.get("pwd") or d.get("onvif_password") or "").strip()
-
-        cam_id = d.get("camera_id") or d.get("id") or d.get("cid")
-        rtsp_url = (d.get("rtsp") or d.get("stream_url") or "").strip()
-
-        if not ip and (cam_id or rtsp_url):
-            try:
-                cams = read_ptz_cameras()
-                target_cam = None
-                if cam_id:
-                    for c in cams:
-                        if str(c.get("id")) == str(cam_id) or str(c.get("location_id")) == str(cam_id):
-                            target_cam = c
-                            break
-                if not target_cam and rtsp_url:
-                    for c in cams:
-                        if c.get("rtsp") == rtsp_url:
-                            target_cam = c
-                            break
-                if target_cam:
-                    ip = target_cam.get("ip") or "192.168.96.30"
-                    port = target_cam.get("port") or 8888
-                    user = target_cam.get("username") or "admin"
-                    pwd = target_cam.get("password") or ""
+                with open(STREAMS_JSON) as fp:
+                    data = json.load(fp)
+                    if isinstance(data, list): json_streams = data
             except: pass
 
-        if not ip:
-            ip = "192.168.96.30"
+        ptz_urls = set()
+        for cam in cams:
+            u = (cam.get("rtsp") or "").strip()
+            if u: ptz_urls.add(u)
 
+        updated_conf = list(conf_urls)
+        for u in ptz_urls:
+            if u not in updated_conf:
+                updated_conf.append(u)
+
+        with open(STREAMS_CONF, "w") as fp:
+            fp.write("\n".join(updated_conf) + "\n")
+
+        existing_json_urls = {e.get("rtsp") for e in json_streams if isinstance(e, dict) and e.get("rtsp")}
+        updated_json = list(json_streams)
+        for idx, cam in enumerate(cams):
+            u = (cam.get("rtsp") or "").strip()
+            if u and u not in existing_json_urls:
+                updated_json.append({
+                    "rtsp": u,
+                    "location": cam.get("label") or f"PTZ Camera {idx + 1}",
+                    "location_id": cam.get("id") or f"ptz-{idx}",
+                    "is_ptz": True,
+                    "ptz_ip": cam.get("ip", "192.168.96.30"),
+                    "device_id": "RPI-001",
+                    "device_ip": "192.168.96.36",
+                    "device_status": "online"
+                })
+                existing_json_urls.add(u)
+
+        write_json_atomic(STREAMS_JSON, updated_json)
+
+        global _streams_metadata_cache, _streams_location_index_cache
+        with config_cache_lock:
+            _streams_metadata_cache = None
+            _streams_location_index_cache = None
+    except Exception as e:
+        print(f"[PTZ] Error syncing PTZ to streams: {e}")
+
+def save_ptz_cameras(cams):
+    write_json_atomic(PTZ_CAMERAS_USER_FILE, cams)
+    try:
+        write_json_atomic(PTZ_CAMERAS_FILE, cams)
+    except: pass
+    sync_ptz_to_streams(cams)
+
+def get_ptz_client_for_camera(ip="192.168.96.30", port=8888, user="admin", password=""):
+    key = f"{ip}:{port}:{user}"
+    if key not in _ptz_clients:
         try:
-            port = int(port) if port is not None and str(port).strip() != "" else 8888
-        except:
-            port = 8888
+            from onvif_client import OnvifPtzClient
+            _ptz_clients[key] = OnvifPtzClient(ip=ip, port=port, username=user, password=password)
+        except Exception as _e:
+            print(f"[PTZ] OnvifPtzClient init error: {_e}")
+            return None
+    return _ptz_clients[key]
 
+def normalize_ptz_rtsp(rtsp_url):
+    rtsp_url = (rtsp_url or "").strip()
+    if "://" in rtsp_url and "@" not in rtsp_url:
+        rtsp_url = rtsp_url.replace("rtsp://", "rtsp://admin:@")
+    return rtsp_url
+
+def parse_rtsp_for_onvif(rtsp_url):
+    import re
+    rtsp_url = normalize_ptz_rtsp(rtsp_url)
+    match = re.search(r'rtsp://(?:([^:]+)(?::([^@]*))?@)?([^:/]+)(?::(\d+))?', rtsp_url)
+    if match:
+        user = match.group(1) or "admin"
+        pwd = match.group(2) or ""
+        ip = match.group(3) or "192.168.96.30"
+        return {"ip": ip, "username": user, "password": pwd, "port": 8888, "rtsp": rtsp_url}
+    return {"ip": "192.168.96.30", "username": "admin", "password": "", "port": 8888, "rtsp": rtsp_url}
+
+@app.get("/api/ptz/cameras")
+@app.get("/api/cameras")
+@app.get("/cameras")
+def get_ptz_cameras_api():
+    cams = read_ptz_cameras()
+    for idx, cam in enumerate(cams):
+        cid = f"ptz{idx}"
+        rtsp = normalize_ptz_rtsp(cam.get("rtsp", ""))
+        if rtsp:
+            try:
+                start_raw_stream(cid, rtsp)
+            except Exception: pass
+            cam["hls_raw"] = f"/hls/stream{cid}_raw/playlist.m3u8"
+    return cams
+
+@app.post("/api/ptz/cameras")
+@app.post("/api/cameras")
+@app.post("/cameras")
+def post_ptz_cameras_api(payload: Any = Body(default=[])):
+    try:
+        cams_input = payload
+        if isinstance(payload, dict):
+            cams_input = payload.get("cameras") or payload.get("payload") or payload.get("data") or [payload]
+        if not isinstance(cams_input, list):
+            cams_input = [cams_input]
+            
+        processed_cams = []
+        for idx, item in enumerate(cams_input):
+            if isinstance(item, dict):
+                rtsp = (item.get("rtsp") or item.get("stream_url") or item.get("url") or "").strip()
+                label = (item.get("label") or item.get("name") or item.get("camera_name") or f"PTZ Camera {idx + 1}").strip()
+                if rtsp:
+                    info = parse_rtsp_for_onvif(rtsp)
+                    normalized_url = info["rtsp"]
+                    cid = f"ptz{idx}"
+                    cam_obj = {
+                        "id": item.get("id") or item.get("camera_id") or f"ptz-{int(time.time())}-{idx}",
+                        "label": label,
+                        "rtsp": normalized_url,
+                        "ip": item.get("ip") or item.get("device_ip") or info["ip"],
+                        "port": item.get("port") or item.get("onvif_port") or info["port"],
+                        "username": item.get("username") or item.get("user") or item.get("onvif_username") or info["username"],
+                        "password": item.get("password") or item.get("pwd") or item.get("onvif_password") or info["password"],
+                        "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"
+                    }
+                    processed_cams.append(cam_obj)
+                    try:
+                        start_raw_stream(cid, normalized_url)
+                    except Exception as _e:
+                        print(f"[PTZ] Raw stream start note: {_e}")
+        save_ptz_cameras(processed_cams)
+        return {"status": "success", "cameras": processed_cams}
+    except Exception as e:
+        print(f"[PTZ] Error in post_ptz_cameras_api: {e}")
+        return {"status": "error", "message": str(e), "cameras": []}
+
+@app.post("/api/ptz/cameras/add")
+@app.post("/api/cameras/add")
+@app.post("/cameras/add")
+def api_add_ptz_camera_by_rtsp(d: dict = Body(default={})):
+    try:
+        rtsp = (d.get("rtsp") or d.get("stream_url") or d.get("url") or "").strip()
+        label = (d.get("label") or d.get("name") or d.get("camera_name") or "").strip()
+        if not rtsp:
+            raise HTTPException(status_code=400, detail="Missing RTSP URL")
+        info = parse_rtsp_for_onvif(rtsp)
+        normalized_url = info["rtsp"]
+        cams = read_ptz_cameras()
+        idx = len(cams)
+        new_label = label if label else f"PTZ Camera {idx + 1}"
+        cid = f"ptz{idx}"
+        new_cam = {
+            "id": d.get("id") or d.get("camera_id") or f"ptz-{int(time.time())}",
+            "label": new_label,
+            "rtsp": normalized_url,
+            "ip": d.get("ip") or d.get("device_ip") or info["ip"],
+            "port": d.get("port") or d.get("onvif_port") or info["port"],
+            "username": d.get("username") or d.get("user") or d.get("onvif_username") or info["username"],
+            "password": d.get("password") or d.get("pwd") or d.get("onvif_password") or info["password"],
+            "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"
+        }
+        cams.append(new_cam)
+        save_ptz_cameras(cams)
         try:
-            speed = float(d.get("speed")) if d.get("speed") is not None and str(d.get("speed")).strip() != "" else 0.5
-        except:
-            speed = 0.5
+            start_raw_stream(cid, normalized_url)
+        except Exception: pass
+        return {"status": "success", "camera": new_cam, "cameras": cams}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
+@app.delete("/api/ptz/cameras/{cam_id}")
+@app.delete("/api/cameras/{cam_id}")
+@app.delete("/cameras/{cam_id}")
+def delete_ptz_camera_api(cam_id: str):
+    try:
+        cams = read_ptz_cameras()
+        new_cams = [c for c in cams if str(c.get("id")) != str(cam_id)]
+        save_ptz_cameras(new_cams)
+        return {"status": "success", "message": f"Camera {cam_id} removed", "cameras": new_cams}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/ptz/cameras/start-stream")
+def start_ptz_stream_api(d: dict = Body(default={})):
+    cid = d.get("cid", "ptz0")
+    rtsp = normalize_ptz_rtsp(d.get("rtsp", "rtsp://admin:@192.168.96.30:554/ch0_0.264"))
+    if rtsp:
+        start_raw_stream(cid, rtsp)
+        return {"status": "started", "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"}
+    raise HTTPException(status_code=400, detail="Missing RTSP URL")
+
+def _parse_ptz_request_params(d: dict):
+    d = d if isinstance(d, dict) else {}
+    ip = (d.get("ip") or d.get("device_ip") or "").strip()
+    port = d.get("port") or d.get("onvif_port")
+    user = (d.get("username") or d.get("user") or d.get("onvif_username") or "admin").strip()
+    pwd = (d.get("password") or d.get("pwd") or d.get("onvif_password") or "").strip()
+
+    cam_id = d.get("camera_id") or d.get("id") or d.get("cid")
+    rtsp_url = (d.get("rtsp") or d.get("stream_url") or "").strip()
+
+    if not ip and (cam_id or rtsp_url):
         try:
-            duration = float(d.get("duration")) if d.get("duration") is not None and str(d.get("duration")).strip() != "" else 0.35
-        except:
-            duration = 0.35
+            cams = read_ptz_cameras()
+            target_cam = None
+            if cam_id:
+                for c in cams:
+                    if str(c.get("id")) == str(cam_id) or str(c.get("location_id")) == str(cam_id):
+                        target_cam = c
+                        break
+            if not target_cam and rtsp_url:
+                for c in cams:
+                    if c.get("rtsp") == rtsp_url:
+                        target_cam = c
+                        break
+            if target_cam:
+                ip = target_cam.get("ip") or "192.168.96.30"
+                port = target_cam.get("port") or 8888
+                user = target_cam.get("username") or "admin"
+                pwd = target_cam.get("password") or ""
+        except: pass
 
-        direction = (d.get("direction") or d.get("position") or "up").strip().lower()
-        return ip, port, user, pwd, direction, speed, duration
+    if not ip:
+        ip = "192.168.96.30"
 
-    @app.post("/api/ptz/move")
-    def api_ptz_move(d: dict = Body(default={})):
-        try:
-            ip, port, user, pwd, direction, speed, _ = _parse_ptz_request_params(d)
-            client = get_ptz_client_for_camera(ip, port, user, pwd)
-            return client.move(direction, speed)
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+    try:
+        port = int(port) if port is not None and str(port).strip() != "" else 8888
+    except:
+        port = 8888
 
-    @app.post("/api/ptz/step")
-    def api_ptz_step(d: dict = Body(default={})):
-        try:
-            ip, port, user, pwd, direction, speed, duration = _parse_ptz_request_params(d)
-            client = get_ptz_client_for_camera(ip, port, user, pwd)
-            return client.step(direction, speed, duration)
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+    try:
+        speed = float(d.get("speed")) if d.get("speed") is not None and str(d.get("speed")).strip() != "" else 0.5
+    except:
+        speed = 0.5
 
-    @app.post("/api/ptz/stop")
-    def api_ptz_stop(d: dict = Body(default={})):
-        try:
-            ip, port, user, pwd, _, _, _ = _parse_ptz_request_params(d)
-            client = get_ptz_client_for_camera(ip, port, user, pwd)
-            return client.stop()
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+    try:
+        duration = float(d.get("duration")) if d.get("duration") is not None and str(d.get("duration")).strip() != "" else 0.35
+    except:
+        duration = 0.35
 
-    @app.post("/api/ptz/zoom")
-    def api_ptz_zoom(d: dict = Body(default={})):
-        try:
-            ip, port, user, pwd, direction, speed, _ = _parse_ptz_request_params(d)
-            if direction not in ["in", "out", "zoomin", "zoomout"]:
-                direction = "in"
-            client = get_ptz_client_for_camera(ip, port, user, pwd)
-            return client.zoom(direction, speed)
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+    direction = (d.get("direction") or d.get("position") or "up").strip().lower()
+    return ip, port, user, pwd, direction, speed, duration
 
-    @app.post("/api/ptz/zoom-step")
-    def api_ptz_zoom_step(d: dict = Body(default={})):
-        try:
-            ip, port, user, pwd, direction, speed, duration = _parse_ptz_request_params(d)
-            if direction not in ["in", "out", "zoomin", "zoomout"]:
-                direction = "in"
-            client = get_ptz_client_for_camera(ip, port, user, pwd)
-            return client.zoom_step(direction, speed, duration)
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+@app.post("/api/ptz/move")
+def api_ptz_move(d: dict = Body(default={})):
+    try:
+        ip, port, user, pwd, direction, speed, _ = _parse_ptz_request_params(d)
+        client = get_ptz_client_for_camera(ip, port, user, pwd)
+        if not client:
+            return {"status": "error", "message": "PTZ client unavailable"}
+        return client.move(direction, speed)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
-    @app.get("/api/ptz/status")
-    def api_ptz_status(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
-        try:
-            client = get_ptz_client_for_camera(ip, port, username, password)
-            return client.get_status()
-        except Exception as e:
-            return {"status": "offline", "error": str(e)}
+@app.post("/api/ptz/step")
+def api_ptz_step(d: dict = Body(default={})):
+    try:
+        ip, port, user, pwd, direction, speed, duration = _parse_ptz_request_params(d)
+        client = get_ptz_client_for_camera(ip, port, user, pwd)
+        if not client:
+            return {"status": "error", "message": "PTZ client unavailable"}
+        return client.step(direction, speed, duration)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
-    @app.get("/api/ptz/presets")
-    def api_ptz_presets(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+@app.post("/api/ptz/stop")
+def api_ptz_stop(d: dict = Body(default={})):
+    try:
+        ip, port, user, pwd, _, _, _ = _parse_ptz_request_params(d)
+        client = get_ptz_client_for_camera(ip, port, user, pwd)
+        if not client:
+            return {"status": "error", "message": "PTZ client unavailable"}
+        return client.stop()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/ptz/zoom")
+def api_ptz_zoom(d: dict = Body(default={})):
+    try:
+        ip, port, user, pwd, direction, speed, _ = _parse_ptz_request_params(d)
+        if direction not in ["in", "out", "zoomin", "zoomout"]:
+            direction = "in"
+        client = get_ptz_client_for_camera(ip, port, user, pwd)
+        if not client:
+            return {"status": "error", "message": "PTZ client unavailable"}
+        return client.zoom(direction, speed)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/ptz/zoom-step")
+def api_ptz_zoom_step(d: dict = Body(default={})):
+    try:
+        ip, port, user, pwd, direction, speed, duration = _parse_ptz_request_params(d)
+        if direction not in ["in", "out", "zoomin", "zoomout"]:
+            direction = "in"
+        client = get_ptz_client_for_camera(ip, port, user, pwd)
+        if not client:
+            return {"status": "error", "message": "PTZ client unavailable"}
+        return client.zoom_step(direction, speed, duration)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/ptz/status")
+def api_ptz_status(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+    try:
         client = get_ptz_client_for_camera(ip, port, username, password)
+        if not client: return {"status": "offline", "error": "PTZ client unavailable"}
+        return client.get_status()
+    except Exception as e:
+        return {"status": "offline", "error": str(e)}
+
+@app.get("/api/ptz/presets")
+def api_ptz_presets(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+    try:
+        client = get_ptz_client_for_camera(ip, port, username, password)
+        if not client: return {"status": "error", "presets": []}
         return client.get_presets()
+    except Exception as e:
+        return {"status": "error", "presets": [], "error": str(e)}
 
-    @app.post("/api/ptz/presets/goto")
-    def api_ptz_goto_preset(d: dict = Body(default={})):
-        preset_token = d.get("preset_token", "1")
-        speed = float(d.get("speed", 1.0))
-        ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
-        user = d.get("username", "admin")
-        pwd = d.get("password", "")
+@app.post("/api/ptz/presets/goto")
+def api_ptz_goto_preset(d: dict = Body(default={})):
+    try:
+        ip, port, user, pwd, _, speed, _ = _parse_ptz_request_params(d)
+        preset_token = str(d.get("preset_token") or d.get("token") or "1")
         client = get_ptz_client_for_camera(ip, port, user, pwd)
+        if not client: return {"status": "error", "message": "PTZ client unavailable"}
         return client.goto_preset(preset_token, speed)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
-    @app.post("/api/ptz/presets/set")
-    def api_ptz_set_preset(d: dict = Body(default={})):
-        name = d.get("preset_name", "Preset")
-        ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
-        user = d.get("username", "admin")
-        pwd = d.get("password", "")
+@app.post("/api/ptz/presets/set")
+def api_ptz_set_preset(d: dict = Body(default={})):
+    try:
+        ip, port, user, pwd, _, _, _ = _parse_ptz_request_params(d)
+        name = str(d.get("preset_name") or d.get("name") or "Preset")
         client = get_ptz_client_for_camera(ip, port, user, pwd)
+        if not client: return {"status": "error", "message": "PTZ client unavailable"}
         return client.set_preset(name)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
-    @app.delete("/api/ptz/presets/{token}")
-    def api_ptz_delete_preset(token: str, ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+@app.delete("/api/ptz/presets/{token}")
+def api_ptz_delete_preset(token: str, ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+    try:
         client = get_ptz_client_for_camera(ip, port, username, password)
+        if not client: return {"status": "error", "message": "PTZ client unavailable"}
         return client.remove_preset(token)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
-    @app.get("/api/ptz/streams")
-    def api_ptz_streams(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
-        """Dynamically retrieves Main Stream and Sub Stream RTSP URLs via ONVIF."""
+@app.get("/api/ptz/streams")
+def api_ptz_streams(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+    try:
         client = get_ptz_client_for_camera(ip, port, username, password)
+        if not client: return {"status": "error", "streams": {}}
         return client.get_stream_uris()
+    except Exception as e:
+        return {"status": "error", "streams": {}, "error": str(e)}
 
-    @app.get("/api/ptz/info")
-    def api_ptz_info(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+@app.get("/api/ptz/info")
+def api_ptz_info(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+    try:
         client = get_ptz_client_for_camera(ip, port, username, password)
+        if not client: return {"status": "error", "error": "PTZ client unavailable"}
         return {
             "camera_ip": ip,
             "onvif_port": port,
@@ -2998,8 +3024,8 @@ try:
             "status": client.get_status(),
             "streams": client.get_stream_uris()
         }
-except Exception as _e:
-    print(f"[ONVIF-PTZ] Warning: Could not initialize ONVIF client in server.py: {_e}")
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 class CachedStaticFiles(StaticFiles):
     async def get_response(self, path, scope):
