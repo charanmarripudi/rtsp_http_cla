@@ -153,14 +153,15 @@ class DetectorWorker:
 
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+            "-fflags", "nobuffer+flush_packets", "-flags", "low_delay",
             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2",
             "-profile:v", "baseline", "-level:v", "3.1",
-            "-b:v", "350k", "-maxrate", "400k", "-bufsize", "800k",
+            "-b:v", "350k", "-maxrate", "400k", "-bufsize", "400k",
             "-g", str(int(self.fps)), 
             "-keyint_min", str(int(self.fps)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "1", "-hls_list_size", "5",
+            "-f", "hls", "-hls_time", "1", "-hls_list_size", "4",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, "segment_%05d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")

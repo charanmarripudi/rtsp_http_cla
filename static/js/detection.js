@@ -37,19 +37,19 @@ function playHLS(video, url, idx) {
         enableWorker: true,
         lowLatencyMode: true,
         startPosition: -1,
-        liveSyncDurationCount: 2.0,      // 2.0 segments cushion for smooth instant playback without buffering
-        liveMaxLatencyDurationCount: 5,  // Auto-catchup if delay > 5 segments
+        liveSyncDurationCount: 1,        // 1 segment cushion (~0.5s - 1.0s behind live RTSP camera feed)
+        liveMaxLatencyDurationCount: 2.5, // Auto catch-up if delay > 2.5s
         liveDurationInfinity: true,
         liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 5,
-        maxMaxBufferLength: 10,
-        manifestLoadingTimeOut: 20000,
+        maxBufferLength: 2,               // Keep player buffer queue ultra-small (2s max)
+        maxMaxBufferLength: 4,
+        manifestLoadingTimeOut: 10000,
         manifestLoadingMaxRetry: 10,
-        manifestLoadingRetryDelay: 500,
-        fragLoadingTimeOut: 20000,
+        manifestLoadingRetryDelay: 300,
+        fragLoadingTimeOut: 10000,
         fragLoadingMaxRetry: 10,
-        fragLoadingRetryDelay: 500
+        fragLoadingRetryDelay: 300
     });
     hlsInstances[idx] = hls;
 
@@ -60,7 +60,11 @@ function playHLS(video, url, idx) {
         stopSimulatedCanvas(idx, video);
         video.muted = true;
         video.playsInline = true;
-        video.play().catch(() => {});
+        video.play().then(() => {
+            if (video.seekable && video.seekable.length > 0) {
+                video.currentTime = video.seekable.end(0);
+            }
+        }).catch(() => {});
     });
 
     if (window.liveSyncIntervals && window.liveSyncIntervals[idx]) {
@@ -70,11 +74,11 @@ function playHLS(video, url, idx) {
     window.liveSyncIntervals[idx] = setInterval(() => {
         if (video && video.seekable && video.seekable.length > 0) {
             const liveEnd = video.seekable.end(0);
-            if (liveEnd - video.currentTime > 2.5) {
-                video.currentTime = liveEnd - 0.5;
+            if (liveEnd - video.currentTime > 1.2) {
+                video.currentTime = liveEnd - 0.2;
             }
         }
-    }, 2500);
+    }, 1000);
 
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
