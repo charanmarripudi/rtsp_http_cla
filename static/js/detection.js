@@ -63,6 +63,19 @@ function playHLS(video, url, idx) {
         video.play().catch(() => {});
     });
 
+    if (window.liveSyncIntervals && window.liveSyncIntervals[idx]) {
+        clearInterval(window.liveSyncIntervals[idx]);
+    }
+    window.liveSyncIntervals = window.liveSyncIntervals || {};
+    window.liveSyncIntervals[idx] = setInterval(() => {
+        if (video && video.seekable && video.seekable.length > 0) {
+            const liveEnd = video.seekable.end(0);
+            if (liveEnd - video.currentTime > 2.5) {
+                video.currentTime = liveEnd - 0.5;
+            }
+        }
+    }, 2500);
+
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
             if (video.paused) {
