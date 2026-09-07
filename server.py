@@ -1474,6 +1474,39 @@ def start_detection(d: dict):
         loc = f"Camera {int(cid)+1}" if cid.isdigit() else cid
     loc = sanitize_location(loc) or loc
     
+    # Save model_configs if provided
+    model_configs = d.get("model_configs") or {}
+    if not model_configs:
+        metadata = read_streams_metadata()
+        if cid.isdigit() and int(cid) < len(metadata) and isinstance(metadata[int(cid)], dict):
+            model_configs = metadata[int(cid)].get("model_configs") or {}
+    elif model_configs:
+        try:
+            entries = read_streams_metadata()
+            for idx, entry in enumerate(entries):
+                if str(entry.get("id", idx)) == cid or str(idx) == cid:
+                    entry["model_configs"] = model_configs
+            write_json_atomic(STREAMS_JSON, entries)
+        except Exception as e:
+            print(f"[ERROR] Failed to save model_configs: {e}")
+
+    # Filter mods list so we only run models that have active enabled classes (or explicit assignments)
+    ppe_models_set = {"ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt", "ppe_new", "nik_ppe_best", "hf_ppe_detection", "keremberke_ppe_gear", "hansung_ppe_violations"}
+    active_mods = []
+    for m in mods:
+        norm_m = m if m.endswith(".pt") else f"{m}.pt"
+        m_clean = norm_m.replace(".pt", "")
+        if norm_m in ppe_models_set or m_clean in ppe_models_set:
+            cfg = model_configs.get(norm_m) or model_configs.get(m_clean) or model_configs.get(norm_m.lower())
+            e_classes = (isinstance(cfg, dict) and cfg.get("enabled_classes")) or []
+            if len(e_classes) > 0:
+                if norm_m not in active_mods: active_mods.append(norm_m)
+        else:
+            if norm_m not in active_mods: active_mods.append(norm_m)
+
+    if active_mods:
+        mods = active_mods
+
     # Save model assignment to camera_models.json
     clean_mods = []
     for m in mods:
@@ -1505,18 +1538,6 @@ def start_detection(d: dict):
             import shutil
             shutil.rmtree(det_dir)
     os.makedirs(det_dir, exist_ok=True)
-
-    # Save model_configs if provided
-    model_configs = d.get("model_configs") or {}
-    if model_configs:
-        try:
-            entries = read_streams_metadata()
-            for idx, entry in enumerate(entries):
-                if str(entry.get("id", idx)) == cid or str(idx) == cid:
-                    entry["model_configs"] = model_configs
-            write_json_atomic(STREAMS_JSON, entries)
-        except Exception as e:
-            print(f"[ERROR] Failed to save model_configs: {e}")
 
     # Start detector worker inside an inline thread (avoids subprocess boot overhead entirely)
     print(f"[SERVER-TIMER] Initializing DetectorWorker thread for Camera {cid} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")

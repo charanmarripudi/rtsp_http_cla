@@ -246,33 +246,38 @@ class DetectorWorker:
                             bh = max(0, y2 - y1)
                             box_area = bw * bh
 
-                            # Filter by enabled classes (robust match handling dashes/underscores/spaces/doubles)
-                            if enabled_classes is not None and isinstance(enabled_classes, list):
-                                import re
-                                norm_cls = re.sub(r'[-_\s]+', '-', cls.lower())
-                                matched = False
-                                for e in enabled_classes:
-                                    norm_e = re.sub(r'[-_\s]+', '-', e.lower())
-                                    if norm_cls == norm_e:
-                                        matched = True
-                                        break
-                                if not matched:
-                                    continue
+                # Filter by enabled classes (robust match handling dashes/underscores/spaces/doubles)
+                if enabled_classes is not None and isinstance(enabled_classes, list):
+                    if len(enabled_classes) == 0:
+                        continue  # 0 classes enabled for this model -> skip all detections
+                    import re
+                    norm_cls = re.sub(r'[-_\s]+', '-', cls.lower())
+                    matched = False
+                    for e in enabled_classes:
+                        norm_e = re.sub(r'[-_\s]+', '-', e.lower())
+                        if norm_cls == norm_e:
+                            matched = True
+                            break
+                    if not matched:
+                        continue
+                elif isinstance(self.model_configs, dict) and len(self.model_configs) > 0 and (cfg is None or enabled_classes is None):
+                    # Class-based filtering active on camera, but this model has no enabled_classes list -> skip
+                    continue
 
-                            # Load class-specific conf thresholds
-                            cls_conf = m_conf
-                            if cfg and isinstance(cfg, dict):
-                                class_configs = cfg.get("class_configs")
-                                if class_configs and isinstance(class_configs, dict):
-                                    import re
-                                    norm_cls = re.sub(r'[-_\s]+', '-', cls.lower())
-                                    c_cfg = None
-                                    for k, val in class_configs.items():
-                                        if re.sub(r'[-_\s]+', '-', k.lower()) == norm_cls:
-                                            c_cfg = val
-                                            break
-                                    if c_cfg and isinstance(c_cfg, dict):
-                                        cls_conf = float(c_cfg.get("conf", m_conf))
+                # Load class-specific conf thresholds
+                cls_conf = m_conf
+                if cfg and isinstance(cfg, dict):
+                    class_configs = cfg.get("class_configs")
+                    if class_configs and isinstance(class_configs, dict):
+                        import re
+                        norm_cls = re.sub(r'[-_\s]+', '-', cls.lower())
+                        c_cfg = None
+                        for k, val in class_configs.items():
+                            if re.sub(r'[-_\s]+', '-', k.lower()) == norm_cls:
+                                c_cfg = val
+                                break
+                        if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
+                            cls_conf = float(c_cfg.get("conf", m_conf))
 
                             # Validate Box using class-specific confidence
                             if not self._is_valid_box(conf_val, cls_conf, bw, bh, box_area, f_w, f_h, f_area):
@@ -511,12 +516,25 @@ class DetectorWorker:
                     
                     print(f"[WORKER-TIMER] Camera {self.cam_id} RTSP connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
                     
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} creating FFmpeg process...", flush=True)
+                    t_ff_start = time.time()
+                    ffmpeg = self._create_ffmpeg()
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} FFmpeg process created in {int((time.time() - t_ff_start)*1000)}ms", flush=True)
+                    
+                    # Feed initial connecting frames so FFmpeg writes playlist.m3u8 instantly (<200ms)
+                    init_frame = self._get_connecting_frame()
+                    try:
+                        for _ in range(6):
+                            ffmpeg.stdin.write(init_frame.tobytes())
+                        ffmpeg.stdin.flush()
+                    except Exception:
+                        pass
+
                     if cap and cap.isOpened():
                         cap_t = threading.Thread(target=self._capture_thread, args=(cap,), daemon=True)
                         cap_t.start()
 
-                    # Wait up to 5s for the first real frame from camera before starting FFmpeg
-                    print(f"[WORKER-TIMER] Camera {self.cam_id} waiting for first raw frame...", flush=True)
+                    # Wait for first real raw frame from camera
                     t_frame_start = time.time()
                     while time.time() - t_frame_start < 5.0 and self._latest_raw_frame is None and not self._stop_event.is_set():
                         time.sleep(0.05)
@@ -525,11 +543,6 @@ class DetectorWorker:
                         break
                     
                     print(f"[WORKER-TIMER] Camera {self.cam_id} first raw frame received in {int((time.time() - t_frame_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-                    
-                    print(f"[WORKER-TIMER] Camera {self.cam_id} creating FFmpeg process...", flush=True)
-                    t_ff_start = time.time()
-                    ffmpeg = self._create_ffmpeg()
-                    print(f"[WORKER-TIMER] Camera {self.cam_id} FFmpeg process created in {int((time.time() - t_ff_start)*1000)}ms", flush=True)
                     
                     inf_t = threading.Thread(target=self._inference_thread, daemon=True)
                     inf_t.start()
