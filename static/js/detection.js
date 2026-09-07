@@ -382,14 +382,28 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
     }
 
     box.querySelector(".start").onclick = async () => {
-        const cm = await (await fetch("/api/camera-models")).json();
-        const models = cm[camStr] || [];
-        if (!models.length) return alert("No models assigned");
-        
         const domModelConfigs = JSON.parse(JSON.stringify(meta.model_configs || {}));
         if (window.roiDrawStates && window.roiDrawStates[i] && window.roiDrawStates[i].vertices && window.roiDrawStates[i].vertices.length === 2) {
             domModelConfigs.roi_polygon = window.roiDrawStates[i].vertices;
         }
+
+        let models = [];
+        for (const [mKey, mVal] of Object.entries(domModelConfigs)) {
+            if (mKey === "roi_polygon") continue;
+            const normM = mKey.endsWith(".pt") ? mKey : `${mKey}.pt`;
+            if (mVal && Array.isArray(mVal.enabled_classes)) {
+                if (mVal.enabled_classes.length > 0 && !models.includes(normM)) {
+                    models.push(normM);
+                }
+            } else if (mVal && typeof mVal === "object") {
+                if (!models.includes(normM)) models.push(normM);
+            }
+        }
+        if (!models.length) {
+            const cm = await (await fetch("/api/camera-models")).json().catch(() => ({}));
+            models = cm[camStr] || [];
+        }
+        if (!models.length) return alert("No active models or classes assigned");
         box.querySelectorAll(".model-card-box").forEach(card => {
             const mName = card.getAttribute("data-model");
             const cls = card.getAttribute("data-class");
