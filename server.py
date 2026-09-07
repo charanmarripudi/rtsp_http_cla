@@ -715,7 +715,7 @@ def start_raw_stream(i, u):
                 os.unlink(sd)
             elif os.path.exists(sd):
                 shutil.rmtree(sd, ignore_errors=True)
-            os.symlink(target_sd, sd)
+            os.symlink(os.path.basename(target_sd), sd)
             raw_streams_procs[cid] = {
                 "proc": raw_streams_procs[existing_cid]["proc"],
                 "rtsp": normalized_rtsp,
