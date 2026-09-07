@@ -1557,10 +1557,12 @@ def start_detection(d: dict):
         m_clean = norm_m.replace(".pt", "")
         cfg = model_configs.get(norm_m) or model_configs.get(m_clean) or model_configs.get(norm_m.lower())
         e_classes = (isinstance(cfg, dict) and cfg.get("enabled_classes")) or []
-        if len(e_classes) > 0:
-            if norm_m not in active_mods: active_mods.append(norm_m)
-        elif not model_configs and norm_m not in active_mods:
-            active_mods.append(norm_m)
+        if norm_m in ppe_models_set:
+            if len(e_classes) > 0 and norm_m not in active_mods:
+                active_mods.append(norm_m)
+        else:
+            if norm_m not in active_mods:
+                active_mods.append(norm_m)
 
     if active_mods:
         mods = active_mods
