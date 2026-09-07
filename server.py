@@ -1556,6 +1556,12 @@ def start_detection(d: dict):
         norm_m = m if m.endswith(".pt") else f"{m}.pt"
         m_clean = norm_m.replace(".pt", "")
         cfg = model_configs.get(norm_m) or model_configs.get(m_clean) or model_configs.get(norm_m.lower())
+        if not cfg:
+            m_norm_target = m_clean.lower().replace("_", "-").replace(" ", "-")
+            for k, v in model_configs.items():
+                if str(k).replace(".pt", "").lower().replace("_", "-").replace(" ", "-") == m_norm_target:
+                    cfg = v
+                    break
         e_classes = (isinstance(cfg, dict) and cfg.get("enabled_classes")) or []
         if norm_m in ppe_models_set:
             if len(e_classes) > 0 and norm_m not in active_mods:
@@ -1564,8 +1570,7 @@ def start_detection(d: dict):
             if norm_m not in active_mods:
                 active_mods.append(norm_m)
 
-    if active_mods:
-        mods = active_mods
+    mods = active_mods
 
     # Save model assignment to camera_models.json
     clean_mods = []

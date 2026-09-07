@@ -5,8 +5,8 @@ function stopSimulatedCanvas(idx, video) {
     if (video && video.srcObject) { video.srcObject = null; }
 }
 
-async function playHLS(video, url, idx) {
-    if (video.dataset.currentUrl === url && hlsInstances[idx]) {
+async function playHLS(video, url, idx, forceReload = false) {
+    if (!forceReload && video.dataset.currentUrl === url && hlsInstances[idx]) {
         return; // Stream is already playing this URL — don't interrupt or buffer!
     }
     video.dataset.currentUrl = url;
@@ -149,7 +149,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
                         return;
                     }
                     console.log(`[CLIENT-TIMER] Camera ${idx} segments ready (tsCount: ${tsCount}) at ${new Date().toLocaleTimeString()} (elapsed: ${Date.now() - start}ms). Switching stream...`);
-                    playHLS(video, meta.hls_detected, idx);
+                    playHLS(video, meta.hls_detected, idx, true);
                     if (badge) badge.textContent = "● AI ACTIVE";
                     fetch("/api/stop-raw", {
                         method: "POST",
@@ -183,7 +183,7 @@ async function waitAndSwitchRaw(video, meta, idx, box, badge) {
                         window.cameraTransitioning[idx] = false;
                         return;
                     }
-                    playHLS(video, meta.hls_raw, idx);
+                    playHLS(video, meta.hls_raw, idx, true);
                     if (badge) badge.textContent = "○ RAW";
                     window.cameraTransitioning[idx] = false;
                     return;

@@ -225,6 +225,12 @@ class DetectorWorker:
                         enabled_classes = cfg.get("enabled_classes")
                         m_imgsz = int(cfg.get("imgsz", 640))
 
+                # Skip PPE model entirely if it is class-configurable and has 0 enabled classes
+                ppe_models_set = {"ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt", "ppe_new", "nik_ppe_best", "hf_ppe_detection", "keremberke_ppe_gear", "hansung_ppe_violations"}
+                if m_name in ppe_models_set or m_clean in ppe_models_set:
+                    if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) == 0:
+                        continue
+
                 # Dynamically set YOLO predict confidence to the minimum of active class sliders
                 detect_conf = m_conf
                 if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) > 0:
