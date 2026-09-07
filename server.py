@@ -1010,15 +1010,24 @@ def get_model_classes(model_name: str):
     return []
 
 @app.get("/api/model-classes")
-def get_model_classes_endpoint(model: str):
-    return {"model": model, "classes": get_model_classes(model)}
+def get_model_classes_endpoint(model: Optional[str] = Query(default=None), model_name: Optional[str] = Query(default=None)):
+    target_model = model or model_name
+    if not target_model:
+        return {"classes": ALL_MODEL_CLASSES if 'ALL_MODEL_CLASSES' in globals() else {}}
+    return {"model": target_model, "classes": get_model_classes(target_model)}
 
 @app.get("/api/streams")
 def get_streams(
+    response: Response = None,
     location_id: Optional[str] = None, 
     location: Optional[str] = None,
     rtsp: Optional[str] = None
 ):
+    if response is not None:
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    
     # If rtsp is provided in a GET request, we treat it as an 'add' for convenience
     if rtsp and isinstance(rtsp, str):
         return save_streams(None, rtsp, location, location_id)
@@ -1086,7 +1095,8 @@ def save_streams(
     data: Optional[list] = Body(default=None),
     rtsp: Optional[str] = None,
     location: Optional[str] = None,
-    location_id: Optional[str] = None
+    location_id: Optional[str] = None,
+    replace_all: Optional[bool] = Query(default=False)
 ):
     global _streams_metadata_cache, _streams_location_index_cache
     
@@ -1215,42 +1225,26 @@ def save_streams(
                 if entry.get("location"): incoming_locations.add(entry["location"].strip().lower())
                 if entry.get("location_id"): incoming_location_ids.add(str(entry["location_id"]).strip())
         
-        # 2. Filter out current entries that belong to the same locations
-        # This allows us to "replace" cameras for specific locations without deleting others
-        if location_id is None and location is None:
-            # Merge incoming entries into existing metadata without wiping existing cameras
-            final_entries = list(current_metadata)
-            old_by_id = {str(e.get("id")): i for i, e in enumerate(final_entries) if isinstance(e, dict) and "id" in e}
-            old_by_rtsp = {e.get("rtsp"): i for i, e in enumerate(final_entries) if isinstance(e, dict) and e.get("rtsp")}
-            for entry in new_entries_to_add:
-                entry_id = str(entry.get("id")) if entry.get("id") is not None else None
-                match_idx = (old_by_id.get(entry_id) if entry_id is not None else None)
-                if match_idx is None and entry.get("rtsp"):
-                    match_idx = old_by_rtsp.get(entry.get("rtsp"))
-                if match_idx is not None:
-                    # Update existing camera in place
-                    merged = dict(final_entries[match_idx])
-                    merged.update(entry)
-                    final_entries[match_idx] = merged
-                else:
-                    # New camera -> append
-                    entry["id"] = len(final_entries)
-                    final_entries.append(entry)
-            entries = final_entries
-        else:
+        if replace_all:
+            entries = new_entries_to_add
+        elif incoming_locations or incoming_location_ids:
+            # Replace streams for incoming locations while preserving cameras in all other locations
             final_entries = []
             for old_entry in current_metadata:
                 old_loc = str(old_entry.get("location") or "").strip().lower()
                 old_loc_id = str(old_entry.get("location_id") or "").strip()
                 
-                if old_loc in incoming_locations or old_loc_id in incoming_location_ids:
-                    # This location is being updated by the incoming data, so we skip the old record
+                if (old_loc and old_loc in incoming_locations) or (old_loc_id and old_loc_id in incoming_location_ids):
+                    # Skip old entries for locations being updated
                     continue
                 final_entries.append(old_entry)
                 
-            # 3. Add the new entries
             final_entries.extend(new_entries_to_add)
             entries = final_entries
+        elif new_entries_to_add:
+            entries = new_entries_to_add
+        else:
+            entries = current_metadata
     else:
         # Fallback to current state
         entries = read_streams_metadata()
@@ -1286,6 +1280,7 @@ def save_streams(
                     v_classes = (isinstance(v, dict) and (v.get("enabled_classes") or (list(v.get("class_configs").keys()) if v.get("class_configs") else []))) or []
                     if len(v_classes) >= len(e_classes):
                         clean_mc[norm_k] = v
+            entry["model_configs"] = clean_mc
 
     urls = [entry["rtsp"] for entry in entries if entry.get("rtsp")]
     open(STREAMS_CONF, "w").write("\n".join(urls))
@@ -1347,38 +1342,63 @@ def delete_stream(
     
     body = d or {}
     req_rtsp = str(rtsp or body.get("rtsp") or "").strip()
-    req_loc_id = str(location_id or id or body.get("location_id") or body.get("id") or "").strip()
+    req_id = str(id or body.get("id") or "").strip()
+    req_loc_id = str(location_id or body.get("location_id") or "").strip()
     req_loc_name = str(location or body.get("location") or "").strip().lower()
-    req_idx = index if index is not None else body.get("index")
+    
+    req_idx = None
+    if index is not None:
+        req_idx = index
+    elif body.get("index") is not None:
+        try: req_idx = int(body.get("index"))
+        except: pass
+    elif req_id.isdigit():
+        try: req_idx = int(req_id)
+        except: pass
 
     current_metadata = read_streams_metadata()
     exists_idx = -1
 
-    if req_idx is not None and isinstance(req_idx, int) and 0 <= req_idx < len(current_metadata):
-        exists_idx = req_idx
-    else:
-        for i, entry in enumerate(current_metadata):
-            stored_rtsp = (entry.get("rtsp") or "").strip()
-            stored_loc_id = str(entry.get("location_id") or entry.get("id") or "").strip()
-            stored_loc_name = str(entry.get("location") or "").strip().lower()
+    # 1. First search by explicit RTSP, ID, or Location ID/Name
+    for i, entry in enumerate(current_metadata):
+        stored_rtsp = (entry.get("rtsp") or "").strip()
+        stored_id = str(entry.get("id") if entry.get("id") is not None else "").strip()
+        stored_loc_id = str(entry.get("location_id") or "").strip()
+        stored_loc_name = str(entry.get("location") or "").strip().lower()
 
-            if req_rtsp and stored_rtsp == req_rtsp:
-                exists_idx = i
-                break
-            if req_loc_id and stored_loc_id == req_loc_id:
-                exists_idx = i
-                break
-            if req_loc_name and stored_loc_name == req_loc_name:
-                exists_idx = i
-                break
+        if req_rtsp and stored_rtsp == req_rtsp:
+            exists_idx = i
+            break
+        if req_id and (stored_id == req_id or str(i) == req_id):
+            exists_idx = i
+            break
+        if req_loc_id and stored_loc_id == req_loc_id:
+            exists_idx = i
+            break
+        if req_loc_name and stored_loc_name == req_loc_name:
+            exists_idx = i
+            break
+
+    # 2. Fallback to req_idx only if no specific field match was found
+    if exists_idx < 0 and req_idx is not None and isinstance(req_idx, int) and 0 <= req_idx < len(current_metadata):
+        exists_idx = req_idx
 
     if exists_idx >= 0:
         removed_item = current_metadata.pop(exists_idx)
         removed_rtsp = (removed_item.get("rtsp") or "").strip()
 
+        # Re-index remaining streams so IDs and HLS paths stay contiguous
+        for new_i, entry in enumerate(current_metadata):
+            if isinstance(entry, dict):
+                entry["id"] = new_i
+                entry["hls"] = f"/hls/stream{new_i}_raw/playlist.m3u8"
+                entry["hls_live"] = f"/hls/camera/{new_i}/playlist.m3u8"
+                entry["hls_raw"] = f"/hls/stream{new_i}_raw/playlist.m3u8"
+                entry["hls_detected"] = f"/hls/stream{new_i}_detected/playlist.m3u8"
+
         urls = [entry["rtsp"] for entry in current_metadata if entry.get("rtsp")]
         with open(STREAMS_CONF, "w") as sf:
-            sf.write("\n".join(urls) + "\n")
+            sf.write("\n".join(urls) + ("\n" if urls else ""))
         write_json_atomic(STREAMS_JSON, current_metadata)
 
         try:
@@ -1526,7 +1546,7 @@ def stop_raw_for_camera(d: dict):
 
 @app.post("/api/stop")
 def stop_detection(d: dict):
-    cid = str(d["camera"])
+    cid = str(d.get("camera", d.get("camera_id", d.get("stream_id", "0"))))
     if cid in running:
         proc = running[cid].get("proc")
         running.pop(cid, None)
@@ -2718,9 +2738,15 @@ try:
     @app.delete("/api/ptz/cameras/{cam_id}")
     def delete_ptz_camera_api(cam_id: str):
         cams = read_ptz_cameras()
-        new_cams = [c for c in cams if str(c.get("id")) != str(cam_id)]
+        target = str(cam_id).strip()
+        new_cams = [c for c in cams if str(c.get("id")).strip() != target and (c.get("rtsp") or "").strip() != target]
         if len(new_cams) == len(cams):
-            raise HTTPException(status_code=404, detail="PTZ camera not found")
+            try:
+                idx = int(target)
+                if 0 <= idx < len(cams):
+                    new_cams.pop(idx)
+            except Exception:
+                pass
         save_ptz_cameras(new_cams)
         return {"status": "success", "message": f"Camera {cam_id} removed", "cameras": new_cams}
 

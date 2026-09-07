@@ -1254,7 +1254,7 @@
   </div>
 
   <script src="/static/js/detection.js?v=7.0"></script>
-  <script src="/static/js/location_dashboard.js?v=5.0"></script>
+  <script src="/static/js/location_dashboard.js?v=6.0"></script>
   <script src="/static/js/ptz_controller.js?v=3.0"></script>
 
   <script>
@@ -1277,19 +1277,22 @@
       let streams = [];
       window.isOfflineMode = false;
       try {
-        const r = await fetch("/api/streams");
+        const r = await fetch(`/api/streams?t=${Date.now()}`, { cache: "no-store" });
         if (!r.ok) throw new Error("HTTP error " + r.status);
         streams = await r.json();
         dot.className = "ok";
         label.textContent = (Array.isArray(streams) ? streams.length : 0) + " camera(s) configured";
 
-        // Server is online. Clear offline local storage to sync with the empty/reset server configuration
-        if (Array.isArray(streams) && streams.length === 0) {
-          localStorage.removeItem("offline_streams");
-          localStorage.removeItem("offline_camera_models");
-          for (let i = 0; i < 20; i++) {
-            localStorage.removeItem(`offline_detecting_${i}`);
-            localStorage.removeItem(`offline_active_models_${i}`);
+        // Server is online. Sync localStorage with current server streams configuration
+        if (Array.isArray(streams)) {
+          localStorage.setItem("offline_streams", JSON.stringify(streams));
+          if (streams.length === 0) {
+            localStorage.removeItem("offline_streams");
+            localStorage.removeItem("offline_camera_models");
+            for (let i = 0; i < 20; i++) {
+              localStorage.removeItem(`offline_detecting_${i}`);
+              localStorage.removeItem(`offline_active_models_${i}`);
+            }
           }
         }
       } catch (e) {
@@ -1773,7 +1776,21 @@
         });
       }
 
-      function removeCameraAt(index) {
+      async function removeCameraAt(index) {
+        const streamToRemove = streamsArray[index];
+        if (streamToRemove) {
+          const streamId = streamToRemove.id !== undefined ? streamToRemove.id : index;
+          const rtspUrl = streamToRemove.rtsp || "";
+          const locId = streamToRemove.location_id || "";
+          const locName = streamToRemove.location || "";
+          try {
+            await fetch(`/api/streams?id=${encodeURIComponent(streamId)}&index=${encodeURIComponent(index)}&rtsp=${encodeURIComponent(rtspUrl)}&location_id=${encodeURIComponent(locId)}&location=${encodeURIComponent(locName)}`, {
+              method: "DELETE"
+            });
+          } catch (err) {
+            console.error("Error deleting stream from server:", err);
+          }
+        }
         streamsArray.splice(index, 1);
         const newMap = {};
         for (let i = 0; i <= streamsArray.length; i++) {
@@ -1784,9 +1801,14 @@
           }
         }
         cameraModelsMap = newMap;
+        if (window.dashboardInstance) {
+          window.dashboardInstance.streams = streamsArray;
+          window.dashboardInstance.cameraModels = cameraModelsMap;
+        }
+        localStorage.setItem("offline_streams", JSON.stringify(streamsArray));
+        localStorage.setItem("offline_camera_models", JSON.stringify(cameraModelsMap));
         renderCamerasConfig();
         renderLocationWidgets();
-        saveCurrentConfiguration(false);
       }
 
       async function saveCurrentConfiguration(shouldReload) {
@@ -1808,8 +1830,16 @@
 
         const payload = streamsArray
           .map((item, idx) => ({
+            id: item.id !== undefined ? item.id : idx,
             rtsp: (item.rtsp || "").trim(),
-            location: (item.location || `Location ${idx + 1}`).trim()
+            location: (item.location || `Location ${idx + 1}`).trim(),
+            location_id: item.location_id || "",
+            device_id: item.device_id || "",
+            device_ip: item.device_ip || "",
+            device_status: item.device_status || "offline",
+            conf: item.conf !== undefined && item.conf !== null ? parseFloat(item.conf) : 0.40,
+            iou: item.iou !== undefined && item.iou !== null ? parseFloat(item.iou) : 0.45,
+            model_configs: item.model_configs || {}
           }))
           .filter(item => item.rtsp !== "");
 
@@ -1993,12 +2023,6 @@
 
             renderPpeSection("hansung_ppe_violations.pt", "HANSUNG VIOLATIONS CLASSES", "#fb7185", [
               "Hardhat","Mask","NO-Hardhat","NO-Mask","NO-Safety Vest","Person","Safety Cone","Safety Vest","machinery","vehicle"
-            ]);       renderPpeSection("hf_ppe_detection.pt", "HF PPE DETECTION CLASSES", "#a78bfa", [
-              "helmet","human","no-helmet","vest"
-            ]);
-
-            renderPpeSection("keremberke_ppe_gear.pt", "KEREMBERKE GEAR CLASSES", "#38bdf8", [
-              "glove","goggles","helmet","mask","no_glove","no_goggles","no_helmet","no_mask","no_shoes","shoes"
             ]);
 
             modelRow.appendChild(listContainer);

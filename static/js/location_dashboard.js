@@ -84,11 +84,12 @@ class LocationDashboardTemplates {
 
 class LocationDashboardApi {
     async loadAll() {
+        const t = Date.now();
         const [locRes, streamRes, modelRes, cameraModelRes] = await Promise.all([
-            fetch("/api/locations"),
-            fetch("/api/streams"),
-            fetch("/api/models"),
-            fetch("/api/camera-models")
+            fetch(`/api/locations?t=${t}`, { cache: "no-store" }),
+            fetch(`/api/streams?t=${t}`, { cache: "no-store" }),
+            fetch(`/api/models?t=${t}`, { cache: "no-store" }),
+            fetch(`/api/camera-models?t=${t}`, { cache: "no-store" })
         ]);
         return {
             locations: locRes.ok ? (await locRes.json()).locations || [] : [],
@@ -261,9 +262,16 @@ class LocationDashboard {
 
     get locations() { return this.store.locations; }
     get streams() { return this.store.streams; }
-    set streams(value) { this.store.streams = value; }
+    set streams(value) {
+        this.store.streams = value;
+        window.streamsArray = value;
+    }
     get allModels() { return this.store.allModels; }
     get cameraModels() { return this.store.cameraModels; }
+    set cameraModels(value) {
+        this.store.cameraModels = value;
+        window.cameraModelsMap = value;
+    }
 
     async init() {
         this.tabs.bind();
@@ -797,11 +805,52 @@ class LocationDashboard {
         this.renderLocationWidgets(true);
     }
 
-    removeCamera(stream) {
-        this.streams = this.streams.filter(item => item !== stream);
-        delete this.cameraModels[String(stream.id)];
-        this.renderLocationWidgets(true);
-        this.saveCameras(false);
+    async removeCamera(stream) {
+        if (!stream) return;
+        const targetIdx = this.streams.indexOf(stream);
+        const targetId = (stream && stream.id !== undefined) ? stream.id : targetIdx;
+        const targetRtsp = stream ? (stream.rtsp || "") : "";
+        const targetLocId = stream ? (stream.location_id || "") : "";
+        const targetLocName = stream ? (stream.location || "") : "";
+
+        // 1. Call backend DELETE API FIRST so server state is updated atomically
+        try {
+            await fetch(`/api/streams?id=${encodeURIComponent(targetId)}&index=${encodeURIComponent(targetIdx >= 0 ? targetIdx : 0)}&rtsp=${encodeURIComponent(targetRtsp)}&location_id=${encodeURIComponent(targetLocId)}&location=${encodeURIComponent(targetLocName)}`, {
+                method: "DELETE"
+            });
+        } catch (err) {
+            console.error("Error removing camera stream from server:", err);
+        }
+
+        // 2. Remove from local memory state and sync localStorage
+        if (targetIdx !== -1) {
+            this.streams.splice(targetIdx, 1);
+            
+            // Shift cameraModels keys for all indices > targetIdx
+            const newMap = {};
+            const keys = Object.keys(this.cameraModels);
+            keys.forEach(k => {
+                const ik = parseInt(k);
+                if (ik < targetIdx) {
+                    newMap[String(ik)] = this.cameraModels[k];
+                } else if (ik > targetIdx) {
+                    newMap[String(ik - 1)] = this.cameraModels[k];
+                }
+            });
+            this.cameraModels = newMap;
+            window.cameraModelsMap = this.cameraModels;
+            window.streamsArray = this.streams;
+
+            // Sync localStorage immediately
+            const updatedPayload = this.streams.map((item, idx) => this.store.cameraPayload(item, idx));
+            localStorage.setItem("offline_streams", JSON.stringify(updatedPayload));
+            localStorage.setItem("offline_camera_models", JSON.stringify(this.cameraModels));
+
+            this.renderLocationWidgets(true);
+            if (typeof renderCamerasConfig === "function") {
+                renderCamerasConfig();
+            }
+        }
     }
 
     async renderDevices() {
@@ -819,6 +868,7 @@ class LocationDashboard {
 
 async function initLocationDashboard() {
     const dashboard = new LocationDashboard();
+    window.dashboardInstance = dashboard;
     await dashboard.init();
 }
 
