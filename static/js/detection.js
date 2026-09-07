@@ -15,10 +15,10 @@ async function playHLS(video, url, idx) {
     const sessionToken = Symbol();
     video.dataset.loadToken = sessionToken;
 
-    // Fast pre-flight check: Wait until playlist.m3u8 exists and has at least 1 .ts segment
+    // Fast pre-flight check: Wait up to 3 seconds for playlist.m3u8 to be ready with .ts segments
     let isReady = false;
     const checkStart = Date.now();
-    while (Date.now() - checkStart < 30000) {
+    while (Date.now() - checkStart < 3000) {
         if (video.dataset.loadToken !== sessionToken) return;
         try {
             const r = await fetch(url + "?t=" + Date.now());
