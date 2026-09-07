@@ -15,10 +15,10 @@ async function playHLS(video, url, idx) {
     const sessionToken = Symbol();
     video.dataset.loadToken = sessionToken;
 
-    // Fast pre-flight check: Wait up to 30 seconds for playlist.m3u8 to be ready with .ts segments
+    // Fast pre-flight check: Wait up to 3 seconds for playlist.m3u8 to be ready with .ts segments
     let isReady = false;
     const checkStart = Date.now();
-    while (Date.now() - checkStart < 30000) {
+    while (Date.now() - checkStart < 3000) {
         if (video.dataset.loadToken !== sessionToken) return;
         try {
             const r = await fetch(url + "?t=" + Date.now());
@@ -62,13 +62,13 @@ async function playHLS(video, url, idx) {
         enableWorker: true,
         lowLatencyMode: true,
         startPosition: -1,
-        liveSyncDurationCount: 3,        // 3 segments cushion for smooth remote/other system playback
-        liveMaxLatencyDurationCount: 5,  // Auto catch-up if delay > 5s
+        liveSyncDurationCount: 1,        // 1 segment cushion (~0.5s - 1.0s behind live RTSP camera feed)
+        liveMaxLatencyDurationCount: 2.5, // Auto catch-up if delay > 2.5s
         liveDurationInfinity: true,
         liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 6,               // 6s buffer queue to prevent buffering on remote networks
-        maxMaxBufferLength: 10,
+        maxBufferLength: 2,               // Keep player buffer queue ultra-small (2s max)
+        maxMaxBufferLength: 4,
         manifestLoadingTimeOut: 10000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 300,
@@ -383,14 +383,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
 
     box.querySelector(".start").onclick = async () => {
         const cm = await (await fetch("/api/camera-models")).json();
-        let models = cm[camStr] || cm[String(i)] || [];
-        if (!models.length && meta && meta.model_configs) {
-            Object.keys(meta.model_configs).forEach(mKey => {
-                if (mKey === "roi_polygon" || !meta.model_configs[mKey]) return;
-                const normM = mKey.endsWith(".pt") ? mKey : `${mKey}.pt`;
-                if (!models.includes(normM)) models.push(normM);
-            });
-        }
+        const models = cm[camStr] || [];
         if (!models.length) return alert("No models assigned");
         
         const domModelConfigs = JSON.parse(JSON.stringify(meta.model_configs || {}));
