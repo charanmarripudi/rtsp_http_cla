@@ -1229,24 +1229,30 @@ def save_streams(
         
         if replace_all:
             entries = new_entries_to_add
-        elif incoming_locations or incoming_location_ids:
-            # Replace streams for incoming locations while preserving cameras in all other locations
-            final_entries = []
-            for old_entry in current_metadata:
-                old_loc = str(old_entry.get("location") or "").strip().lower()
-                old_loc_id = str(old_entry.get("location_id") or "").strip()
-                
-                if (old_loc and old_loc in incoming_locations) or (old_loc_id and old_loc_id in incoming_location_ids):
-                    # Skip old entries for locations being updated
-                    continue
-                final_entries.append(old_entry)
-                
-            final_entries.extend(new_entries_to_add)
-            entries = final_entries
-        elif new_entries_to_add:
-            entries = new_entries_to_add
         else:
-            entries = current_metadata
+            # Smart ID & RTSP merge preserving all existing cameras across all locations
+            final_entries = list(current_metadata)
+            old_by_id = {str(e.get("id")): i for i, e in enumerate(final_entries) if isinstance(e, dict) and "id" in e}
+            old_by_rtsp_loc = {f"{e.get('rtsp')}_{e.get('location_id')}": i for i, e in enumerate(final_entries) if isinstance(e, dict) and e.get("rtsp")}
+
+            for entry in new_entries_to_add:
+                entry_id = str(entry.get("id")) if entry.get("id") is not None else None
+                rtsp_loc_key = f"{entry.get('rtsp')}_{entry.get('location_id')}"
+                
+                match_idx = old_by_id.get(entry_id) if entry_id is not None else None
+                if match_idx is None and entry.get("rtsp"):
+                    match_idx = old_by_rtsp_loc.get(rtsp_loc_key)
+
+                if match_idx is not None and match_idx < len(final_entries):
+                    # Update existing camera in place
+                    merged = dict(final_entries[match_idx])
+                    merged.update(entry)
+                    final_entries[match_idx] = merged
+                else:
+                    # Append new camera cleanly
+                    entry["id"] = len(final_entries)
+                    final_entries.append(entry)
+            entries = final_entries
     else:
         # Fallback to current state
         entries = read_streams_metadata()
@@ -1361,27 +1367,33 @@ def delete_stream(
     current_metadata = read_streams_metadata()
     exists_idx = -1
 
-    # 1. First search by explicit RTSP, ID, or Location ID/Name
-    for i, entry in enumerate(current_metadata):
-        stored_rtsp = (entry.get("rtsp") or "").strip()
-        stored_id = str(entry.get("id") if entry.get("id") is not None else "").strip()
-        stored_loc_id = str(entry.get("location_id") or "").strip()
-        stored_loc_name = str(entry.get("location") or "").strip().lower()
+    # 1. Match by specific camera ID / index first with location isolation
+    if req_id or req_idx is not None:
+        target_id_str = req_id if req_id else (str(req_idx) if req_idx is not None else "")
+        for i, entry in enumerate(current_metadata):
+            stored_id = str(entry.get("id") if entry.get("id") is not None else "").strip()
+            if stored_id == target_id_str or str(i) == target_id_str:
+                stored_loc_id = str(entry.get("location_id") or "").strip()
+                stored_loc_name = str(entry.get("location") or "").strip().lower()
+                if (req_loc_id and stored_loc_id and stored_loc_id != req_loc_id):
+                    continue
+                if (req_loc_name and stored_loc_name and stored_loc_name != req_loc_name):
+                    continue
+                exists_idx = i
+                break
 
-        if req_rtsp and stored_rtsp == req_rtsp:
-            exists_idx = i
-            break
-        if req_id and (stored_id == req_id or str(i) == req_id):
-            exists_idx = i
-            break
-        if req_loc_id and stored_loc_id == req_loc_id:
-            exists_idx = i
-            break
-        if req_loc_name and stored_loc_name == req_loc_name:
-            exists_idx = i
-            break
+    # 2. Match by location + RTSP (prevents deleting camera in other locations with same RTSP)
+    if exists_idx < 0 and (req_loc_id or req_loc_name) and req_rtsp:
+        for i, entry in enumerate(current_metadata):
+            stored_rtsp = (entry.get("rtsp") or "").strip()
+            stored_loc_id = str(entry.get("location_id") or "").strip()
+            stored_loc_name = str(entry.get("location") or "").strip().lower()
+            if stored_rtsp == req_rtsp:
+                if (req_loc_id and stored_loc_id == req_loc_id) or (req_loc_name and stored_loc_name == req_loc_name):
+                    exists_idx = i
+                    break
 
-    # 2. Fallback to req_idx only if no specific field match was found
+    # 3. Fallback to index if 0 <= req_idx < len(current_metadata)
     if exists_idx < 0 and req_idx is not None and isinstance(req_idx, int) and 0 <= req_idx < len(current_metadata):
         exists_idx = req_idx
 
