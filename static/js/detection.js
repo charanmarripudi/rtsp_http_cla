@@ -5,11 +5,36 @@ function stopSimulatedCanvas(idx, video) {
     if (video && video.srcObject) { video.srcObject = null; }
 }
 
-function playHLS(video, url, idx) {
+async function playHLS(video, url, idx) {
     if (video.dataset.currentUrl === url && hlsInstances[idx]) {
         return; // Stream is already playing this URL — don't interrupt or buffer!
     }
     video.dataset.currentUrl = url;
+
+    // Session token to prevent race conditions if user switches streams quickly
+    const sessionToken = Symbol();
+    video.dataset.loadToken = sessionToken;
+
+    // Fast pre-flight check: Wait until playlist.m3u8 exists and has at least 1 .ts segment
+    let isReady = false;
+    const checkStart = Date.now();
+    while (Date.now() - checkStart < 30000) {
+        if (video.dataset.loadToken !== sessionToken) return;
+        try {
+            const r = await fetch(url + "?t=" + Date.now());
+            if (r.ok) {
+                const txt = await r.text();
+                if (txt.includes(".ts")) {
+                    isReady = true;
+                    break;
+                }
+            }
+        } catch (_) {}
+        await new Promise(res => setTimeout(res, 350));
+    }
+
+    if (!isReady || video.dataset.loadToken !== sessionToken) return;
+
     if (hlsInstances[idx]) { 
         try {
             hlsInstances[idx].detachMedia();
@@ -25,25 +50,6 @@ function playHLS(video, url, idx) {
         video.removeAttribute("src");
         video.load();
     } catch (_) {}
-
-    // Pre-flight check: ensure playlist exists and has segments before attaching hls.js
-    // Prevents fatal 404 error retry loops (20-30s delays) when adding new cameras!
-    const preflightStart = Date.now();
-    while (Date.now() - preflightStart < 30000) {
-        if (video.dataset.currentUrl !== url) return; // Switched to another URL while waiting
-        try {
-            const checkRes = await fetch(url + "?t=" + Date.now());
-            if (checkRes.ok) {
-                const text = await checkRes.text();
-                if (text.includes(".ts")) {
-                    break;
-                }
-            }
-        } catch (_) {}
-        await new Promise(r => setTimeout(r, 300));
-    }
-
-    if (video.dataset.currentUrl !== url) return;
 
     const fullUrl = url + "?t=" + Date.now();
     if (typeof Hls === "undefined" || !Hls.isSupported()) { 
