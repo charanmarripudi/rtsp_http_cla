@@ -2745,10 +2745,13 @@ try:
             write_json_atomic(PTZ_CAMERAS_FILE, cams)
         except: pass
 
-    def get_ptz_client_for_camera(ip="192.168.96.30", port=8888, user="admin", password=""):
-        key = f"{ip}:{port}:{user}"
+    def get_ptz_client_for_camera(ip="192.168.96.30", port=80, user="admin", password=""):
+        port_val = int(port) if port else 80
+        if port_val == 8888:
+            port_val = 80
+        key = f"{ip}:{port_val}:{user}"
         if key not in _ptz_clients:
-            _ptz_clients[key] = OnvifPtzClient(ip=ip, port=port, username=user, password=password)
+            _ptz_clients[key] = OnvifPtzClient(ip=ip, port=port_val, username=user, password=password)
         return _ptz_clients[key]
 
     def normalize_ptz_rtsp(rtsp_url):
@@ -2765,8 +2768,8 @@ try:
             user = match.group(1) or "admin"
             pwd = match.group(2) or ""
             ip = match.group(3) or "192.168.96.30"
-            return {"ip": ip, "username": user, "password": pwd, "port": 8888, "rtsp": rtsp_url}
-        return {"ip": "192.168.96.30", "username": "admin", "password": "", "port": 8888, "rtsp": rtsp_url}
+            return {"ip": ip, "username": user, "password": pwd, "port": 80, "rtsp": rtsp_url}
+        return {"ip": "192.168.96.30", "username": "admin", "password": "", "port": 80, "rtsp": rtsp_url}
 
     @app.get("/api/ptz/cameras")
     def get_ptz_cameras_api():
@@ -2774,6 +2777,8 @@ try:
         for idx, cam in enumerate(cams):
             cid = f"ptz{idx}"
             rtsp = normalize_ptz_rtsp(cam.get("rtsp", ""))
+            if cam.get("port") == 8888:
+                cam["port"] = 80
             if rtsp:
                 start_raw_stream(cid, rtsp)
                 cam["hls_raw"] = f"/hls/stream{cid}_raw/playlist.m3u8"
@@ -2792,12 +2797,14 @@ try:
                     info = parse_rtsp_for_onvif(rtsp)
                     normalized_url = info["rtsp"]
                     cid = f"ptz{idx}"
+                    port_val = item.get("port") or info["port"]
+                    if port_val == 8888: port_val = 80
                     cam_obj = {
                         "id": item.get("id") or f"ptz-{int(time.time())}-{idx}",
                         "label": label,
                         "rtsp": normalized_url,
                         "ip": info["ip"],
-                        "port": info["port"],
+                        "port": port_val,
                         "username": info["username"],
                         "password": info["password"],
                         "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"
@@ -2819,12 +2826,14 @@ try:
         idx = len(cams)
         new_label = label if label else f"PTZ Camera {idx + 1}"
         cid = f"ptz{idx}"
+        port_val = d.get("port") or info["port"]
+        if port_val == 8888: port_val = 80
         new_cam = {
             "id": f"ptz-{int(time.time())}",
             "label": new_label,
             "rtsp": normalized_url,
             "ip": info["ip"],
-            "port": info["port"],
+            "port": port_val,
             "username": info["username"],
             "password": info["password"],
             "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"
@@ -2863,11 +2872,19 @@ try:
         direction = d.get("direction", "up")
         speed = float(d.get("speed", 0.5))
         ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
+        port = int(d.get("port", 80))
+        if port == 8888: port = 80
         user = d.get("username", "admin")
         pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.move(direction, speed)
+        try:
+            from utilities.onvif_controller import OnvifController
+            ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
+            ctrl.connect()
+            ctrl.move_direction(direction, duration=1.0)
+            return {"status": "success", "action": "move", "direction": direction, "speed": speed}
+        except Exception:
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.move(direction, speed)
 
     @app.post("/api/ptz/step")
     def api_ptz_step(d: dict = Body(default={})):
@@ -2875,27 +2892,44 @@ try:
         speed = float(d.get("speed", 0.5))
         duration = float(d.get("duration", 0.35))
         ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
+        port = int(d.get("port", 80))
+        if port == 8888: port = 80
         user = d.get("username", "admin")
         pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.step(direction, speed, duration)
+        try:
+            from utilities.onvif_controller import OnvifController
+            ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
+            ctrl.connect()
+            ctrl.move_direction(direction, duration=duration)
+            return {"status": "success", "action": "step", "direction": direction, "speed": speed, "duration": duration}
+        except Exception:
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.step(direction, speed, duration)
 
     @app.post("/api/ptz/stop")
     def api_ptz_stop(d: dict = Body(default={})):
         ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
+        port = int(d.get("port", 80))
+        if port == 8888: port = 80
         user = d.get("username", "admin")
         pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.stop()
+        try:
+            from utilities.onvif_controller import OnvifController
+            ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
+            ctrl.connect()
+            ctrl.stop()
+            return {"status": "success", "action": "stop"}
+        except Exception:
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.stop()
 
     @app.post("/api/ptz/zoom")
     def api_ptz_zoom(d: dict = Body(default={})):
         direction = str(d.get("direction", "in")).lower()
         speed = float(d.get("speed", 0.5))
         ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
+        port = int(d.get("port", 80))
+        if port == 8888: port = 80
         user = d.get("username", "admin")
         pwd = d.get("password", "")
         zoom_val = 0.5 if direction in ["in", "zoomin", "zoom_in"] else -0.5
@@ -2915,7 +2949,8 @@ try:
         speed = float(d.get("speed", 0.5))
         duration = float(d.get("duration", 0.35))
         ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
+        port = int(d.get("port", 80))
+        if port == 8888: port = 80
         user = d.get("username", "admin")
         pwd = d.get("password", "")
         zoom_val = 0.5 if direction in ["in", "zoomin", "zoom_in"] else -0.5
@@ -2930,12 +2965,14 @@ try:
             return client.zoom_step(direction, speed, duration)
 
     @app.get("/api/ptz/status")
-    def api_ptz_status(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+    def api_ptz_status(ip: str = "192.168.96.30", port: int = 80, username: str = "admin", password: str = ""):
+        if port == 8888: port = 80
         client = get_ptz_client_for_camera(ip, port, username, password)
         return client.get_status()
 
     @app.get("/api/ptz/presets")
-    def api_ptz_presets(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+    def api_ptz_presets(ip: str = "192.168.96.30", port: int = 80, username: str = "admin", password: str = ""):
+        if port == 8888: port = 80
         client = get_ptz_client_for_camera(ip, port, username, password)
         return client.get_presets()
 
@@ -2944,7 +2981,8 @@ try:
         preset_token = d.get("preset_token", "1")
         speed = float(d.get("speed", 1.0))
         ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
+        port = int(d.get("port", 80))
+        if port == 8888: port = 80
         user = d.get("username", "admin")
         pwd = d.get("password", "")
         client = get_ptz_client_for_camera(ip, port, user, pwd)
@@ -2954,25 +2992,29 @@ try:
     def api_ptz_set_preset(d: dict = Body(default={})):
         name = d.get("preset_name", "Preset")
         ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 8888))
+        port = int(d.get("port", 80))
+        if port == 8888: port = 80
         user = d.get("username", "admin")
         pwd = d.get("password", "")
         client = get_ptz_client_for_camera(ip, port, user, pwd)
         return client.set_preset(name)
 
     @app.delete("/api/ptz/presets/{token}")
-    def api_ptz_delete_preset(token: str, ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+    def api_ptz_delete_preset(token: str, ip: str = "192.168.96.30", port: int = 80, username: str = "admin", password: str = ""):
+        if port == 8888: port = 80
         client = get_ptz_client_for_camera(ip, port, username, password)
         return client.remove_preset(token)
 
     @app.get("/api/ptz/streams")
-    def api_ptz_streams(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+    def api_ptz_streams(ip: str = "192.168.96.30", port: int = 80, username: str = "admin", password: str = ""):
         """Dynamically retrieves Main Stream and Sub Stream RTSP URLs via ONVIF."""
+        if port == 8888: port = 80
         client = get_ptz_client_for_camera(ip, port, username, password)
         return client.get_stream_uris()
 
     @app.get("/api/ptz/info")
-    def api_ptz_info(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):
+    def api_ptz_info(ip: str = "192.168.96.30", port: int = 80, username: str = "admin", password: str = ""):
+        if port == 8888: port = 80
         client = get_ptz_client_for_camera(ip, port, username, password)
         return {
             "camera_ip": ip,

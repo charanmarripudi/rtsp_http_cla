@@ -9,9 +9,12 @@ import threading
 from datetime import datetime, timezone
 
 class OnvifPtzClient:
-    def __init__(self, ip="192.168.96.30", port=8888, username="admin", password=""):
+    def __init__(self, ip="192.168.96.30", port=80, username="admin", password=""):
         self.ip = ip
-        self.port = int(port)
+        port_val = int(port) if port else 80
+        if port_val == 8888:
+            port_val = 80
+        self.port = port_val
         self.username = username
         self.password = password
         self.base_url = f"http://{self.ip}:{self.port}/onvif"

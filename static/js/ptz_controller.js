@@ -169,10 +169,8 @@
     const select = document.getElementById("ptzCameraSelect");
     if (select) select.value = String(index);
 
-    const ipLabel = document.getElementById("ptzCameraIpLabel");
-    if (ipLabel) {
-      ipLabel.textContent = `${activePtzCamera.ip}:${activePtzCamera.port || 8888} (ONVIF)`;
-    }
+      const portVal = (activePtzCamera.port && activePtzCamera.port !== 8888) ? activePtzCamera.port : 80;
+      ipLabel.textContent = `${activePtzCamera.ip}:${portVal} (ONVIF)`;
 
     const titleEl = document.getElementById("ptzCameraTitle");
     if (titleEl) {
@@ -262,11 +260,10 @@
     }
   }
 
-  async function fetchDynamicStreams() {
-    if (!activePtzCamera) return;
+    const portVal = (activePtzCamera.port && activePtzCamera.port !== 8888) ? activePtzCamera.port : 80;
     try {
       const res = await fetch(
-        `/api/ptz/streams?ip=${activePtzCamera.ip}&port=${activePtzCamera.port || 8888}&username=${encodeURIComponent(
+        `/api/ptz/streams?ip=${activePtzCamera.ip}&port=${portVal}&username=${encodeURIComponent(
           activePtzCamera.username || "admin"
         )}&password=${encodeURIComponent(activePtzCamera.password || "")}`
       );
