@@ -348,9 +348,12 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 try:
+    ptz_pkg_dir = os.path.abspath(os.path.join(BASE_DIR, "..", "onvif_ptz_zoom_package"))
+    if os.path.exists(ptz_pkg_dir) and ptz_pkg_dir not in sys.path:
+        sys.path.insert(0, ptz_pkg_dir)
     from api_manager.devices_onvif_actions import router as devices_router
     app.include_router(devices_router)
-    print("[SERVER] Loaded /devices ONVIF PTZ & Zoom router successfully.")
+    print("[SERVER] Loaded 100% /devices ONVIF PTZ & Zoom router successfully.")
 except Exception as _e:
     print(f"[WARN] Could not load devices_onvif_actions router: {_e}")
 
