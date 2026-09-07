@@ -248,8 +248,21 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
             uniqueAssigned.forEach(m => {
                 const cleanName = m.replace(".pt", "");
                 const mCfg = modelConfigs[m] || modelConfigs[cleanName] || {};
-                const enabled = Array.from(new Set(mCfg.enabled_classes || []));
+                let enabled = Array.from(new Set(mCfg.enabled_classes || []));
+                if (enabled.length === 0 && mCfg.class_configs && typeof mCfg.class_configs === "object") {
+                    enabled = Object.keys(mCfg.class_configs);
+                }
                 if (enabled.length === 0) {
+                    const card = document.createElement("div");
+                    card.className = "model-card-box";
+                    card.setAttribute("data-model", m);
+                    card.setAttribute("data-model-clean", cleanName);
+                    card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
+                    card.innerHTML = `
+                        <div class="model-chip-header" style="margin-bottom:6px;">
+                            <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#00ffaa;border-radius:2px;display:inline-block;"></span>${cleanName}</span>
+                        </div>`;
+                    chipsList.appendChild(card);
                     return;
                 }
 
