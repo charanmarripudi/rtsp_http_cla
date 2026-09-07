@@ -26,6 +26,25 @@ function playHLS(video, url, idx) {
         video.load();
     } catch (_) {}
 
+    // Pre-flight check: ensure playlist exists and has segments before attaching hls.js
+    // Prevents fatal 404 error retry loops (20-30s delays) when adding new cameras!
+    const preflightStart = Date.now();
+    while (Date.now() - preflightStart < 30000) {
+        if (video.dataset.currentUrl !== url) return; // Switched to another URL while waiting
+        try {
+            const checkRes = await fetch(url + "?t=" + Date.now());
+            if (checkRes.ok) {
+                const text = await checkRes.text();
+                if (text.includes(".ts")) {
+                    break;
+                }
+            }
+        } catch (_) {}
+        await new Promise(r => setTimeout(r, 300));
+    }
+
+    if (video.dataset.currentUrl !== url) return;
+
     const fullUrl = url + "?t=" + Date.now();
     if (typeof Hls === "undefined" || !Hls.isSupported()) { 
         video.src = fullUrl; 
