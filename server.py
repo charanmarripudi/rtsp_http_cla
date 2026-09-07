@@ -736,6 +736,7 @@ def start_raw_stream(i, u):
 
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+        "-fflags", "+genpts+discardcorrupt",
         "-rtsp_transport", "tcp",
         "-probesize", "1.5M", "-analyzeduration", "1.5M",
         "-i", normalized_rtsp,
@@ -750,7 +751,7 @@ def start_raw_stream(i, u):
         "-f", "hls",
         "-hls_time", "2",
         "-hls_list_size", "8",
-        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
+        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist",
         "-hls_segment_filename", os.path.join(sd, f"segment_{session_id}_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
     ]
