@@ -195,13 +195,8 @@ class DetectorWorker:
             f_area = f_w * f_h
 
             import re
-            all_camera_enabled_classes = set()
-            if isinstance(self.model_configs, dict):
-                for m_k, m_v in self.model_configs.items():
-                    if isinstance(m_v, dict) and isinstance(m_v.get("enabled_classes"), list):
-                        for e in m_v["enabled_classes"]:
-                            all_camera_enabled_classes.add(re.sub(r'[-_\s]+', '-', str(e).lower()))
-
+            # NOTE: No global class union — each model filters ONLY by its own enabled_classes.
+            # Merging classes across models caused cross-contamination (stream 2 detecting wrong classes).
             for midx, model in enumerate(self.models):
                 m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
                 m_name = os.path.basename(m_path)
@@ -268,11 +263,8 @@ class DetectorWorker:
                                 matched = any(norm_cls == re.sub(r'[-_\s]+', '-', str(e).lower()) for e in enabled_classes)
                                 if not matched:
                                     continue
-                            elif len(all_camera_enabled_classes) > 0:
-                                # Global class filtering active on camera -> skip box if class is not in enabled list
-                                matched = (norm_cls in all_camera_enabled_classes)
-                                if not matched:
-                                    continue
+                            elif enabled_classes is None:
+                                pass  # No config for this model — allow all classes through
 
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
                             x1, y1, x2, y2 = box_xyxy
