@@ -1997,6 +1997,16 @@
                   streamMeta.model_configs[modelFile].enabled_classes = active;
                   streamMeta.model_configs[cleanName].enabled_classes = active;
                   updateCheckboxState(idx, modelFile, active.length > 0);
+
+                  // Dynamically send updated class config to running backend detector immediately
+                  fetch("/api/update-thresholds", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      camera: String(idx),
+                      model_configs: streamMeta.model_configs
+                    })
+                  }).catch(() => {});
                 };
               });
             }

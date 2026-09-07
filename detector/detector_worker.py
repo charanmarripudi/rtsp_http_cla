@@ -213,6 +213,12 @@ class DetectorWorker:
                 m_imgsz = 640
                 if isinstance(self.model_configs, dict):
                     cfg = self.model_configs.get(m_name) or self.model_configs.get(m_clean) or self.model_configs.get(m_name.lower())
+                    if not cfg:
+                        m_norm_target = m_clean.lower().replace("_", "-").replace(" ", "-")
+                        for k, v in self.model_configs.items():
+                            if str(k).replace(".pt", "").lower().replace("_", "-").replace(" ", "-") == m_norm_target:
+                                cfg = v
+                                break
                     if cfg and isinstance(cfg, dict):
                         m_conf = float(cfg.get("conf", self.conf))
                         m_iou = float(cfg.get("iou", self.iou))
