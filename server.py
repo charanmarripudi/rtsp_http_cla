@@ -347,6 +347,13 @@ app.mount("/hls/alerts", StaticFiles(directory=ALERTS_DIR), name="alerts")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
+try:
+    from api_manager.devices_onvif_actions import router as devices_router
+    app.include_router(devices_router)
+    print("[SERVER] Loaded /devices ONVIF PTZ & Zoom router successfully.")
+except Exception as _e:
+    print(f"[WARN] Could not load devices_onvif_actions router: {_e}")
+
 # ─────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────
@@ -2828,26 +2835,42 @@ try:
 
     @app.post("/api/ptz/zoom")
     def api_ptz_zoom(d: dict = Body(default={})):
-        direction = d.get("direction", "in")
+        direction = str(d.get("direction", "in")).lower()
         speed = float(d.get("speed", 0.5))
         ip = d.get("ip", "192.168.96.30")
         port = int(d.get("port", 8888))
         user = d.get("username", "admin")
         pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.zoom(direction, speed)
+        zoom_val = 0.5 if direction in ["in", "zoomin", "zoom_in"] else -0.5
+        try:
+            from utilities.onvif_controller import OnvifController
+            ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
+            ctrl.connect()
+            ctrl.zoom(zoom_val)
+            return {"status": "success", "zoom": zoom_val, "direction": direction, "message": "Zoom operation executed via OnvifController"}
+        except Exception as _ex:
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.zoom(direction, speed)
 
     @app.post("/api/ptz/zoom-step")
     def api_ptz_zoom_step(d: dict = Body(default={})):
-        direction = d.get("direction", "in")
+        direction = str(d.get("direction", "in")).lower()
         speed = float(d.get("speed", 0.5))
         duration = float(d.get("duration", 0.35))
         ip = d.get("ip", "192.168.96.30")
         port = int(d.get("port", 8888))
         user = d.get("username", "admin")
         pwd = d.get("password", "")
-        client = get_ptz_client_for_camera(ip, port, user, pwd)
-        return client.zoom_step(direction, speed, duration)
+        zoom_val = 0.5 if direction in ["in", "zoomin", "zoom_in"] else -0.5
+        try:
+            from utilities.onvif_controller import OnvifController
+            ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
+            ctrl.connect()
+            ctrl.zoom(zoom_val)
+            return {"status": "success", "zoom": zoom_val, "direction": direction, "message": "Zoom step executed via OnvifController"}
+        except Exception as _ex:
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            return client.zoom_step(direction, speed, duration)
 
     @app.get("/api/ptz/status")
     def api_ptz_status(ip: str = "192.168.96.30", port: int = 8888, username: str = "admin", password: str = ""):

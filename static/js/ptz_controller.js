@@ -731,6 +731,23 @@
     if (!activePtzCamera) return;
     isMoving = true;
     showStatusToast(`Zoom ${direction.toUpperCase()}...`);
+
+    // Digital Player Zoom Scaling for immediate real-time video feedback
+    const videoEl = document.getElementById("ptzLiveVideo");
+    if (videoEl) {
+      if (!window._ptzDigitalZoom) window._ptzDigitalZoom = 1.0;
+      if (direction === "in" || direction === "ZoomIn") {
+        window._ptzDigitalZoom = Math.min(4.0, parseFloat((window._ptzDigitalZoom + 0.25).toFixed(2)));
+      } else if (direction === "out" || direction === "ZoomOut") {
+        window._ptzDigitalZoom = Math.max(1.0, parseFloat((window._ptzDigitalZoom - 0.25).toFixed(2)));
+      }
+      videoEl.style.transform = `scale(${window._ptzDigitalZoom})`;
+      videoEl.style.transformOrigin = "center center";
+      videoEl.style.transition = "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
+      const zoomBadge = document.getElementById("ptzTelemetryZoom");
+      if (zoomBadge) zoomBadge.textContent = `${window._ptzDigitalZoom.toFixed(2)}X`;
+    }
+
     const payload = {
       direction: direction,
       speed: currentSpeed,
@@ -739,6 +756,16 @@
       username: activePtzCamera.username || "admin",
       password: activePtzCamera.password || "",
     };
+
+    const devPos = (direction === "in" || direction === "ZoomIn" || direction === "zoomin") ? "ZoomIn" : "ZoomOut";
+    const devPayload = {
+      device_ip: activePtzCamera.ip,
+      onvif_port: activePtzCamera.port || 80,
+      onvif_username: activePtzCamera.username || "admin",
+      onvif_password: activePtzCamera.password || "",
+      position: devPos
+    };
+
     if (currentMode === "continuous") {
       try {
         await fetch("/api/ptz/zoom", {
@@ -760,6 +787,16 @@
       } catch (e) {
         console.error("PTZ Zoom Step Error:", e);
       }
+    }
+
+    try {
+      await fetch("/devices/control-zoom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(devPayload),
+      });
+    } catch (e) {
+      // Fallback endpoint
     }
   }
 
