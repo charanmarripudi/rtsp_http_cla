@@ -1552,6 +1552,10 @@ def start_detection(d: dict):
     # Filter mods list so we only run models that have active enabled classes (or explicit assignments)
     ppe_models_set = {"ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt", "ppe_new", "nik_ppe_best", "hf_ppe_detection", "keremberke_ppe_gear", "hansung_ppe_violations"}
     active_mods = []
+    clean_model_configs = {}
+    if isinstance(model_configs, dict) and "roi_polygon" in model_configs:
+        clean_model_configs["roi_polygon"] = model_configs["roi_polygon"]
+
     for m in mods:
         norm_m = m if m.endswith(".pt") else f"{m}.pt"
         m_clean = norm_m.replace(".pt", "")
@@ -1564,13 +1568,19 @@ def start_detection(d: dict):
                     break
         e_classes = (isinstance(cfg, dict) and cfg.get("enabled_classes")) or []
         if norm_m in ppe_models_set:
-            if len(e_classes) > 0 and norm_m not in active_mods:
-                active_mods.append(norm_m)
+            if len(e_classes) > 0:
+                if norm_m not in active_mods: active_mods.append(norm_m)
+                if isinstance(cfg, dict):
+                    clean_model_configs[norm_m] = cfg
+                    clean_model_configs[m_clean] = cfg
         else:
-            if norm_m not in active_mods:
-                active_mods.append(norm_m)
+            if norm_m not in active_mods: active_mods.append(norm_m)
+            if isinstance(cfg, dict):
+                clean_model_configs[norm_m] = cfg
+                clean_model_configs[m_clean] = cfg
 
     mods = active_mods
+    model_configs = clean_model_configs
 
     # Save model assignment to camera_models.json
     clean_mods = []
