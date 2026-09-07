@@ -433,8 +433,18 @@
 
     const btnZoomIn = document.getElementById("ptzBtnZoomIn");
     const btnZoomOut = document.getElementById("ptzBtnZoomOut");
-    if (btnZoomIn) bindAction(btnZoomIn, () => ptzZoom("in"), () => ptzStop());
-    if (btnZoomOut) bindAction(btnZoomOut, () => ptzZoom("out"), () => ptzStop());
+    if (btnZoomIn) {
+      btnZoomIn.addEventListener("click", (e) => {
+        e.preventDefault();
+        ptzZoom("in");
+      });
+    }
+    if (btnZoomOut) {
+      btnZoomOut.addEventListener("click", (e) => {
+        e.preventDefault();
+        ptzZoom("out");
+      });
+    }
 
     const btnAddPreset = document.getElementById("ptzBtnAddPreset");
     if (btnAddPreset) {
@@ -729,7 +739,6 @@
     isMoving = true;
     showStatusToast(`Zoom ${direction.toUpperCase()}...`);
 
-    // Digital Player Zoom Scaling for immediate real-time video feedback
     const videoEl = document.getElementById("ptzLiveVideo");
     if (videoEl) {
       if (!window._ptzDigitalZoom) window._ptzDigitalZoom = 1.0;
@@ -745,46 +754,25 @@
       if (zoomBadge) zoomBadge.textContent = `${window._ptzDigitalZoom.toFixed(2)}X`;
     }
 
-    const payload = {
-      direction: direction,
-      speed: currentSpeed,
-      ip: activePtzCamera.ip,
-      port: activePtzCamera.port,
-      username: activePtzCamera.username || "admin",
-      password: activePtzCamera.password || "",
-    };
+    const portVal = (activePtzCamera.port && activePtzCamera.port !== 8888) ? activePtzCamera.port : 80;
 
     const devPos = (direction === "in" || direction === "ZoomIn" || direction === "zoomin") ? "ZoomIn" : "ZoomOut";
     const devPayload = {
       device_ip: activePtzCamera.ip,
-      onvif_port: activePtzCamera.port || 80,
+      onvif_port: portVal,
       onvif_username: activePtzCamera.username || "admin",
       onvif_password: activePtzCamera.password || "",
       position: devPos
     };
 
-    if (currentMode === "continuous") {
-      try {
-        await fetch("/api/ptz/zoom", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      } catch (e) {
-        console.error("PTZ Zoom Error:", e);
-      }
-    } else {
-      payload.duration = Math.max(0.8, currentDuration * 2.0);
-      try {
-        await fetch("/api/ptz/zoom-step", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      } catch (e) {
-        console.error("PTZ Zoom Step Error:", e);
-      }
-    }
+    const payload = {
+      direction: direction,
+      speed: currentSpeed,
+      ip: activePtzCamera.ip,
+      port: portVal,
+      username: activePtzCamera.username || "admin",
+      password: activePtzCamera.password || "",
+    };
 
     try {
       await fetch("/devices/control-zoom", {
@@ -793,7 +781,17 @@
         body: JSON.stringify(devPayload),
       });
     } catch (e) {
-      // Fallback endpoint
+      console.error("PTZ devices/control-zoom error:", e);
+    }
+
+    try {
+      await fetch("/api/ptz/zoom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      console.error("PTZ api/ptz/zoom error:", e);
     }
   }
 
