@@ -710,6 +710,11 @@ def start_raw_stream(i, u):
     if existing_cid is not None:
         target_sd = os.path.join(HLS_DIR, f"stream{existing_cid}_raw")
         try:
+            import shutil
+            if os.path.islink(sd):
+                os.unlink(sd)
+            elif os.path.exists(sd):
+                shutil.rmtree(sd, ignore_errors=True)
             os.symlink(target_sd, sd)
             raw_streams_procs[cid] = {
                 "proc": raw_streams_procs[existing_cid]["proc"],
