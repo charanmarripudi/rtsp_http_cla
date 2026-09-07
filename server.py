@@ -710,12 +710,7 @@ def start_raw_stream(i, u):
     if existing_cid is not None:
         target_sd = os.path.join(HLS_DIR, f"stream{existing_cid}_raw")
         try:
-            import shutil
-            if os.path.islink(sd):
-                os.unlink(sd)
-            elif os.path.exists(sd):
-                shutil.rmtree(sd, ignore_errors=True)
-            os.symlink(os.path.basename(target_sd), sd)
+            os.symlink(target_sd, sd)
             raw_streams_procs[cid] = {
                 "proc": raw_streams_procs[existing_cid]["proc"],
                 "rtsp": normalized_rtsp,
@@ -736,7 +731,6 @@ def start_raw_stream(i, u):
 
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
-        "-fflags", "+genpts+discardcorrupt",
         "-rtsp_transport", "tcp",
         "-probesize", "1.5M", "-analyzeduration", "1.5M",
         "-i", normalized_rtsp,
@@ -751,7 +745,7 @@ def start_raw_stream(i, u):
         "-f", "hls",
         "-hls_time", "2",
         "-hls_list_size", "8",
-        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist",
+        "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(sd, f"segment_{session_id}_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
     ]
