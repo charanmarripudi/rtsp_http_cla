@@ -553,7 +553,7 @@ class LocationDashboard {
                     if (valSpan) valSpan.textContent = parseFloat(e.target.value).toFixed(2);
                 });
             }
-            this.updateAssignedChipsUI(stream);
+            this.updateAssignedChipsList(stream);
         });
 
         card.querySelector(".save-cameras").addEventListener("click", () => this.saveCameras(true));
@@ -740,47 +740,28 @@ class LocationDashboard {
                     return true;
                 });
 
-                this.updateAssignedChipsUI(stream);
+                // Update assigned chips list in UI dynamically in real time!
+                this.updateAssignedChipsList(stream);
             }
         });
     }
 
-    updateAssignedChipsUI(stream) {
+    updateAssignedChipsList(stream) {
         if (!stream) return;
         const camBox = document.getElementById(`cam-box-${stream.id}`);
         if (!camBox) return;
         const chipsList = camBox.querySelector(".assigned-chips-list");
         if (!chipsList) return;
         chipsList.innerHTML = "";
-
-        const key = String(stream.id);
-        const assignedModels = this.cameraModels[key] || [];
         const modelConfigs = stream.model_configs || {};
-
-        const seenClean = new Set();
-        (assignedModels || []).forEach(m => {
-            const cleanName = m.replace(".pt", "");
-            if (seenClean.has(cleanName)) return;
-            seenClean.add(cleanName);
-
-            const mVal = modelConfigs[m] || modelConfigs[cleanName] || {};
+        Object.entries(modelConfigs).forEach(([mKey, mVal]) => {
+            if (mKey === "roi_polygon" || !mVal) return;
+            const cleanName = mKey.replace(".pt", "");
             let enabled = Array.from(new Set((mVal && mVal.enabled_classes) || []));
             if (enabled.length === 0 && mVal && mVal.class_configs && typeof mVal.class_configs === "object") {
                 enabled = Object.keys(mVal.class_configs);
             }
-
-            if (enabled.length === 0) {
-                const card = document.createElement("div");
-                card.className = "model-card-box";
-                card.setAttribute("data-model", m);
-                card.setAttribute("data-model-clean", cleanName);
-                card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
-                card.innerHTML = `
-                    <div class="model-chip-header" style="margin-bottom:6px;">
-                        <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#00ffaa;border-radius:2px;display:inline-block;"></span>${cleanName}</span>
-                    </div>`;
-                chipsList.appendChild(card);
-            } else {
+            if (enabled.length > 0) {
                 enabled.forEach(c => {
                     const cCfg = (mVal.class_configs && mVal.class_configs[c]) || {};
                     const cVal = cCfg.conf !== undefined ? parseFloat(cCfg.conf).toFixed(2) : parseFloat(mVal.conf || stream.conf || 0.40).toFixed(2);
@@ -788,7 +769,7 @@ class LocationDashboard {
 
                     const card = document.createElement("div");
                     card.className = "model-card-box";
-                    card.setAttribute("data-model", m);
+                    card.setAttribute("data-model", mKey);
                     card.setAttribute("data-model-clean", cleanName);
                     card.setAttribute("data-class", c);
                     card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
