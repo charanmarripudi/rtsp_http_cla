@@ -2926,22 +2926,24 @@ try:
     @app.post("/api/ptz/zoom")
     def api_ptz_zoom(d: dict = Body(default={})):
         direction = str(d.get("direction", "in")).lower()
-        speed = float(d.get("speed", 0.5))
         ip = d.get("ip", "192.168.96.30")
         port = int(d.get("port", 80))
         if port == 8888: port = 80
         user = d.get("username", "admin")
         pwd = d.get("password", "")
-        zoom_val = 0.5 if direction in ["in", "zoomin", "zoom_in"] else -0.5
+        # Use direct CGI — camera is hi3510/HiSilicon, no ONVIF PTZ service available
+        act = "zoomin" if direction in ["in", "zoomin", "zoom_in"] else "zoomout"
         try:
-            from utilities.onvif_controller import OnvifController
-            ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
-            ctrl.connect()
-            ctrl.zoom(zoom_val)
-            return {"status": "success", "zoom": zoom_val, "direction": direction, "message": "Zoom operation executed via OnvifController"}
-        except Exception as _ex:
-            client = get_ptz_client_for_camera(ip, port, user, pwd)
-            return client.zoom(direction, speed)
+            import urllib.request, base64
+            url = f"http://{ip}:{port}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={act}&-speed=5&-presetNUM=0"
+            auth_bytes = f"{user}:{pwd}".encode("utf-8")
+            req = urllib.request.Request(url, method="PUT")
+            req.add_header("Authorization", f"Basic {base64.b64encode(auth_bytes).decode('ascii')}")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                resp.read()
+            return {"status": "success", "action": act, "ip": ip, "port": port}
+        except Exception as e:
+            return {"status": "error", "action": act, "message": str(e)}
 
     @app.post("/api/ptz/zoom-step")
     def api_ptz_zoom_step(d: dict = Body(default={})):

@@ -663,9 +663,11 @@
 
   async function ptzZoom(direction) {
     if (!activePtzCamera) return;
-    isMoving = true;
+    // NOTE: Do NOT set isMoving=true here — zoom is a self-contained one-shot CGI command.
+    // Setting isMoving=true causes ptzStop() to fire via D-pad mouseleave, interrupting zoom.
     showStatusToast(`Zoom ${direction.toUpperCase()}...`);
 
+    // 1. Instant digital scale feedback on the live video
     const videoEl = document.getElementById("ptzLiveVideo");
     if (videoEl) {
       if (!window._ptzDigitalZoom) window._ptzDigitalZoom = 1.0;
@@ -681,44 +683,25 @@
       if (zoomBadge) zoomBadge.textContent = `${window._ptzDigitalZoom.toFixed(2)}X`;
     }
 
+    // 2. Send hardware zoom via /devices/control-zoom (CGI: ?-act=zoomin / ?-act=zoomout)
+    // Camera: 192.168.96.30, Port 80 — CGI self-stops after ~1s internally
     const portVal = (activePtzCamera.port && activePtzCamera.port !== 8888) ? activePtzCamera.port : 80;
-
     const devPos = (direction === "in" || direction === "ZoomIn" || direction === "zoomin") ? "ZoomIn" : "ZoomOut";
-    const devPayload = {
-      device_ip: activePtzCamera.ip,
-      onvif_port: portVal,
-      onvif_username: activePtzCamera.username || "admin",
-      onvif_password: activePtzCamera.password || "",
-      position: devPos
-    };
-
-    const payload = {
-      direction: direction,
-      speed: currentSpeed,
-      ip: activePtzCamera.ip,
-      port: portVal,
-      username: activePtzCamera.username || "admin",
-      password: activePtzCamera.password || "",
-    };
 
     try {
       await fetch("/devices/control-zoom", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(devPayload),
+        body: JSON.stringify({
+          device_ip: activePtzCamera.ip,
+          onvif_port: portVal,
+          onvif_username: activePtzCamera.username || "admin",
+          onvif_password: activePtzCamera.password || "",
+          position: devPos
+        }),
       });
     } catch (e) {
-      console.error("PTZ devices/control-zoom error:", e);
-    }
-
-    try {
-      await fetch("/api/ptz/zoom", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    } catch (e) {
-      console.error("PTZ api/ptz/zoom error:", e);
+      console.error("PTZ zoom error:", e);
     }
   }
 
