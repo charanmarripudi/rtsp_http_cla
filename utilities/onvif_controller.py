@@ -111,14 +111,18 @@ class OnvifController:
         url = f"http://{self.ip}:{self.port}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={act}&-speed={speed}&-presetNUM=0"
         auth_bytes = f"{self.username}:{self.password}".encode('utf-8')
         auth_header = f"Basic {base64.b64encode(auth_bytes).decode('ascii')}"
-        req = urllib.request.Request(url, method='PUT')
-        req.add_header('Authorization', auth_header)
-        try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                result = resp.read().decode('utf-8', errors='ignore')
-            return True, result
-        except Exception as e:
-            return False, str(e)
+        
+        # Try GET first, fallback to PUT
+        for m in ['GET', 'PUT']:
+            try:
+                req = urllib.request.Request(url, method=m)
+                req.add_header('Authorization', auth_header)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    result = resp.read().decode('utf-8', errors='ignore')
+                return True, result
+            except Exception as e:
+                last_err = str(e)
+        return False, last_err
 
     def validate_credentials(self) -> bool:
         # 1. Try standard ONVIF protocol
@@ -168,7 +172,7 @@ class OnvifController:
                 self.ptz_service.ContinuousMove(request)
                 time.sleep(1)
                 self.stop()
-                return
+                return True, "ONVIF ContinuousMove successful"
             except Exception:
                 pass
 
@@ -192,7 +196,7 @@ class OnvifController:
         else:
             direction = 'stop'
 
-        self._send_cgi_ptz(direction, duration=1.0)
+        return self._send_cgi_ptz(direction, duration=1.0)
 
     def zoom(self, zoom_val: float):
         """
@@ -200,7 +204,7 @@ class OnvifController:
         Camera: 192.168.96.30:80 (hi3510/HiSilicon) handles zoom timing internally.
         """
         act = 'zoomin' if zoom_val > 0 else ('zoomout' if zoom_val < 0 else 'stop')
-        self._send_cgi_zoom(act)
+        return self._send_cgi_zoom(act)
 
     def move_direction(self, direction: str, duration: float = 1.0):
         direction_lower = direction.lower()

@@ -1573,8 +1573,12 @@ def start_detection(d: dict):
             for k, v in model_configs.items():
                 if str(k).replace(".pt", "").lower().replace("_", "-").replace(" ", "-") == m_norm_target:
                     cfg = v
-                    break
-        e_classes = (isinstance(cfg, dict) and cfg.get("enabled_classes")) or []
+        e_classes = None
+        if isinstance(cfg, dict):
+            e_classes = cfg.get("enabled_classes")
+            if (e_classes is None or (isinstance(e_classes, list) and len(e_classes) == 0)) and isinstance(cfg.get("class_configs"), dict) and len(cfg["class_configs"]) > 0:
+                e_classes = list(cfg["class_configs"].keys())
+        e_classes = e_classes or []
         if norm_m in ppe_models_set:
             if len(e_classes) > 0:
                 if norm_m not in active_mods: active_mods.append(norm_m)

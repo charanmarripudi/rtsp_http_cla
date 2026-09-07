@@ -213,11 +213,12 @@ class DetectorWorker:
                         for k, v in self.model_configs.items():
                             if str(k).replace(".pt", "").lower().replace("_", "-").replace(" ", "-") == m_norm_target:
                                 cfg = v
-                                break
                     if cfg and isinstance(cfg, dict):
                         m_conf = float(cfg.get("conf", self.conf))
                         m_iou = float(cfg.get("iou", self.iou))
                         enabled_classes = cfg.get("enabled_classes")
+                        if (enabled_classes is None or (isinstance(enabled_classes, list) and len(enabled_classes) == 0)) and isinstance(cfg.get("class_configs"), dict) and len(cfg["class_configs"]) > 0:
+                            enabled_classes = list(cfg["class_configs"].keys())
                         m_imgsz = int(cfg.get("imgsz", 640))
 
                 # Skip PPE model entirely if it is class-configurable and has 0 enabled classes or no enabled_classes key
