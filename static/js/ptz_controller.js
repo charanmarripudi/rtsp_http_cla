@@ -169,8 +169,11 @@
     const select = document.getElementById("ptzCameraSelect");
     if (select) select.value = String(index);
 
+    const ipLabel = document.getElementById("ptzCameraIpLabel");
+    if (ipLabel) {
       const portVal = (activePtzCamera.port && activePtzCamera.port !== 8888) ? activePtzCamera.port : 80;
       ipLabel.textContent = `${activePtzCamera.ip}:${portVal} (ONVIF)`;
+    }
 
     const titleEl = document.getElementById("ptzCameraTitle");
     if (titleEl) {
@@ -182,84 +185,8 @@
     loadPtzPresets();
   }
 
-  async function playPtzStream(camIndex) {
-    const video = document.getElementById("ptzLiveVideo");
-    if (!video || !activePtzCamera) return;
-
-    const cid = `ptz${camIndex}`;
-    let rtspUrl = activePtzCamera.rtsp;
-    const hlsUrl = `/hls/stream${cid}_raw/playlist.m3u8`;
-
-    try {
-      await fetch("/api/ptz/cameras/start-stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cid: cid, rtsp: rtspUrl }),
-      });
-    } catch (_) {}
-
-    delete video.dataset.currentUrl;
-    video.muted = true;
-    video.defaultMuted = true;
-    video.playsInline = true;
-    video.autoplay = true;
-    video.setAttribute("muted", "");
-    video.setAttribute("playsinline", "");
-    video.setAttribute("autoplay", "");
-
-    if (ptzHls) {
-      try {
-        ptzHls.detachMedia();
-        ptzHls.destroy();
-      } catch (_) {}
-      ptzHls = null;
-    }
-
-    const streamUrl = hlsUrl + "?t=" + Date.now();
-
-    if (typeof Hls !== "undefined" && Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-        startPosition: -1,
-        liveSyncDurationCount: 2.0,
-        liveMaxLatencyDurationCount: 6,
-        liveDurationInfinity: true,
-        manifestLoadingTimeOut: 15000,
-        manifestLoadingMaxRetry: 10,
-        manifestLoadingRetryDelay: 600,
-      });
-      ptzHls = hls;
-
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-        hls.loadSource(streamUrl);
-      });
-
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(() => {});
-      });
-
-      hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              setTimeout(() => { if (ptzHls) ptzHls.loadSource(streamUrl); }, 1000);
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              ptzHls.recoverMediaError();
-              break;
-            default:
-              break;
-          }
-        }
-      });
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = streamUrl;
-      video.play().catch(() => {});
-    }
-  }
-
+  async function fetchDynamicStreams() {
+    if (!activePtzCamera) return;
     const portVal = (activePtzCamera.port && activePtzCamera.port !== 8888) ? activePtzCamera.port : 80;
     try {
       const res = await fetch(
