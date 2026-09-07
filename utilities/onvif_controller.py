@@ -20,14 +20,9 @@ except ImportError:
 
 
 class OnvifController:
-    """
-    ONVIF & CGI Controller for IP Cameras.
-    Handles PTZ (Pan/Tilt/Zoom), RTSP URL retrieval, profiles, and device information.
-    Automatically supports both ONVIF WSDL/SOAP and HTTP CGI PTZ interfaces.
-    """
-    def __init__(self, ip: str, port: int, username: str, password: str, wsdl_dir: Optional[str] = None):
+    def __init__(self, ip: str, port: int, username: str, password: str):
         self.ip = ip
-        self.port = int(port) if port else 80
+        self.port = port
         self.username = username
 
         if HAS_URDHVA_BASE and hasattr(urdhva_base, 'types') and hasattr(urdhva_base.types, 'Secret'):
@@ -45,9 +40,7 @@ class OnvifController:
         self.ptz_service = None
         self.profile = None
 
-        if wsdl_dir and os.path.exists(wsdl_dir):
-            self.wsdl_dir = os.path.abspath(wsdl_dir)
-        elif HAS_URDHVA_BASE and hasattr(urdhva_base, '__file__') and urdhva_base.__file__:
+        if HAS_URDHVA_BASE and hasattr(urdhva_base, '__file__') and urdhva_base.__file__:
             calculated_wsdl = os.path.abspath(os.path.join(os.path.dirname(urdhva_base.__file__),
                                                            '..', '..', 'services',
                                                            'base_configuration', 'wsdl'))
@@ -91,6 +84,7 @@ class OnvifController:
     def _send_cgi_ptz(self, act: str, speed: int = 5, duration: float = 1.0):
         """
         Fallback HTTP CGI interface for Ambicam / HiSilicon / IPC devices.
+        Used for pan/tilt — sends command, sleeps duration, then sends stop.
         """
         url = f"http://{self.ip}:{self.port}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={act}&-speed={speed}&-presetNUM=0"
         auth_bytes = f"{self.username}:{self.password}".encode('utf-8')
@@ -105,6 +99,24 @@ class OnvifController:
                     time.sleep(duration)
                     self._send_cgi_ptz('stop', duration=0)
                 return True, result
+        except Exception as e:
+            return False, str(e)
+
+    def _send_cgi_zoom(self, act: str, speed: int = 5):
+        """
+        One-shot CGI zoom command for hi3510/HiSilicon cameras.
+        Does NOT sleep or send stop — the camera handles zoom pulse timing internally.
+        act: 'zoomin' or 'zoomout'
+        """
+        url = f"http://{self.ip}:{self.port}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={act}&-speed={speed}&-presetNUM=0"
+        auth_bytes = f"{self.username}:{self.password}".encode('utf-8')
+        auth_header = f"Basic {base64.b64encode(auth_bytes).decode('ascii')}"
+        req = urllib.request.Request(url, method='PUT')
+        req.add_header('Authorization', auth_header)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                result = resp.read().decode('utf-8', errors='ignore')
+            return True, result
         except Exception as e:
             return False, str(e)
 
@@ -160,33 +172,56 @@ class OnvifController:
             except Exception:
                 pass
 
-        # Fallback to HTTP CGI movement
-        direction = 'left' if pan < 0 else ('right' if pan > 0 else ('up' if tilt > 0 else ('down' if tilt < 0 else 'stop')))
+        # Fallback to HTTP CGI movement for all 8 directions
+        if pan < 0 and tilt > 0:
+            direction = 'leftup'
+        elif pan > 0 and tilt > 0:
+            direction = 'rightup'
+        elif pan < 0 and tilt < 0:
+            direction = 'leftdown'
+        elif pan > 0 and tilt < 0:
+            direction = 'rightdown'
+        elif pan < 0:
+            direction = 'left'
+        elif pan > 0:
+            direction = 'right'
+        elif tilt > 0:
+            direction = 'up'
+        elif tilt < 0:
+            direction = 'down'
+        else:
+            direction = 'stop'
+
         self._send_cgi_ptz(direction, duration=1.0)
 
     def zoom(self, zoom_val: float):
-        # Try standard ONVIF PTZ first
-        if self.ptz_service and self.profile:
-            try:
-                request = self.ptz_service.create_type('ContinuousMove')
-                request.ProfileToken = self.profile.token
-                request.Velocity = {'Zoom': {'x': zoom_val}}
-                self.ptz_service.ContinuousMove(request)
-                time.sleep(1)
-                self.stop()
-                return
-            except Exception:
-                pass
-
-        # Fallback to HTTP CGI zoom
+        """
+        Zoom camera. Uses direct CGI one-shot pulse — no ONVIF SOAP needed.
+        Camera: 192.168.96.30:80 (hi3510/HiSilicon) handles zoom timing internally.
+        """
         act = 'zoomin' if zoom_val > 0 else ('zoomout' if zoom_val < 0 else 'stop')
-        self._send_cgi_ptz(act, duration=1.0)
+        self._send_cgi_zoom(act)
 
     def move_direction(self, direction: str, duration: float = 1.0):
         direction_lower = direction.lower()
-        if direction_lower in ['left', 'right', 'up', 'down', 'top', 'bottom']:
-            pan_val = -0.5 if direction_lower == 'left' else (0.5 if direction_lower == 'right' else 0.0)
-            tilt_val = 0.5 if direction_lower in ['up', 'top'] else (-0.5 if direction_lower in ['down', 'bottom'] else 0.0)
+        direction_map = {
+            'left': (-0.5, 0.0),
+            'right': (0.5, 0.0),
+            'up': (0.0, 0.5),
+            'top': (0.0, 0.5),
+            'down': (0.0, -0.5),
+            'bottom': (0.0, -0.5),
+            'leftup': (-0.5, 0.5),
+            'up_left': (-0.5, 0.5),
+            'rightup': (0.5, 0.5),
+            'up_right': (0.5, 0.5),
+            'leftdown': (-0.5, -0.5),
+            'down_left': (-0.5, -0.5),
+            'rightdown': (0.5, -0.5),
+            'down_right': (0.5, -0.5)
+        }
+        if direction_lower in direction_map:
+            pan_val, tilt_val = direction_map[direction_lower]
             self.pan_tilt(pan=pan_val, tilt=tilt_val)
         elif direction_lower in ['zoomin', 'zoom_in']:
             self.zoom(0.5)

@@ -36,7 +36,7 @@ class DevicesControlPanTiltParams(BaseModel):
     onvif_port: Optional[int] = 80
     onvif_username: Optional[str] = "admin"
     onvif_password: Optional[str] = ""
-    position: str  # 'Left', 'Right', 'Top', 'Bottom', 'Up', 'Down'
+    position: str  # 'Left', 'Right', 'Top', 'Bottom', 'Up', 'Down', 'LeftUp', 'RightUp', 'LeftDown', 'RightDown'
     pan: Optional[float] = 0.0
     tilt: Optional[float] = 0.0
 
@@ -78,17 +78,26 @@ async def devices_control_pan_tilt(data: DevicesControlPanTiltParams):
         'Top': {'pan': 0.0, 'tilt': 0.5},
         'Up': {'pan': 0.0, 'tilt': 0.5},
         'Bottom': {'pan': 0.0, 'tilt': -0.5},
-        'Down': {'pan': 0.0, 'tilt': -0.5}
+        'Down': {'pan': 0.0, 'tilt': -0.5},
+        'LeftUp': {'pan': -0.5, 'tilt': 0.5},
+        'UpLeft': {'pan': -0.5, 'tilt': 0.5},
+        'RightUp': {'pan': 0.5, 'tilt': 0.5},
+        'UpRight': {'pan': 0.5, 'tilt': 0.5},
+        'LeftDown': {'pan': -0.5, 'tilt': -0.5},
+        'DownLeft': {'pan': -0.5, 'tilt': -0.5},
+        'RightDown': {'pan': 0.5, 'tilt': -0.5},
+        'DownRight': {'pan': 0.5, 'tilt': -0.5}
     }
     pos_info = position_map.get(data.position, {'pan': data.pan or 0.0, 'tilt': data.tilt or 0.0})
     device_data.update(pos_info)
 
     onvif_creds = None
-
     if data.device_ip:
+        port_val = data.onvif_port or 80
+        if port_val == 8888: port_val = 80
         onvif_creds = {
             'ip': data.device_ip,
-            'port': data.onvif_port or 80,
+            'port': port_val,
             'username': data.onvif_username or 'admin',
             'password': data.onvif_password or ''
         }
@@ -137,9 +146,11 @@ async def devices_control_zoom(data: DevicesControlZoomParams):
     onvif_creds = None
 
     if data.device_ip:
+        port_val = data.onvif_port or 80
+        if port_val == 8888: port_val = 80
         onvif_creds = {
             'ip': data.device_ip,
-            'port': data.onvif_port or 80,
+            'port': port_val,
             'username': data.onvif_username or 'admin',
             'password': data.onvif_password or ''
         }
@@ -162,8 +173,9 @@ async def devices_control_zoom(data: DevicesControlZoomParams):
         return False, "Not found in database and no direct IP provided"
 
     try:
+        # Skip controller.connect() — this camera (hi3510/HiSilicon) has no ONVIF PTZ service.
+        # zoom() uses _send_cgi_zoom() directly (one-shot CGI, no sleep, no stop).
         controller = OnvifController(**onvif_creds)
-        controller.connect()
         zoom_val = device_data.get('zoom', 0.5)
         controller.zoom(zoom_val)
         return True, "Zoom operation successful"
