@@ -672,28 +672,58 @@ raw_streams_procs = {}
 def start_raw_stream(i, u):
     cid = str(i)
     normalized_rtsp = u.strip()
+    if not normalized_rtsp: return
 
     if cid in raw_streams_procs:
         curr = raw_streams_procs[cid]
-        if curr["proc"].poll() is None and curr["rtsp"] == normalized_rtsp:
+        if curr.get("proc") and curr["proc"].poll() is None and curr["rtsp"] == normalized_rtsp and not curr.get("symlink"):
             return
         else:
             try:
-                curr["proc"].kill()
+                if curr.get("proc") and not curr.get("symlink"):
+                    curr["proc"].kill()
             except: pass
             del raw_streams_procs[cid]
 
-    sd = os.path.join(HLS_DIR, f"stream{cid}_raw")
     import shutil
+    sd = os.path.join(HLS_DIR, f"stream{cid}_raw")
+
+    # Clean existing symlink or directory for cid
     if os.path.lexists(sd):
-        for f in glob.glob(os.path.join(sd, "*")):
-            try:
-                if os.path.isdir(f): shutil.rmtree(f)
-                else: os.remove(f)
-            except: pass
-    else:
-        os.makedirs(sd, exist_ok=True)
-    
+        try:
+            if os.path.islink(sd):
+                os.unlink(sd)
+            else:
+                shutil.rmtree(sd)
+        except: pass
+
+    # Check if another camera already has an active raw stream for the exact same RTSP URL
+    existing_cid = None
+    for other_cid, proc_info in list(raw_streams_procs.items()):
+        if other_cid != cid and proc_info.get("rtsp") == normalized_rtsp and not proc_info.get("symlink"):
+            if proc_info.get("proc") and proc_info["proc"].poll() is None:
+                other_sd = proc_info.get("sd")
+                if other_sd and os.path.exists(os.path.join(other_sd, "playlist.m3u8")):
+                    existing_cid = other_cid
+                    break
+
+    if existing_cid is not None:
+        target_sd = os.path.join(HLS_DIR, f"stream{existing_cid}_raw")
+        try:
+            os.symlink(target_sd, sd)
+            raw_streams_procs[cid] = {
+                "proc": raw_streams_procs[existing_cid]["proc"],
+                "rtsp": normalized_rtsp,
+                "sd": sd,
+                "start_time": int(time.time()),
+                "symlink": True
+            }
+            print(f"[LOG] Camera {cid} raw stream attached via zero-overhead symlink to existing stream {existing_cid} ({normalized_rtsp})")
+            return
+        except Exception as e:
+            print(f"[WARN] Symlink failed for Camera {cid}: {e}")
+
+    os.makedirs(sd, exist_ok=True)
     log_file = os.path.join(sd, "ffmpeg.log")
     try: os.remove(log_file)
     except: pass
@@ -703,8 +733,9 @@ def start_raw_stream(i, u):
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
         "-fflags", "nobuffer+discardcorrupt+fastseek", "-flags", "low_delay",
         "-avioflags", "direct",
+        "-reorder_queue_size", "250", "-buffer_size", "1024k",
         "-rtsp_transport", "tcp",
-        "-probesize", "32k", "-analyzeduration", "0",
+        "-probesize", "64k", "-analyzeduration", "0",
         "-i", normalized_rtsp,
         "-an",
         "-vf", "scale=1280:720:flags=fast_bilinear,format=yuv420p,setdar=16/9",
@@ -724,7 +755,7 @@ def start_raw_stream(i, u):
     log_fh = open(log_file, "w")
     print(f"[LOG] Camera {cid} raw stream started at 1280x720 (720p HD), 20 FPS ({normalized_rtsp})")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
-    raw_streams_procs[cid] = {"proc": proc, "rtsp": normalized_rtsp, "sd": sd, "start_time": int(time.time())}
+    raw_streams_procs[cid] = {"proc": proc, "rtsp": normalized_rtsp, "sd": sd, "start_time": int(time.time()), "symlink": False}
 
 def monitor_raw_streams_loop():
     time.sleep(10)
@@ -774,6 +805,7 @@ def monitor_raw_streams_loop():
 
 def stop_raw_stream(i, **kwargs):
     cid = str(i)
+    import shutil
     if cid in running:
         proc_info = running.get(cid)
         if proc_info:
@@ -782,13 +814,21 @@ def stop_raw_stream(i, **kwargs):
         _clean_camera_dirs(cid)
 
     if cid in raw_streams_procs:
-        proc = raw_streams_procs[cid].get("proc")
-        if proc:
-            try:
-                proc.kill()
-                proc.wait(timeout=2.0)
-            except: pass
+        curr = raw_streams_procs[cid]
+        if not curr.get("symlink"):
+            proc = curr.get("proc")
+            if proc:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2.0)
+                except: pass
         del raw_streams_procs[cid]
+        sd = os.path.join(HLS_DIR, f"stream{cid}_raw")
+        if os.path.lexists(sd):
+            try:
+                if os.path.islink(sd): os.unlink(sd)
+                else: shutil.rmtree(sd)
+            except: pass
 
 @app.on_event("startup")
 async def startup_event():

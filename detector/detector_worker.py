@@ -233,7 +233,7 @@ class DetectorWorker:
                     detect_conf = min_cls_conf
 
                 detected_this_model = []
-                # Predict at a very low base confidence (0.01) to capture all moving, distant, and close objects
+                # Predict at base confidence (0.01) to capture all moving, distant, and close objects
                 for r in model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False):
                     if r.boxes:
                         for b in r.boxes:
@@ -241,44 +241,44 @@ class DetectorWorker:
                             conf_val = float(b.conf[0])
                             detected_this_model.append((cls, conf_val))
                             
+                            # Filter by enabled classes (strictly per box)
+                            if enabled_classes is not None and isinstance(enabled_classes, list):
+                                if len(enabled_classes) == 0:
+                                    continue  # 0 classes enabled for this model -> skip box
+                                import re
+                                norm_cls = re.sub(r'[-_\s]+', '-', cls.lower())
+                                matched = False
+                                for e in enabled_classes:
+                                    norm_e = re.sub(r'[-_\s]+', '-', e.lower())
+                                    if norm_cls == norm_e:
+                                        matched = True
+                                        break
+                                if not matched:
+                                    continue
+                            elif isinstance(self.model_configs, dict) and len(self.model_configs) > 0 and (cfg is None or enabled_classes is None):
+                                # Class-based filtering active on camera, but this model has no enabled_classes list -> skip box
+                                continue
+
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
                             x1, y1, x2, y2 = box_xyxy
                             bw = max(0, x2 - x1)
                             bh = max(0, y2 - y1)
                             box_area = bw * bh
 
-                # Filter by enabled classes (robust match handling dashes/underscores/spaces/doubles)
-                if enabled_classes is not None and isinstance(enabled_classes, list):
-                    if len(enabled_classes) == 0:
-                        continue  # 0 classes enabled for this model -> skip all detections
-                    import re
-                    norm_cls = re.sub(r'[-_\s]+', '-', cls.lower())
-                    matched = False
-                    for e in enabled_classes:
-                        norm_e = re.sub(r'[-_\s]+', '-', e.lower())
-                        if norm_cls == norm_e:
-                            matched = True
-                            break
-                    if not matched:
-                        continue
-                elif isinstance(self.model_configs, dict) and len(self.model_configs) > 0 and (cfg is None or enabled_classes is None):
-                    # Class-based filtering active on camera, but this model has no enabled_classes list -> skip
-                    continue
-
-                # Load class-specific conf thresholds
-                cls_conf = m_conf
-                if cfg and isinstance(cfg, dict):
-                    class_configs = cfg.get("class_configs")
-                    if class_configs and isinstance(class_configs, dict):
-                        import re
-                        norm_cls = re.sub(r'[-_\s]+', '-', cls.lower())
-                        c_cfg = None
-                        for k, val in class_configs.items():
-                            if re.sub(r'[-_\s]+', '-', k.lower()) == norm_cls:
-                                c_cfg = val
-                                break
-                        if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
-                            cls_conf = float(c_cfg.get("conf", m_conf))
+                            # Load class-specific conf thresholds
+                            cls_conf = m_conf
+                            if cfg and isinstance(cfg, dict):
+                                class_configs = cfg.get("class_configs")
+                                if class_configs and isinstance(class_configs, dict):
+                                    import re
+                                    norm_cls = re.sub(r'[-_\s]+', '-', cls.lower())
+                                    c_cfg = None
+                                    for k, val in class_configs.items():
+                                        if re.sub(r'[-_\s]+', '-', k.lower()) == norm_cls:
+                                            c_cfg = val
+                                            break
+                                    if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
+                                        cls_conf = float(c_cfg.get("conf", m_conf))
 
                             # Validate Box using class-specific confidence
                             if not self._is_valid_box(conf_val, cls_conf, bw, bh, box_area, f_w, f_h, f_area):
@@ -297,7 +297,7 @@ class DetectorWorker:
                                     inside = (rx1 <= cx <= rx2 and ry1 <= cy <= ry2)
                                     if not inside:
                                         continue
-                                except Exception as e:
+                                except Exception:
                                     pass
 
                             label_text = f"{cls} {conf_val:.2f}"
