@@ -734,6 +734,7 @@ def start_raw_stream(i, u):
         "-rtsp_transport", "tcp",
         "-probesize", "1.5M", "-analyzeduration", "1.5M",
         "-i", normalized_rtsp,
+        "-map", "0:v:0",
         "-an",
         "-vf", "scale=1280:720:flags=fast_bilinear,format=yuv420p,setdar=16/9",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
