@@ -11,30 +11,6 @@ async function playHLS(video, url, idx, forceReload = false) {
     }
     video.dataset.currentUrl = url;
 
-    // Session token to prevent race conditions if user switches streams quickly
-    const sessionToken = Symbol();
-    video.dataset.loadToken = sessionToken;
-
-    // Fast pre-flight check: Wait up to 3 seconds for playlist.m3u8 to be ready with .ts segments
-    let isReady = false;
-    const checkStart = Date.now();
-    while (Date.now() - checkStart < 3000) {
-        if (video.dataset.loadToken !== sessionToken) return;
-        try {
-            const r = await fetch(url + "?t=" + Date.now());
-            if (r.ok) {
-                const txt = await r.text();
-                if (txt.includes(".ts")) {
-                    isReady = true;
-                    break;
-                }
-            }
-        } catch (_) {}
-        await new Promise(res => setTimeout(res, 350));
-    }
-
-    if (!isReady || video.dataset.loadToken !== sessionToken) return;
-
     if (hlsInstances[idx]) { 
         try {
             hlsInstances[idx].detachMedia();
@@ -53,6 +29,10 @@ async function playHLS(video, url, idx, forceReload = false) {
 
     const fullUrl = url + "?t=" + Date.now();
     if (typeof Hls === "undefined" || !Hls.isSupported()) { 
+        video.muted = true;
+        video.playsInline = true;
+        video.setAttribute("playsinline", "");
+        video.setAttribute("webkit-playsinline", "");
         video.src = fullUrl; 
         video.play().catch(() => {}); 
         return; 
@@ -85,11 +65,26 @@ async function playHLS(video, url, idx, forceReload = false) {
         stopSimulatedCanvas(idx, video);
         video.muted = true;
         video.playsInline = true;
-        video.play().then(() => {
-            if (video.seekable && video.seekable.length > 0) {
-                video.currentTime = video.seekable.end(0);
-            }
-        }).catch(() => {});
+        video.setAttribute("playsinline", "");
+        video.setAttribute("webkit-playsinline", "");
+        
+        const promise = video.play();
+        if (promise !== undefined) {
+            promise.then(() => {
+                if (video.seekable && video.seekable.length > 0) {
+                    video.currentTime = video.seekable.end(0);
+                }
+            }).catch(err => {
+                console.warn(`[HLS] Autoplay blocked for camera ${idx}, attaching interaction listener:`, err);
+                const resumePlay = () => {
+                    video.play().catch(() => {});
+                    document.removeEventListener("click", resumePlay);
+                    document.removeEventListener("touchstart", resumePlay);
+                };
+                document.addEventListener("click", resumePlay, { once: true });
+                document.addEventListener("touchstart", resumePlay, { once: true });
+            });
+        }
     });
 
     if (window.liveSyncIntervals && window.liveSyncIntervals[idx]) {

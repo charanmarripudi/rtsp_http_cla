@@ -864,6 +864,19 @@ async def startup_event():
 # ─────────────────────────────────────────────────────────────
 # ROUTES
 # ─────────────────────────────────────────────────────────────
+@app.options("/hls/{path:path}")
+@app.options("/hls/camera/{cam_id}/{filename}")
+async def hls_options_handler(path: str = None, cam_id: str = None, filename: str = None):
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Max-Age": "86400",
+        }
+    )
+
 @app.get("/hls/camera/{cam_id}/{filename}")
 async def serve_camera_virtual_file(cam_id: str, filename: str):
     sub = f"stream{cam_id}_detected" if cam_id in running and os.path.exists(os.path.join(HLS_DIR, f"stream{cam_id}_detected/playlist.m3u8")) else f"stream{cam_id}_raw"
@@ -893,7 +906,8 @@ def get_stream_start_time(path: str) -> int:
 
 @app.get("/hls/{path:path}")
 async def serve_hls(path: str):
-    fp = os.path.join(HLS_DIR, path)
+    clean_path = path.split("?")[0].lstrip("/")
+    fp = os.path.join(HLS_DIR, clean_path)
 
     # Auto-start stream on demand if playlist.m3u8 is requested and does not exist yet
     if not os.path.exists(fp) and "playlist.m3u8" in path:
