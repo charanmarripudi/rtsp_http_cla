@@ -1189,8 +1189,8 @@
 
           <!-- Zoom -->
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px;">
-            <button class="btn-secondary" id="ptzBtnZoomIn" style="padding: 8px; cursor: pointer;" onclick="if(window.ptzZoom) window.ptzZoom('in');">🔍 Zoom In</button>
-            <button class="btn-secondary" id="ptzBtnZoomOut" style="padding: 8px; cursor: pointer;" onclick="if(window.ptzZoom) window.ptzZoom('out');">🔍 Zoom Out</button>
+            <button class="btn-secondary" id="ptzBtnZoomIn" style="padding: 8px; cursor: pointer;">🔍 Zoom In</button>
+            <button class="btn-secondary" id="ptzBtnZoomOut" style="padding: 8px; cursor: pointer;">🔍 Zoom Out</button>
           </div>
 
           <!-- Speed Slider -->
@@ -1256,7 +1256,7 @@
 
   <script src="/static/js/detection.js?v=7.0"></script>
   <script src="/static/js/location_dashboard.js?v=6.0"></script>
-  <script src="/static/js/ptz_controller.js?v=3.0"></script>
+  <script src="/static/js/ptz_controller.js?v=4.0_fresh"></script>
 
   <script>
     var streamsArray = [];
@@ -1673,7 +1673,7 @@
         box.innerHTML = `
           <div class="video-wrap" style="position: relative;">
             <div class="mode-badge raw" id="badge-${i}">RAW</div>
-            <video id="v${i}" controls autoplay muted playsinline data-src="${escapeHtml(s.hls_live)}" ondblclick="toggleCardMaximize(${i})"></video>
+            <video id="v${i}" autoplay muted playsinline data-src="${escapeHtml(s.hls_live)}" ondblclick="toggleCardMaximize(${i})"></video>
             <svg class="roi-draw-canvas" id="roi-canvas-${i}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; user-select: none; z-index: 15; pointer-events: none; background: transparent;">
               <rect id="roi-rect-${i}" x="0" y="0" width="0" height="0" style="fill: none; stroke: #00ffaa; stroke-width: 2.5;"></rect>
               <g id="roi-badge-${i}" style="display: none;">

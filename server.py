@@ -3045,7 +3045,7 @@ class CachedStaticFiles(StaticFiles):
                 with open(response.path, "rb") as f:
                     content = f.read()
                 headers = dict(response.headers)
-                headers["Cache-Control"] = "public, max-age=86400"
+                headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
                 headers.pop("content-length", None)
                 return Response(content=content, media_type=response.media_type, headers=headers)
             except Exception:
