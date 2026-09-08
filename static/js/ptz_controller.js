@@ -663,28 +663,42 @@
 
   async function ptzZoom(direction) {
     if (!activePtzCamera) return;
-    // NOTE: Do NOT set isMoving=true here — zoom is a self-contained one-shot CGI command.
-    // Setting isMoving=true causes ptzStop() to fire via D-pad mouseleave, interrupting zoom.
     showStatusToast(`Zoom ${direction.toUpperCase()}...`);
 
-    // 1. Instant digital scale feedback on the live video
-    const videoEl = document.getElementById("ptzLiveVideo");
-    if (videoEl) {
-      if (!window._ptzDigitalZoom) window._ptzDigitalZoom = 1.0;
-      if (direction === "in" || direction === "ZoomIn") {
-        window._ptzDigitalZoom = Math.min(4.0, parseFloat((window._ptzDigitalZoom + 0.25).toFixed(2)));
-      } else if (direction === "out" || direction === "ZoomOut") {
-        window._ptzDigitalZoom = Math.max(1.0, parseFloat((window._ptzDigitalZoom - 0.25).toFixed(2)));
-      }
-      videoEl.style.transform = `scale(${window._ptzDigitalZoom})`;
-      videoEl.style.transformOrigin = "center center";
-      videoEl.style.transition = "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
-      const zoomBadge = document.getElementById("ptzTelemetryZoom");
-      if (zoomBadge) zoomBadge.textContent = `${window._ptzDigitalZoom.toFixed(2)}X`;
+    // 1. Digital player zoom scaling (matching onvif_ptz_zoom_package)
+    if (!window._ptzDigitalZoom) window._ptzDigitalZoom = 1.0;
+    if (direction === "in" || direction === "ZoomIn" || direction === "zoomin") {
+      window._ptzDigitalZoom = Math.min(4.0, parseFloat((window._ptzDigitalZoom + 0.25).toFixed(2)));
+    } else if (direction === "out" || direction === "ZoomOut" || direction === "zoomout") {
+      window._ptzDigitalZoom = Math.max(1.0, parseFloat((window._ptzDigitalZoom - 0.25).toFixed(2)));
     }
 
-    // 2. Send hardware zoom via /devices/control-zoom (CGI: ?-act=zoomin / ?-act=zoomout)
-    // Camera: 192.168.96.30, Port 80 — CGI self-stops after ~1s internally
+    const currentZoom = window._ptzDigitalZoom;
+
+    // Apply smooth CSS digital zoom scale to PTZ modal video AND dashboard camera stream videos
+    const targets = [
+      document.getElementById("ptzLiveVideo"),
+      ...document.querySelectorAll("video"),
+      ...document.querySelectorAll("canvas")
+    ];
+
+    targets.forEach((el) => {
+      if (el) {
+        el.style.transform = `scale(${currentZoom})`;
+        el.style.transformOrigin = "center center";
+        el.style.transition = "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
+      }
+    });
+
+    const zoomBadge = document.getElementById("ptzTelemetryZoom");
+    if (zoomBadge) zoomBadge.textContent = `${currentZoom.toFixed(2)}X`;
+
+    // Also update any badge element on main dashboard cards
+    document.querySelectorAll(".zoom-level-badge").forEach((badge) => {
+      badge.textContent = `${currentZoom.toFixed(2)}X`;
+    });
+
+    // 2. Send hardware zoom command to backend (/devices/control-zoom)
     const portVal = (activePtzCamera.port && activePtzCamera.port !== 8888) ? activePtzCamera.port : 80;
     const devPos = (direction === "in" || direction === "ZoomIn" || direction === "zoomin") ? "ZoomIn" : "ZoomOut";
 
