@@ -1189,8 +1189,8 @@
 
           <!-- Zoom -->
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px;">
-            <button class="btn-secondary" id="ptzBtnZoomIn" style="padding: 8px;">🔍 Zoom In</button>
-            <button class="btn-secondary" id="ptzBtnZoomOut" style="padding: 8px;">🔍 Zoom Out</button>
+            <button class="btn-secondary" id="ptzBtnZoomIn" style="padding: 8px; cursor: pointer;" onclick="if(window.ptzZoom) window.ptzZoom('in');">🔍 Zoom In</button>
+            <button class="btn-secondary" id="ptzBtnZoomOut" style="padding: 8px; cursor: pointer;" onclick="if(window.ptzZoom) window.ptzZoom('out');">🔍 Zoom Out</button>
           </div>
 
           <!-- Speed Slider -->

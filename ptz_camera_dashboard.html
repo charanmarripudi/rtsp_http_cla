@@ -383,7 +383,7 @@
 
         window.addEventListener('load', () => {
             const video = document.getElementById('streamFrame');
-            const streamUrl = "/hls/stream0_raw/playlist.m3u8?t=" + new Date().getTime();
+            const streamUrl = "/hls/streamptz0_raw/playlist.m3u8?t=" + new Date().getTime();
             if (typeof Hls !== "undefined" && Hls.isSupported()) {
                 const hls = new Hls({ lowLatencyMode: true, maxBufferLength: 1.5 });
                 hls.attachMedia(video);
@@ -393,6 +393,11 @@
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
                     video.play().catch(() => {});
                     logStatus("✅ Connected to Live RTSP Video Feed!");
+                });
+                hls.on(Hls.Events.ERROR, (_, data) => {
+                    if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                        hls.loadSource("/hls/stream0_raw/playlist.m3u8?t=" + new Date().getTime());
+                    }
                 });
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = streamUrl;
