@@ -11,31 +11,6 @@ async function playHLS(video, url, idx, forceReload = false) {
     }
     video.dataset.currentUrl = url;
 
-    // Session token to prevent race conditions if user switches streams quickly
-    const sessionToken = Symbol();
-    video.dataset.loadToken = sessionToken;
-
-    // Pre-flight check: Wait up to 30s for playlist.m3u8 to have at least 1 .ts segment
-    // This is needed so Hls.js never starts with an empty or unready playlist
-    let isReady = false;
-    const checkStart = Date.now();
-    while (Date.now() - checkStart < 30000) {
-        if (video.dataset.loadToken !== sessionToken) return;
-        try {
-            const r = await fetch(url + "?t=" + Date.now());
-            if (r.ok) {
-                const txt = await r.text();
-                if (txt.includes(".ts")) {
-                    isReady = true;
-                    break;
-                }
-            }
-        } catch (_) {}
-        await new Promise(res => setTimeout(res, 350));
-    }
-
-    if (!isReady || video.dataset.loadToken !== sessionToken) return;
-
     if (hlsInstances[idx]) { 
         try {
             hlsInstances[idx].detachMedia();
@@ -66,20 +41,20 @@ async function playHLS(video, url, idx, forceReload = false) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        startPosition: -1,               // Start at live edge
-        liveSyncDurationCount: 1,        // 1 segment cushion (~0.5s - 1.0s behind live RTSP camera feed)
-        liveMaxLatencyDurationCount: 2.5, // Auto catch-up if delay > 2.5s
+        startPosition: -1,
+        liveSyncDurationCount: 4.0,      // 4.0 segments cushion (absorbs network jitter across networks)
+        liveMaxLatencyDurationCount: 8,  // Auto-catchup if delay > 8 segments
         liveDurationInfinity: true,
         liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 2,              // Keep buffer ultra-small (2s max) — prevents 0.07→stuck→jump bug
-        maxMaxBufferLength: 4,
-        manifestLoadingTimeOut: 10000,
+        maxBufferLength: 10,
+        maxMaxBufferLength: 15,
+        manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
-        manifestLoadingRetryDelay: 300,
-        fragLoadingTimeOut: 10000,
+        manifestLoadingRetryDelay: 500,
+        fragLoadingTimeOut: 20000,
         fragLoadingMaxRetry: 10,
-        fragLoadingRetryDelay: 300
+        fragLoadingRetryDelay: 500
     });
     hlsInstances[idx] = hls;
 
@@ -95,14 +70,8 @@ async function playHLS(video, url, idx, forceReload = false) {
         
         const promise = video.play();
         if (promise !== undefined) {
-            promise.then(() => {
-                if (video.seekable && video.seekable.length > 0) {
-                    video.currentTime = video.seekable.end(0);
-                }
-            }).catch(err => {
-                // Mobile browsers (iOS Safari/Android Chrome) block autoplay over public URLs
-                // Attach a one-time touch/click handler to resume on first user interaction
-                console.warn(`[HLS] Autoplay blocked for camera ${idx}, waiting for user interaction:`, err);
+            promise.catch(err => {
+                console.warn(`[HLS] Autoplay blocked for camera ${idx}, attaching interaction listener:`, err);
                 const resumePlay = () => {
                     video.play().catch(() => {});
                     document.removeEventListener("click", resumePlay);
@@ -113,20 +82,6 @@ async function playHLS(video, url, idx, forceReload = false) {
             });
         }
     });
-
-    // Live-edge catch-up: gently pull playhead to live edge every 1s if it falls > 1.2s behind
-    if (window.liveSyncIntervals && window.liveSyncIntervals[idx]) {
-        clearInterval(window.liveSyncIntervals[idx]);
-    }
-    window.liveSyncIntervals = window.liveSyncIntervals || {};
-    window.liveSyncIntervals[idx] = setInterval(() => {
-        if (video && video.seekable && video.seekable.length > 0 && !video.paused) {
-            const liveEnd = video.seekable.end(0);
-            if (liveEnd - video.currentTime > 1.2) {
-                video.currentTime = liveEnd - 0.5;
-            }
-        }
-    }, 2000);
 
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {

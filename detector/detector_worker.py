@@ -111,7 +111,7 @@ class DetectorWorker:
         self.roi_polygon = None
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
-        self.fps, self.width, self.height = 15.0, 854, 480
+        self.fps, self.width, self.height = 15.0, 1280, 720
         self._latest_raw_frame = None
         self._latest_boxes = []
         self._latest_box_time = 0.0
@@ -151,22 +151,23 @@ class DetectorWorker:
             except Exception:
                 pass
 
+        session_id = int(time.time())
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2",
             "-profile:v", "baseline", "-level:v", "3.1",
-            "-b:v", "350k", "-maxrate", "450k", "-bufsize", "800k",
+            "-b:v", "1000k", "-maxrate", "1200k", "-bufsize", "2M",
             "-g", str(int(self.fps * 2)), 
             "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
-            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist", 
-            "-hls_segment_filename", os.path.join(self.output_dir, "segment_%05d.ts"), 
+            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
+            "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 350k", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 1000k (max 1200k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
 
     def _letterbox(self, f):
