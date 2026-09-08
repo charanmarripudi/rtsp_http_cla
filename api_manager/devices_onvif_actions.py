@@ -135,19 +135,19 @@ async def devices_control_pan_tilt(data: DevicesControlPanTiltParams):
 @router.post('/control-zoom', tags=['Devices'])
 async def devices_control_zoom(data: DevicesControlZoomParams):
     device_data = data.model_dump()
-    position_map = {
-        'ZoomIn': {'pan': 0.0, 'tilt': 0.0, 'zoom': 0.5},
-        'ZoomOut': {'pan': 0.0, 'tilt': 0.0, 'zoom': -0.5}
-    }
-    pos_info = position_map.get(data.position, {'zoom': 0.5 if data.position == 'ZoomIn' else -0.5})
-    device_data.update(pos_info)
+    pos_str = str(data.position).lower()
+    zoom_val = 0.5 if pos_str in ['zoomin', 'in', 'zoom_in'] else -0.5
+    device_data['zoom'] = zoom_val
 
     onvif_creds = None
 
     if data.device_ip:
+        port_val = data.onvif_port or 80
+        if port_val == 8888:
+            port_val = 80
         onvif_creds = {
             'ip': data.device_ip,
-            'port': data.onvif_port or 80,
+            'port': port_val,
             'username': data.onvif_username or 'admin',
             'password': data.onvif_password or ''
         }
@@ -157,9 +157,11 @@ async def devices_control_zoom(data: DevicesControlZoomParams):
             resp = await globals()['Devices'].get_all(urdhva_base.QueryParams(q=q, limit=1), resp_type='plain')
             if resp and resp.get('data', []):
                 rec = resp["data"][0]
+                p = rec.get("onvif_credentials", {}).get("onvif_port", 80)
+                if p == 8888: p = 80
                 onvif_creds = {
                     'ip': rec.get("device_ip"),
-                    'port': rec.get("onvif_credentials", {}).get("onvif_port", 80),
+                    'port': p,
                     'username': rec.get("onvif_credentials", {}).get("onvif_username", 'admin'),
                     'password': rec.get("onvif_credentials", {}).get("onvif_password", '')
                 }
@@ -167,17 +169,20 @@ async def devices_control_zoom(data: DevicesControlZoomParams):
             print(f"DB lookup error: {e}")
 
     if not onvif_creds or not onvif_creds.get('ip'):
-        return False, "Not found in database and no direct IP provided"
+        return {"status": "error", "message": "Not found in database and no direct IP provided"}
 
     try:
         controller = OnvifController(**onvif_creds)
         controller.connect()
-        zoom_val = device_data.get('zoom', 0.5)
-        controller.zoom(zoom_val)
-        return True, "Zoom operation successful"
+        res = controller.zoom(zoom_val)
+        ok, msg = res if isinstance(res, tuple) else (True, "Zoom operation successful")
+        if ok:
+            return {"status": "success", "zoom": zoom_val, "message": str(msg)}
+        else:
+            return {"status": "error", "zoom": zoom_val, "message": str(msg)}
     except Exception as e:
         print(f"Zoom error: {e}")
-        return False, "Zoom is not enabled"
+        return {"status": "error", "message": f"Zoom exception: {str(e)}"}
 
 
 # =====================================================================

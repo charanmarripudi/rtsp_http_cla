@@ -92,17 +92,29 @@ class OnvifController:
         auth_bytes = f"{self.username}:{self.password}".encode('utf-8')
         auth_header = f"Basic {base64.b64encode(auth_bytes).decode('ascii')}"
 
-        req = urllib.request.Request(url, method='PUT')
-        req.add_header('Authorization', auth_header)
+        # 1. Try standard GET request for CGI script
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            req_get = urllib.request.Request(url)
+            req_get.add_header('Authorization', auth_header)
+            with urllib.request.urlopen(req_get, timeout=5) as resp:
                 result = resp.read().decode('utf-8', errors='ignore')
                 if duration > 0 and act != 'stop':
                     time.sleep(duration)
                     self._send_cgi_ptz('stop', duration=0)
                 return True, result
-        except Exception as e:
-            return False, str(e)
+        except Exception as e_get:
+            # 2. Try PUT request if GET fails
+            try:
+                req_put = urllib.request.Request(url, method='PUT')
+                req_put.add_header('Authorization', auth_header)
+                with urllib.request.urlopen(req_put, timeout=5) as resp:
+                    result = resp.read().decode('utf-8', errors='ignore')
+                    if duration > 0 and act != 'stop':
+                        time.sleep(duration)
+                        self._send_cgi_ptz('stop', duration=0)
+                    return True, result
+            except Exception as e_put:
+                return False, f"GET err: {e_get} | PUT err: {e_put}"
 
     def validate_credentials(self) -> bool:
         # 1. Try standard ONVIF protocol
@@ -185,6 +197,23 @@ class OnvifController:
         if success:
             return True, result
 
+        # Try alternative CGI paths if primary path fails
+        for alt_path in ["/web/cgi-bin/hi3510/ptzctrl.cgi", "/cgi-bin/ptzctrl.cgi", "/ptzctrl.cgi"]:
+            url = f"http://{self.ip}:{self.port}{alt_path}?-step=0&-act={act}&-speed=5&-presetNUM=0"
+            auth_bytes = f"{self.username}:{self.password}".encode('utf-8')
+            auth_header = f"Basic {base64.b64encode(auth_bytes).decode('ascii')}"
+            try:
+                req = urllib.request.Request(url)
+                req.add_header('Authorization', auth_header)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    res_text = resp.read().decode('utf-8', errors='ignore')
+                    if act != 'stop':
+                        time.sleep(1.0)
+                        self._send_cgi_ptz('stop', duration=0)
+                    return True, f"Alt CGI zoom successful via {alt_path}"
+            except Exception:
+                pass
+
         # Fallback to ONVIF PTZ SOAP if CGI fails
         if self.ptz_service and self.profile:
             try:
@@ -198,7 +227,7 @@ class OnvifController:
             except Exception as e:
                 return False, str(e)
 
-        return False, "Zoom failed"
+        return False, f"Zoom failed: {result}"
 
     def move_direction(self, direction: str, duration: float = 1.0):
         direction_lower = direction.lower()
