@@ -220,19 +220,22 @@
     let rtspUrl = activePtzCamera.rtsp;
     if (!rtspUrl) return;
 
-    // Use stream0_raw for 192.168.96.30 camera matching main stream
-    let hlsUrl = `/hls/stream${camIndex}_raw/playlist.m3u8`;
-    if (activePtzCamera.ip === "192.168.96.30" || activePtzCamera.rtsp.includes("192.168.96.30")) {
-      hlsUrl = "/hls/stream0_raw/playlist.m3u8";
-    }
+    // Dynamically resolve stream URL based on camera's RTSP URL
+    let hlsUrl = activePtzCamera.hls_raw || `/hls/stream${cid}_raw/playlist.m3u8`;
 
     // Ensure backend raw stream is running for this RTSP URL before attaching HLS player
     try {
-      await fetch("/api/ptz/cameras/start-stream", {
+      const res = await fetch("/api/ptz/cameras/start-stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cid: cid, rtsp: rtspUrl }),
       });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.hls_raw) {
+          hlsUrl = data.hls_raw;
+        }
+      }
     } catch (_) {}
 
     // Ensure video element properties
