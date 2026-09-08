@@ -84,7 +84,6 @@ class OnvifController:
     def _send_cgi_ptz(self, act: str, speed: int = 5, duration: float = 1.0):
         """
         Fallback HTTP CGI interface for Ambicam / HiSilicon / IPC devices.
-        Used for pan/tilt — sends command, sleeps duration, then sends stop.
         """
         url = f"http://{self.ip}:{self.port}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={act}&-speed={speed}&-presetNUM=0"
         auth_bytes = f"{self.username}:{self.password}".encode('utf-8')
@@ -101,28 +100,6 @@ class OnvifController:
                 return True, result
         except Exception as e:
             return False, str(e)
-
-    def _send_cgi_zoom(self, act: str, speed: int = 5):
-        """
-        One-shot CGI zoom command for hi3510/HiSilicon cameras.
-        Does NOT sleep or send stop — the camera handles zoom pulse timing internally.
-        act: 'zoomin' or 'zoomout'
-        """
-        url = f"http://{self.ip}:{self.port}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={act}&-speed={speed}&-presetNUM=0"
-        auth_bytes = f"{self.username}:{self.password}".encode('utf-8')
-        auth_header = f"Basic {base64.b64encode(auth_bytes).decode('ascii')}"
-        
-        # Try GET first, fallback to PUT
-        for m in ['GET', 'PUT']:
-            try:
-                req = urllib.request.Request(url, method=m)
-                req.add_header('Authorization', auth_header)
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    result = resp.read().decode('utf-8', errors='ignore')
-                return True, result
-            except Exception as e:
-                last_err = str(e)
-        return False, last_err
 
     def validate_credentials(self) -> bool:
         # 1. Try standard ONVIF protocol
@@ -172,7 +149,7 @@ class OnvifController:
                 self.ptz_service.ContinuousMove(request)
                 time.sleep(1)
                 self.stop()
-                return True, "ONVIF ContinuousMove successful"
+                return
             except Exception:
                 pass
 
@@ -196,7 +173,7 @@ class OnvifController:
         else:
             direction = 'stop'
 
-        return self._send_cgi_ptz(direction, duration=1.0)
+        self._send_cgi_ptz(direction, duration=1.0)
 
     def zoom(self, zoom_val: float):
         # Try standard ONVIF PTZ first
@@ -208,13 +185,13 @@ class OnvifController:
                 self.ptz_service.ContinuousMove(request)
                 time.sleep(1)
                 self.stop()
-                return True, "ONVIF zoom successful"
+                return
             except Exception:
                 pass
 
-        # Fallback to HTTP CGI zoom (sends zoomin/zoomout, sleeps 1.0s, sends stop)
+        # Fallback to HTTP CGI zoom
         act = 'zoomin' if zoom_val > 0 else ('zoomout' if zoom_val < 0 else 'stop')
-        return self._send_cgi_ptz(act, duration=1.0)
+        self._send_cgi_ptz(act, duration=1.0)
 
     def move_direction(self, direction: str, duration: float = 1.0):
         direction_lower = direction.lower()

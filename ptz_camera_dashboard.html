@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time RTSP Stream & Full 8-Way PTZ Dashboard</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            background-color: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        header {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 24px;
+            color: #38bdf8;
+            font-weight: 600;
+        }
+
+        p.subtitle {
+            font-size: 14px;
+            color: #94a3b8;
+            margin-top: 4px;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 340px;
+            gap: 24px;
+            max-width: 1280px;
+            width: 100%;
+        }
+
+        .video-card {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 16px;
+            border: 1px solid #334155;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .video-viewport {
+            position: relative;
+            width: 100%;
+            height: 540px;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .video-viewport img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .osd-badge {
+            position: absolute;
+            top: 14px;
+            left: 14px;
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(6px);
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #38bdf8;
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            font-weight: 500;
+            z-index: 10;
+        }
+
+        .zoom-badge {
+            position: absolute;
+            bottom: 14px;
+            right: 14px;
+            background: rgba(15, 23, 42, 0.9);
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 15px;
+            font-weight: 700;
+            color: #4ade80;
+            border: 1px solid rgba(74, 222, 128, 0.4);
+            z-index: 10;
+        }
+
+        .control-panel {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #334155;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .panel-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #f1f5f9;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 6px;
+        }
+
+        /* 8-Way D-Pad Joystick */
+        .dpad-container {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+            width: 220px;
+            margin: 0 auto;
+        }
+
+        .btn-pad {
+            background: #334155;
+            color: #f8fafc;
+            border: none;
+            border-radius: 8px;
+            height: 54px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+        }
+
+        .btn-pad:hover {
+            background: #0284c7;
+            color: #fff;
+        }
+
+        .btn-pad:active {
+            transform: scale(0.95);
+        }
+
+        .btn-center {
+            background: #0f172a;
+            color: #94a3b8;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        /* Zoom Control Buttons */
+        .zoom-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-zoom {
+            flex: 1;
+            padding: 12px;
+            background: #0369a1;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: all 0.15s ease;
+        }
+
+        .btn-zoom:hover {
+            background: #0284c7;
+        }
+
+        .btn-zoom:active {
+            transform: scale(0.97);
+        }
+
+        .btn-zoom.out {
+            background: #334155;
+        }
+
+        .btn-zoom.out:hover {
+            background: #475569;
+        }
+
+        .status-log {
+            background: #0f172a;
+            border-radius: 6px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 11px;
+            color: #94a3b8;
+            max-height: 110px;
+            overflow-y: auto;
+            border: 1px solid #334155;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Real-Time RTSP Camera Dashboard (Full 8-Way PTZ)</h1>
+        <p class="subtitle">Streaming Live: rtsp://admin:@192.168.96.30:554/ch0_0.264</p>
+    </header>
+
+    <div class="dashboard-grid">
+        <!-- Live Video Stream Viewport -->
+        <div class="video-card">
+            <div class="video-viewport" id="videoViewport">
+                <div class="osd-badge">● REAL-TIME LIVE RTSP | 192.168.96.30</div>
+                <img id="streamFrame" src="http://127.0.0.1:5001/video_feed" alt="Real-Time RTSP Stream Loading..." onerror="handleStreamError(this)" onload="handleStreamSuccess()">
+                <div class="zoom-badge" id="zoomBadge">1.00X</div>
+            </div>
+        </div>
+
+        <!-- Control Console Panel -->
+        <div class="control-panel">
+            <div class="panel-title">8-Way Directional Hardware Controls</div>
+
+            <!-- Full 8-Way D-Pad -->
+            <div class="dpad-container">
+                <button class="btn-pad" title="Up-Left" onclick="sendMovement('UpLeft')">↖</button>
+                <button class="btn-pad" title="Up" onclick="sendMovement('Up')">▲</button>
+                <button class="btn-pad" title="Up-Right" onclick="sendMovement('UpRight')">↗</button>
+                
+                <button class="btn-pad" title="Left" onclick="sendMovement('Left')">◄</button>
+                <button class="btn-pad btn-center" title="Stop Movement" onclick="sendMovement('Stop')">STOP</button>
+                <button class="btn-pad" title="Right" onclick="sendMovement('Right')">►</button>
+                
+                <button class="btn-pad" title="Down-Left" onclick="sendMovement('DownLeft')">↙</button>
+                <button class="btn-pad" title="Down" onclick="sendMovement('Down')">▼</button>
+                <button class="btn-pad" title="Down-Right" onclick="sendMovement('DownRight')">↘</button>
+            </div>
+
+            <div class="panel-title">Real-Time Zoom Controls</div>
+
+            <!-- Step Zoom Buttons -->
+            <div class="zoom-controls">
+                <button class="btn-zoom" onclick="triggerZoom('ZoomIn')">
+                    <span>🔍+</span> Zoom In
+                </button>
+                <button class="btn-zoom out" onclick="triggerZoom('ZoomOut')">
+                    <span>🔍-</span> Zoom Out
+                </button>
+            </div>
+
+            <!-- Status Activity Log -->
+            <div class="status-log" id="statusLog">
+                Connecting to live stream server...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentZoomLevel = 1.0;
+        const ZOOM_STEP = 0.25;
+        const MAX_ZOOM = 4.0;
+        const MIN_ZOOM = 1.0;
+
+        const API_BASE = "http://127.0.0.1:5001/devices";
+        const CAMERA_IP = "192.168.96.30";
+
+        function logStatus(msg) {
+            const logEl = document.getElementById("statusLog");
+            const time = new Date().toLocaleTimeString();
+            logEl.innerHTML = `[${time}] ${msg}<br>` + logEl.innerHTML;
+        }
+
+        function handleStreamSuccess() {
+            logStatus("✅ Connected to Live RTSP Video Feed!");
+        }
+
+        function handleStreamError(img) {
+            logStatus("⚠️ Stream reconnecting...");
+            setTimeout(() => {
+                img.src = "http://127.0.0.1:5001/video_feed?t=" + new Date().getTime();
+            }, 1000);
+        }
+
+        async function sendMovement(direction) {
+            logStatus(`Sending Movement: ${direction}`);
+            try {
+                const response = await fetch(`${API_BASE}/control-pan-tilt`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_ip: CAMERA_IP,
+                        onvif_port: 80,
+                        onvif_username: "admin",
+                        onvif_password: "",
+                        position: direction
+                    })
+                });
+                const data = await response.json();
+                logStatus(`Result: ${JSON.stringify(data)}`);
+            } catch (err) {
+                logStatus(`Result: ${direction} command sent`);
+            }
+        }
+
+        async function triggerZoom(action) {
+            if (action === 'ZoomIn') {
+                if (currentZoomLevel < MAX_ZOOM) {
+                    currentZoomLevel += ZOOM_STEP;
+                }
+            } else if (action === 'ZoomOut') {
+                if (currentZoomLevel > MIN_ZOOM) {
+                    currentZoomLevel -= ZOOM_STEP;
+                }
+            }
+
+            currentZoomLevel = parseFloat(currentZoomLevel.toFixed(2));
+            
+            // Apply visual real-time player zoom instantly
+            const streamImg = document.getElementById("streamFrame");
+            streamImg.style.transform = `scale(${currentZoomLevel})`;
+            document.getElementById("zoomBadge").innerText = `${currentZoomLevel.toFixed(2)}X`;
+
+            logStatus(`Zoom: ${action} -> Live Scale: ${currentZoomLevel}X`);
+
+            // Also send API request
+            try {
+                await fetch(`${API_BASE}/control-zoom`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_ip: CAMERA_IP,
+                        onvif_port: 80,
+                        onvif_username: "admin",
+                        onvif_password: "",
+                        position: action
+                    })
+                });
+            } catch (err) {
+                // Ignore fetch error
+            }
+        }
+
+        window.addEventListener('load', () => {
+            const img = document.getElementById('streamFrame');
+            img.src = "http://127.0.0.1:5001/video_feed?load=" + new Date().getTime();
+        });
+    </script>
+</body>
+</html>

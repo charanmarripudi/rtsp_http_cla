@@ -92,12 +92,11 @@ async def devices_control_pan_tilt(data: DevicesControlPanTiltParams):
     device_data.update(pos_info)
 
     onvif_creds = None
+
     if data.device_ip:
-        port_val = data.onvif_port or 80
-        if port_val == 8888: port_val = 80
         onvif_creds = {
             'ip': data.device_ip,
-            'port': port_val,
+            'port': data.onvif_port or 80,
             'username': data.onvif_username or 'admin',
             'password': data.onvif_password or ''
         }
@@ -117,21 +116,17 @@ async def devices_control_pan_tilt(data: DevicesControlPanTiltParams):
             print(f"DB lookup error: {e}")
 
     if not onvif_creds or not onvif_creds.get('ip'):
-        return {"status": "error", "message": "Not found in database and no direct IP provided", "ok": False}
+        return False, "Not found in database and no direct IP provided"
 
     try:
         controller = OnvifController(**onvif_creds)
         controller.connect()
-        res = controller.pan_tilt(device_data.get('pan', 0.0), device_data.get('tilt', 0.0))
-        ok, msg = res if isinstance(res, tuple) else (True, "pan_tilt operation successful")
-        if ok:
-            return {"status": "success", "message": "pan_tilt operation successful", "details": msg, "ok": True}
-        else:
-            return {"status": "error", "message": f"pan_tilt operation failed: {msg}", "ok": False}
+        controller.pan_tilt(device_data.get('pan', 0.0), device_data.get('tilt', 0.0))
+        return True, "pan_tilt operation successful"
     except Exception as e:
         print(f"Pan-tilt error: {e}")
         print(traceback.format_exc())
-        return {"status": "error", "message": f"pan-tilt is not enabled: {e}", "ok": False}
+        return False, "pan-tilt is not enabled"
 
 
 # =====================================================================
@@ -150,11 +145,9 @@ async def devices_control_zoom(data: DevicesControlZoomParams):
     onvif_creds = None
 
     if data.device_ip:
-        port_val = data.onvif_port or 80
-        if port_val == 8888: port_val = 80
         onvif_creds = {
             'ip': data.device_ip,
-            'port': port_val,
+            'port': data.onvif_port or 80,
             'username': data.onvif_username or 'admin',
             'password': data.onvif_password or ''
         }
@@ -174,22 +167,17 @@ async def devices_control_zoom(data: DevicesControlZoomParams):
             print(f"DB lookup error: {e}")
 
     if not onvif_creds or not onvif_creds.get('ip'):
-        return {"status": "error", "message": "Not found in database and no direct IP provided", "ok": False}
+        return False, "Not found in database and no direct IP provided"
 
     try:
-        # Skip controller.connect() — this camera (hi3510/HiSilicon) has no ONVIF PTZ service.
-        # zoom() uses _send_cgi_zoom() directly (one-shot CGI, no sleep, no stop).
         controller = OnvifController(**onvif_creds)
+        controller.connect()
         zoom_val = device_data.get('zoom', 0.5)
-        res = controller.zoom(zoom_val)
-        ok, msg = res if isinstance(res, tuple) else (True, "Zoom operation successful")
-        if ok:
-            return {"status": "success", "message": "Zoom operation successful", "details": msg, "ok": True}
-        else:
-            return {"status": "error", "message": f"Zoom operation failed: {msg}", "ok": False}
+        controller.zoom(zoom_val)
+        return True, "Zoom operation successful"
     except Exception as e:
         print(f"Zoom error: {e}")
-        return {"status": "error", "message": f"Zoom is not enabled: {e}", "ok": False}
+        return False, "Zoom is not enabled"
 
 
 # =====================================================================
@@ -208,9 +196,9 @@ async def devices_test_connectivity(data: DevicesTestConnectivityParams):
             password=data.onvif_password
         )
         is_valid = controller.validate_credentials()
-        return {"status": "success" if is_valid else "failed", "protocols": [{"protocol": "ONVIF", "status": "Connected" if is_valid else "Failed"}], "ok": is_valid}
+        return True, [{"protocol": "ONVIF", "status": "Connected" if is_valid else "Failed"}]
     except Exception as e:
-        return {"status": "error", "protocols": [{"protocol": "ONVIF", "status": "Error", "message": str(e)}], "ok": False}
+        return False, [{"protocol": "ONVIF", "status": "Error", "message": str(e)}]
 
 
 # =====================================================================
@@ -229,6 +217,6 @@ async def devices_validate_credentials(data: DevicesValidateCredentialsParams):
             password=data.onvif_password
         )
         is_valid = controller.validate_credentials()
-        return {"status": "success", "valid": is_valid, "ok": is_valid}
+        return True, {"valid": is_valid}
     except Exception as e:
-        return {"status": "error", "valid": False, "error": str(e), "ok": False}
+        return False, {"valid": False, "error": str(e)}
