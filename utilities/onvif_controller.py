@@ -22,7 +22,10 @@ except ImportError:
 class OnvifController:
     def __init__(self, ip: str, port: int, username: str, password: str):
         self.ip = ip
-        self.port = port
+        port_val = int(port) if port is not None else 80
+        if port_val == 8888:
+            port_val = 80
+        self.port = port_val
         self.username = username
 
         if HAS_URDHVA_BASE and hasattr(urdhva_base, 'types') and hasattr(urdhva_base.types, 'Secret'):

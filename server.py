@@ -2946,8 +2946,12 @@ try:
             from utilities.onvif_controller import OnvifController
             ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
             ctrl.connect()
-            ctrl.zoom(0.5 if act == "zoomin" else -0.5)
-            return {"status": "success", "action": act, "ip": ip, "port": port}
+            res = ctrl.zoom(0.5 if act == "zoomin" else -0.5)
+            ok, msg = res if isinstance(res, tuple) else (True, "Zoom completed")
+            if ok:
+                return {"status": "success", "action": act, "ip": ip, "port": port, "details": msg}
+            else:
+                return {"status": "error", "action": act, "message": str(msg)}
         except Exception as e:
             return {"status": "error", "action": act, "message": str(e)}
 
