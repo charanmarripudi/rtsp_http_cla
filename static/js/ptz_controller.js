@@ -667,10 +667,14 @@
 
     // 1. Digital player zoom scaling (matching onvif_ptz_zoom_package)
     if (!window._ptzDigitalZoom) window._ptzDigitalZoom = 1.0;
-    if (direction === "in" || direction === "ZoomIn" || direction === "zoomin") {
-      window._ptzDigitalZoom = Math.min(4.0, parseFloat((window._ptzDigitalZoom + 0.25).toFixed(2)));
-    } else if (direction === "out" || direction === "ZoomOut" || direction === "zoomout") {
-      window._ptzDigitalZoom = Math.max(1.0, parseFloat((window._ptzDigitalZoom - 0.25).toFixed(2)));
+    if (direction === "in" || direction === "ZoomIn" || direction === "zoomin" || direction === "+") {
+      if (window._ptzDigitalZoom < 4.0) {
+        window._ptzDigitalZoom = parseFloat((window._ptzDigitalZoom + 0.25).toFixed(2));
+      }
+    } else if (direction === "out" || direction === "ZoomOut" || direction === "zoomout" || direction === "-") {
+      if (window._ptzDigitalZoom > 1.0) {
+        window._ptzDigitalZoom = parseFloat((window._ptzDigitalZoom - 0.25).toFixed(2));
+      }
     }
 
     const currentZoom = window._ptzDigitalZoom;
@@ -679,19 +683,23 @@
     const targets = [
       document.getElementById("ptzLiveVideo"),
       ...document.querySelectorAll("video"),
-      ...document.querySelectorAll("canvas")
+      ...document.querySelectorAll("canvas"),
+      ...document.querySelectorAll("img")
     ];
 
     targets.forEach((el) => {
-      if (el) {
+      if (el && (el.id === "ptzLiveVideo" || el.id.startsWith("v") || el.classList.contains("stream-img") || el.id === "streamFrame")) {
         el.style.transform = `scale(${currentZoom})`;
         el.style.transformOrigin = "center center";
         el.style.transition = "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
       }
     });
 
-    const zoomBadge = document.getElementById("ptzTelemetryZoom");
-    if (zoomBadge) zoomBadge.textContent = `${currentZoom.toFixed(2)}X`;
+    const overlayBadge = document.getElementById("zoomBadge");
+    if (overlayBadge) overlayBadge.innerText = `${currentZoom.toFixed(2)}X`;
+
+    const telemetryZoom = document.getElementById("ptzTelemetryZoom");
+    if (telemetryZoom) telemetryZoom.textContent = `${currentZoom.toFixed(2)}X`;
 
     // Also update any badge element on main dashboard cards
     document.querySelectorAll(".zoom-level-badge").forEach((badge) => {
@@ -700,7 +708,7 @@
 
     // 2. Send hardware zoom command to backend (/devices/control-zoom)
     const portVal = (activePtzCamera.port && activePtzCamera.port !== 8888) ? activePtzCamera.port : 80;
-    const devPos = (direction === "in" || direction === "ZoomIn" || direction === "zoomin") ? "ZoomIn" : "ZoomOut";
+    const devPos = (direction === "in" || direction === "ZoomIn" || direction === "zoomin" || direction === "+") ? "ZoomIn" : "ZoomOut";
 
     try {
       await fetch("/devices/control-zoom", {
