@@ -7,7 +7,7 @@ HLS_DIR="$SCRIPT_DIR/hls"
 STREAMS_CONF="$SCRIPT_DIR/streams.conf"
 
 mkdir -p "$LOG_DIR"
-mkdir -p "$HLS_DIR"
+[ -d "$HLS_DIR" ] || mkdir -p "$HLS_DIR"
 
 ###########################################################
 # READ STREAMS
@@ -263,7 +263,7 @@ start() {
         fi
     fi
 
-    echo "$PUBLIC_URL" > "$HLS_DIR/public_url.txt"
+    [ -d "$HLS_DIR" ] && echo "$PUBLIC_URL" > "$HLS_DIR/public_url.txt" 2>/dev/null || true
 
     #######################################################
     # GET LOCAL IP
