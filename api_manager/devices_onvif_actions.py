@@ -179,10 +179,20 @@ async def devices_control_zoom(data: DevicesControlZoomParams):
         if ok:
             return {"status": "success", "zoom": zoom_val, "message": str(msg)}
         else:
-            return {"status": "error", "zoom": zoom_val, "message": str(msg)}
+            try:
+                from onvif_client import OnvifPtzClient
+                client = OnvifPtzClient(ip=onvif_creds['ip'], port=onvif_creds['port'], username=onvif_creds['username'], password=onvif_creds['password'])
+                return client.zoom_step(direction, 0.5, 0.8)
+            except Exception:
+                return {"status": "error", "zoom": zoom_val, "message": str(msg)}
     except Exception as e:
         print(f"Zoom error: {e}")
-        return {"status": "error", "message": f"Zoom exception: {str(e)}"}
+        try:
+            from onvif_client import OnvifPtzClient
+            client = OnvifPtzClient(ip=onvif_creds['ip'], port=onvif_creds['port'], username=onvif_creds['username'], password=onvif_creds['password'])
+            return client.zoom_step(direction, 0.5, 0.8)
+        except Exception:
+            return {"status": "error", "message": f"Zoom exception: {str(e)}"}
 
 
 # =====================================================================

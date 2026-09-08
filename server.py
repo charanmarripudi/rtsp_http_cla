@@ -2940,7 +2940,6 @@ try:
         if port == 8888: port = 80
         user = d.get("username", "admin")
         pwd = d.get("password", "")
-        # Use direct CGI — camera is hi3510/HiSilicon, no ONVIF PTZ service available
         act = "zoomin" if direction in ["in", "zoomin", "zoom_in"] else "zoomout"
         try:
             from utilities.onvif_controller import OnvifController
@@ -2951,9 +2950,14 @@ try:
             if ok:
                 return {"status": "success", "action": act, "ip": ip, "port": port, "details": msg}
             else:
-                return {"status": "error", "action": act, "message": str(msg)}
+                client = get_ptz_client_for_camera(ip, port, user, pwd)
+                return client.zoom_step(direction, 0.5, 0.8)
         except Exception as e:
-            return {"status": "error", "action": act, "message": str(e)}
+            try:
+                client = get_ptz_client_for_camera(ip, port, user, pwd)
+                return client.zoom_step(direction, 0.5, 0.8)
+            except Exception as _ex:
+                return {"status": "error", "action": act, "message": str(e)}
 
     @app.post("/api/ptz/zoom-step")
     def api_ptz_zoom_step(d: dict = Body(default={})):
