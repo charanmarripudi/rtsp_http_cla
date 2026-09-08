@@ -2933,31 +2933,26 @@ try:
             return client.stop()
 
     @app.post("/api/ptz/zoom")
-    def api_ptz_zoom(d: dict = Body(default={})):
-        direction = str(d.get("direction", "in")).lower()
-        ip = d.get("ip", "192.168.96.30")
-        port = int(d.get("port", 80))
+    async def api_ptz_zoom(d: dict = Body(default={})):
+        direction = str(d.get("direction", d.get("position", "in"))).lower()
+        pos = "ZoomIn" if direction in ["in", "zoomin", "zoom_in", "+"] else "ZoomOut"
+        ip = d.get("ip", d.get("device_ip", "192.168.96.30"))
+        port = int(d.get("port", d.get("onvif_port", 80)))
         if port == 8888: port = 80
-        user = d.get("username", "admin")
-        pwd = d.get("password", "")
-        act = "zoomin" if direction in ["in", "zoomin", "zoom_in"] else "zoomout"
+        user = d.get("username", d.get("onvif_username", "admin"))
+        pwd = d.get("password", d.get("onvif_password", ""))
         try:
-            from utilities.onvif_controller import OnvifController
-            ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
-            ctrl.connect()
-            res = ctrl.zoom(0.5 if act == "zoomin" else -0.5)
-            ok, msg = res if isinstance(res, tuple) else (True, "Zoom completed")
-            if ok:
-                return {"status": "success", "action": act, "ip": ip, "port": port, "details": msg}
-            else:
-                client = get_ptz_client_for_camera(ip, port, user, pwd)
-                return client.zoom_step(direction, 0.5, 0.8)
+            from api_manager.devices_onvif_actions import devices_control_zoom, DevicesControlZoomParams
+            params = DevicesControlZoomParams(
+                device_ip=ip,
+                onvif_port=port,
+                onvif_username=user,
+                onvif_password=pwd,
+                position=pos
+            )
+            return await devices_control_zoom(params)
         except Exception as e:
-            try:
-                client = get_ptz_client_for_camera(ip, port, user, pwd)
-                return client.zoom_step(direction, 0.5, 0.8)
-            except Exception as _ex:
-                return {"status": "error", "action": act, "message": str(e)}
+            return {"status": "error", "message": str(e)}
 
     @app.post("/api/ptz/zoom-step")
     def api_ptz_zoom_step(d: dict = Body(default={})):
