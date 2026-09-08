@@ -212,6 +212,10 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
 
         if (existingCards.length === 0 || currentModelKeys !== existingModelKeys) {
             chipsList.innerHTML = "";
+            if (!assigned || assigned.length === 0) {
+                chipsList.innerHTML = '<span style="font-size:0.65rem;color:var(--muted);font-style:italic;">No models assigned</span>';
+                return;
+            }
             const modelConfigs = meta.model_configs || {};
             const uniqueAssigned = [];
             const seenCleanNames = new Set();

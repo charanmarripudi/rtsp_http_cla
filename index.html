@@ -1641,9 +1641,7 @@
           }
         }
         if (!cameraModelsMap || typeof cameraModelsMap !== "object") {
-          cameraModelsMap = {
-            "0": ["ppe_new.pt"]
-          };
+          cameraModelsMap = {};
         }
       }
 
@@ -1816,7 +1814,35 @@
       }
 
       async function saveCurrentConfiguration(shouldReload) {
-        // Keep cameraModelsMap intact as checked by user (do not auto-remove models)
+        // Build fresh cameraModelsMap directly from checked model & class checkboxes in the UI (Plug & Play)
+        const newCameraModelsMap = {};
+        streamsArray.forEach((s, idx) => {
+            const key = String(idx);
+            newCameraModelsMap[key] = [];
+
+            // 1. Parent model checkboxes
+            const parentCbs = document.querySelectorAll(`.parent-model-checkbox[data-cam="${idx}"]:checked`);
+            parentCbs.forEach(cb => {
+                const m = cb.value;
+                if (!newCameraModelsMap[key].includes(m)) {
+                    newCameraModelsMap[key].push(m);
+                }
+            });
+
+            // 2. PPE class checkboxes
+            const classCbs = document.querySelectorAll(`.class-checkbox[data-cam="${idx}"]:checked`);
+            classCbs.forEach(cb => {
+                const m = cb.getAttribute("data-model");
+                if (m && !newCameraModelsMap[key].includes(m)) {
+                    newCameraModelsMap[key].push(m);
+                }
+            });
+        });
+
+        // Use dynamically built map if checkboxes exist in DOM
+        if (document.querySelectorAll(".parent-model-checkbox, .class-checkbox").length > 0) {
+            cameraModelsMap = newCameraModelsMap;
+        }
 
         const payload = streamsArray
           .map((item, idx) => ({
