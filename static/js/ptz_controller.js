@@ -691,15 +691,17 @@
 
     const currentZoom = window._ptzDigitalZoom;
 
-    // Apply smooth CSS digital zoom scale to PTZ modal video AND dashboard camera stream videos
-    const targets = [
+    // Direct target: ptzLiveVideo, streamFrame, and all active video stream elements
+    const videoElements = [
       document.getElementById("ptzLiveVideo"),
+      document.getElementById("streamFrame"),
       ...document.querySelectorAll("video"),
-      ...document.querySelectorAll("canvas"),
-      ...document.querySelectorAll("img")
+      ...document.querySelectorAll(".video-wrap video"),
+      ...document.querySelectorAll("svg.roi-draw-canvas"),
+      ...document.querySelectorAll("canvas")
     ];
 
-    targets.forEach((el) => {
+    videoElements.forEach((el) => {
       if (el) {
         el.style.transform = `scale(${currentZoom})`;
         el.style.transformOrigin = "center center";
