@@ -2008,7 +2008,9 @@
               `;
               listContainer.appendChild(lbl);
               const cb = lbl.querySelector(".parent-model-checkbox");
-              cb.onchange = () => { lbl.classList.toggle('checked', cb.checked); updateCheckboxState(idx, m, cb.checked); };
+              cb.onchange = () => {
+                lbl.classList.toggle('checked', cb.checked);
+              };
             });
 
             // ── 2. PPE-NEW class checkboxes ──
@@ -2035,24 +2037,6 @@
                   lbl.classList.toggle("checked", cb.checked);
                   const sp = cb.nextElementSibling;
                   if (sp) sp.style.color = cb.checked ? accentColor : "";
-                  streamMeta.model_configs[modelFile] = streamMeta.model_configs[modelFile] || { conf: 0.40, iou: 0.45 };
-                  streamMeta.model_configs[cleanName] = streamMeta.model_configs[cleanName] || { conf: 0.40, iou: 0.45 };
-                  let active = streamMeta.model_configs[modelFile].enabled_classes || [];
-                  if (cb.checked) { if (!active.includes(cls)) active.push(cls); }
-                  else { active = active.filter(x => x !== cls); }
-                  streamMeta.model_configs[modelFile].enabled_classes = active;
-                  streamMeta.model_configs[cleanName].enabled_classes = active;
-                  updateCheckboxState(idx, modelFile, active.length > 0);
-
-                  // Dynamically send updated class config to running backend detector immediately
-                  fetch("/api/update-thresholds", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      camera: String(idx),
-                      model_configs: streamMeta.model_configs
-                    })
-                  }).catch(() => {});
                 };
               });
             }

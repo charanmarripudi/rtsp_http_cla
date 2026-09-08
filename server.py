@@ -1697,7 +1697,28 @@ def dst_alias(d: dict): return stop_detection(d)
 def dsta_alias(): return get_status()
 
 @app.get("/api/camera-models")
-def get_cm(): return json.load(open(CAMERA_MODELS_JSON)) if os.path.exists(CAMERA_MODELS_JSON) else {}
+def get_cm():
+    cm = json.load(open(CAMERA_MODELS_JSON)) if os.path.exists(CAMERA_MODELS_JSON) else {}
+    streams = read_streams_metadata()
+    clean_cm = {}
+    for idx, s in enumerate(streams):
+        cid = str(s.get("id", idx))
+        c_models = cm.get(cid, [])
+        m_cfgs = s.get("model_configs") or {}
+        active_models = []
+        for m in c_models:
+            clean_m = m.replace(".pt", "")
+            cfg = m_cfgs.get(m) or m_cfgs.get(clean_m) or {}
+            enabled = cfg.get("enabled_classes")
+            if enabled is not None:
+                if isinstance(enabled, list) and len(enabled) > 0:
+                    active_models.append(m)
+            else:
+                # Non-class filtered model or explicitly assigned parent model
+                active_models.append(m)
+        clean_cm[cid] = active_models
+    return clean_cm
+
 @app.get("/api/camera-models/{camera_id}")
 def get_cm_id(camera_id: str): return {"models": get_cm().get(camera_id, [])}
 @app.post("/api/camera-models")
