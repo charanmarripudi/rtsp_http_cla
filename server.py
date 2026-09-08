@@ -1350,9 +1350,8 @@ def save_streams(
                 if norm_k not in clean_mc:
                     clean_mc[norm_k] = v
                 else:
-                    existing = clean_mc[norm_k]
-                    e_classes = (isinstance(existing, dict) and (existing.get("enabled_classes") or (list(existing.get("class_configs").keys()) if existing.get("class_configs") else []))) or []
-                    v_classes = (isinstance(v, dict) and (v.get("enabled_classes") or (list(v.get("class_configs").keys()) if v.get("class_configs") else []))) or []
+                    e_classes = (isinstance(existing, dict) and existing.get("enabled_classes")) or []
+                    v_classes = (isinstance(v, dict) and v.get("enabled_classes")) or []
                     if len(v_classes) >= len(e_classes):
                         clean_mc[norm_k] = v
             entry["model_configs"] = clean_mc
@@ -1590,8 +1589,6 @@ def start_detection(d: dict):
         e_classes = None
         if isinstance(cfg, dict):
             e_classes = cfg.get("enabled_classes")
-            if e_classes is None and isinstance(cfg.get("class_configs"), dict) and len(cfg["class_configs"]) > 0:
-                e_classes = list(cfg["class_configs"].keys())
         e_classes = e_classes if e_classes is not None else []
         if norm_m in ppe_models_set:
             if len(e_classes) > 0:
