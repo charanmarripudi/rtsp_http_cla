@@ -199,12 +199,22 @@ class OnvifController:
         return self._send_cgi_ptz(direction, duration=1.0)
 
     def zoom(self, zoom_val: float):
-        """
-        Zoom camera. Uses direct CGI one-shot pulse — no ONVIF SOAP needed.
-        Camera: 192.168.96.30:80 (hi3510/HiSilicon) handles zoom timing internally.
-        """
+        # Try standard ONVIF PTZ first
+        if self.ptz_service and self.profile:
+            try:
+                request = self.ptz_service.create_type('ContinuousMove')
+                request.ProfileToken = self.profile.token
+                request.Velocity = {'Zoom': {'x': zoom_val}}
+                self.ptz_service.ContinuousMove(request)
+                time.sleep(1)
+                self.stop()
+                return True, "ONVIF zoom successful"
+            except Exception:
+                pass
+
+        # Fallback to HTTP CGI zoom (sends zoomin/zoomout, sleeps 1.0s, sends stop)
         act = 'zoomin' if zoom_val > 0 else ('zoomout' if zoom_val < 0 else 'stop')
-        return self._send_cgi_zoom(act)
+        return self._send_cgi_ptz(act, duration=1.0)
 
     def move_direction(self, direction: str, duration: float = 1.0):
         direction_lower = direction.lower()
