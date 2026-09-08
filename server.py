@@ -2943,13 +2943,10 @@ try:
         # Use direct CGI — camera is hi3510/HiSilicon, no ONVIF PTZ service available
         act = "zoomin" if direction in ["in", "zoomin", "zoom_in"] else "zoomout"
         try:
-            import urllib.request, base64
-            url = f"http://{ip}:{port}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={act}&-speed=5&-presetNUM=0"
-            auth_bytes = f"{user}:{pwd}".encode("utf-8")
-            req = urllib.request.Request(url, method="PUT")
-            req.add_header("Authorization", f"Basic {base64.b64encode(auth_bytes).decode('ascii')}")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                resp.read()
+            from utilities.onvif_controller import OnvifController
+            ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
+            ctrl.connect()
+            ctrl.zoom(0.5 if act == "zoomin" else -0.5)
             return {"status": "success", "action": act, "ip": ip, "port": port}
         except Exception as e:
             return {"status": "error", "action": act, "message": str(e)}
