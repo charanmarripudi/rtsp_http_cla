@@ -41,14 +41,12 @@ async function playHLS(video, url, idx, forceReload = false) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        startPosition: -1,
-        liveSyncDurationCount: 1,        // 1 segment cushion (~0.5s - 1.0s behind live RTSP camera feed)
-        liveMaxLatencyDurationCount: 2.5, // Auto catch-up if delay > 2.5s
+        liveSyncDurationCount: 2,         // Smooth 2-segment buffer cushion to eliminate buffering stalls
+        liveMaxLatencyDurationCount: 5,   // Smooth catch-up if delay grows > 5s
         liveDurationInfinity: true,
-        liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 2,               // Keep player buffer queue ultra-small (2s max)
-        maxMaxBufferLength: 4,
+        maxBufferLength: 10,              // 10s buffer queue for silky smooth playback locally & remotely
+        maxMaxBufferLength: 20,
         manifestLoadingTimeOut: 10000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 300,
@@ -86,19 +84,6 @@ async function playHLS(video, url, idx, forceReload = false) {
             });
         }
     });
-
-    if (window.liveSyncIntervals && window.liveSyncIntervals[idx]) {
-        clearInterval(window.liveSyncIntervals[idx]);
-    }
-    window.liveSyncIntervals = window.liveSyncIntervals || {};
-    window.liveSyncIntervals[idx] = setInterval(() => {
-        if (video && video.seekable && video.seekable.length > 0) {
-            const liveEnd = video.seekable.end(0);
-            if (liveEnd - video.currentTime > 1.2) {
-                video.currentTime = liveEnd - 0.2;
-            }
-        }
-    }, 1000);
 
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
