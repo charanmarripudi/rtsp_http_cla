@@ -42,19 +42,19 @@ async function playHLS(video, url, idx, forceReload = false) {
         enableWorker: true,
         lowLatencyMode: true,
         startPosition: -1,
-        liveSyncDurationCount: 2.0,      // 2.0 segments cushion (~2.0s behind live RTSP camera feed)
-        liveMaxLatencyDurationCount: 4.5, // Auto catch-up if delay exceeds 4.5s
+        liveSyncDurationCount: 3.0,      // 3.0 segments cushion for clear video decoding without macroblocks
+        liveMaxLatencyDurationCount: 6,  // Smooth catch-up
         liveDurationInfinity: true,
         liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 6,
-        maxMaxBufferLength: 10,
-        manifestLoadingTimeOut: 15000,
+        maxBufferLength: 8,
+        maxMaxBufferLength: 12,
+        manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
-        manifestLoadingRetryDelay: 300,
-        fragLoadingTimeOut: 15000,
+        manifestLoadingRetryDelay: 500,
+        fragLoadingTimeOut: 20000,
         fragLoadingMaxRetry: 10,
-        fragLoadingRetryDelay: 300
+        fragLoadingRetryDelay: 500
     });
     hlsInstances[idx] = hls;
 
