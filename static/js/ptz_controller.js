@@ -220,7 +220,11 @@
     let rtspUrl = activePtzCamera.rtsp;
     if (!rtspUrl) return;
 
-    const hlsUrl = `/hls/stream${cid}_raw/playlist.m3u8`;
+    // Use stream0_raw for 192.168.96.30 camera matching main stream
+    let hlsUrl = `/hls/stream${camIndex}_raw/playlist.m3u8`;
+    if (activePtzCamera.ip === "192.168.96.30" || activePtzCamera.rtsp.includes("192.168.96.30")) {
+      hlsUrl = "/hls/stream0_raw/playlist.m3u8";
+    }
 
     // Ensure backend raw stream is running for this RTSP URL before attaching HLS player
     try {
@@ -696,7 +700,7 @@
     ];
 
     targets.forEach((el) => {
-      if (el && (el.id === "ptzLiveVideo" || el.id.startsWith("v") || el.classList.contains("stream-img") || el.id === "streamFrame")) {
+      if (el) {
         el.style.transform = `scale(${currentZoom})`;
         el.style.transformOrigin = "center center";
         el.style.transition = "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
