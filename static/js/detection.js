@@ -11,6 +11,30 @@ async function playHLS(video, url, idx, forceReload = false) {
     }
     video.dataset.currentUrl = url;
 
+    // Session token to prevent race conditions if user switches streams quickly
+    const sessionToken = Symbol();
+    video.dataset.loadToken = sessionToken;
+
+    // Fast pre-flight check: Wait up to 3 seconds for playlist.m3u8 to be ready with .ts segments
+    let isReady = false;
+    const checkStart = Date.now();
+    while (Date.now() - checkStart < 3000) {
+        if (video.dataset.loadToken !== sessionToken) return;
+        try {
+            const r = await fetch(url + "?t=" + Date.now());
+            if (r.ok) {
+                const txt = await r.text();
+                if (txt.includes(".ts")) {
+                    isReady = true;
+                    break;
+                }
+            }
+        } catch (_) {}
+        await new Promise(res => setTimeout(res, 350));
+    }
+
+    if (!isReady || video.dataset.loadToken !== sessionToken) return;
+
     if (hlsInstances[idx]) { 
         try {
             hlsInstances[idx].detachMedia();
@@ -41,12 +65,14 @@ async function playHLS(video, url, idx, forceReload = false) {
     const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        liveSyncDurationCount: 2,         // Smooth 2-segment buffer cushion to eliminate buffering stalls
-        liveMaxLatencyDurationCount: 5,   // Smooth catch-up if delay grows > 5s
+        startPosition: -1,
+        liveSyncDurationCount: 1,        // 1 segment cushion (~0.5s - 1.0s behind live RTSP camera feed)
+        liveMaxLatencyDurationCount: 2.5, // Auto catch-up if delay > 2.5s
         liveDurationInfinity: true,
+        liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 10,              // 10s buffer queue for silky smooth playback locally & remotely
-        maxMaxBufferLength: 20,
+        maxBufferLength: 2,               // Keep player buffer queue ultra-small (2s max)
+        maxMaxBufferLength: 4,
         manifestLoadingTimeOut: 10000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 300,
@@ -65,7 +91,7 @@ async function playHLS(video, url, idx, forceReload = false) {
         video.playsInline = true;
         video.setAttribute("playsinline", "");
         video.setAttribute("webkit-playsinline", "");
-        
+
         const promise = video.play();
         if (promise !== undefined) {
             promise.then(() => {
@@ -73,7 +99,8 @@ async function playHLS(video, url, idx, forceReload = false) {
                     video.currentTime = video.seekable.end(0);
                 }
             }).catch(err => {
-                console.warn(`[HLS] Autoplay blocked for camera ${idx}, attaching interaction listener:`, err);
+                // Mobile/remote autoplay blocked — resume on first user interaction
+                console.warn(`[HLS] Autoplay blocked for camera ${idx}:`, err);
                 const resumePlay = () => {
                     video.play().catch(() => {});
                     document.removeEventListener("click", resumePlay);
@@ -84,6 +111,20 @@ async function playHLS(video, url, idx, forceReload = false) {
             });
         }
     });
+
+    // Live-edge catch-up: if player drifts > 1.2s behind live, snap it forward
+    if (window.liveSyncIntervals && window.liveSyncIntervals[idx]) {
+        clearInterval(window.liveSyncIntervals[idx]);
+    }
+    window.liveSyncIntervals = window.liveSyncIntervals || {};
+    window.liveSyncIntervals[idx] = setInterval(() => {
+        if (video && video.seekable && video.seekable.length > 0) {
+            const liveEnd = video.seekable.end(0);
+            if (liveEnd - video.currentTime > 1.2) {
+                video.currentTime = liveEnd - 0.2;
+            }
+        }
+    }, 1000);
 
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.details === 'bufferStalledError') {
