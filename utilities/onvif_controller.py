@@ -176,7 +176,13 @@ class OnvifController:
         self._send_cgi_ptz(direction, duration=1.0)
 
     def zoom(self, zoom_val: float):
-        # Try standard ONVIF PTZ first
+        act = 'zoomin' if zoom_val > 0 else ('zoomout' if zoom_val < 0 else 'stop')
+        # Direct CGI zoom control (sends zoomin/zoomout, sleeps 1.0s, sends stop)
+        success, result = self._send_cgi_ptz(act, duration=1.0)
+        if success:
+            return True, result
+
+        # Fallback to ONVIF PTZ SOAP if CGI fails
         if self.ptz_service and self.profile:
             try:
                 request = self.ptz_service.create_type('ContinuousMove')
@@ -185,13 +191,11 @@ class OnvifController:
                 self.ptz_service.ContinuousMove(request)
                 time.sleep(1)
                 self.stop()
-                return
-            except Exception:
-                pass
+                return True, "ONVIF zoom successful"
+            except Exception as e:
+                return False, str(e)
 
-        # Fallback to HTTP CGI zoom
-        act = 'zoomin' if zoom_val > 0 else ('zoomout' if zoom_val < 0 else 'stop')
-        self._send_cgi_ptz(act, duration=1.0)
+        return False, "Zoom failed"
 
     def move_direction(self, direction: str, duration: float = 1.0):
         direction_lower = direction.lower()
