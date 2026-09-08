@@ -744,10 +744,10 @@ def start_raw_stream(i, u):
         "-i", normalized_rtsp,
         "-map", "0:v:0",
         "-an",
-        "-vf", "scale=1280:720:flags=fast_bilinear,format=yuv420p,setdar=16/9",
+        "-vf", "scale=854:480:flags=fast_bilinear,format=yuv420p,setdar=16/9",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
         "-profile:v", "baseline", "-level:v", "3.1",
-        "-b:v", "800k", "-maxrate", "1000k", "-bufsize", "2M",
+        "-b:v", "300k", "-maxrate", "400k", "-bufsize", "1M",
         "-threads", "2",
         "-r", "12",
         "-g", "24", "-keyint_min", "24", "-sc_threshold", "0",
@@ -759,7 +759,7 @@ def start_raw_stream(i, u):
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started at 1280x720 (720p HD), 12 FPS, 800k bitrate ({normalized_rtsp})")
+    print(f"[LOG] Camera {cid} raw stream started at 854x480, 12 FPS, 300k bitrate ({normalized_rtsp})")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     raw_streams_procs[cid] = {"proc": proc, "rtsp": normalized_rtsp, "sd": sd, "start_time": int(time.time()), "symlink": False}
 
