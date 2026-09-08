@@ -2922,14 +2922,20 @@ try:
         user = d.get("username", "admin")
         pwd = d.get("password", "")
         try:
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            res = client.move(direction, speed)
+            if res and isinstance(res, dict) and res.get("status") in ["success", "ok"]:
+                return res
+        except Exception as e:
+            print(f"[PTZ-MOVE-FAST-FAIL] {e}, falling back to OnvifController")
+        try:
             from utilities.onvif_controller import OnvifController
             ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
             ctrl.connect()
             ctrl.move_direction(direction, duration=1.0)
             return {"status": "success", "action": "move", "direction": direction, "speed": speed}
-        except Exception:
-            client = get_ptz_client_for_camera(ip, port, user, pwd)
-            return client.move(direction, speed)
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     @app.post("/api/ptz/step")
     def api_ptz_step(d: dict = Body(default={})):
@@ -2942,14 +2948,20 @@ try:
         user = d.get("username", "admin")
         pwd = d.get("password", "")
         try:
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            res = client.step(direction, speed, duration)
+            if res and isinstance(res, dict) and res.get("status") in ["success", "ok"]:
+                return res
+        except Exception as e:
+            print(f"[PTZ-STEP-FAST-FAIL] {e}, falling back to OnvifController")
+        try:
             from utilities.onvif_controller import OnvifController
             ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
             ctrl.connect()
             ctrl.move_direction(direction, duration=duration)
             return {"status": "success", "action": "step", "direction": direction, "speed": speed, "duration": duration}
-        except Exception:
-            client = get_ptz_client_for_camera(ip, port, user, pwd)
-            return client.step(direction, speed, duration)
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     @app.post("/api/ptz/stop")
     def api_ptz_stop(d: dict = Body(default={})):
@@ -2959,14 +2971,20 @@ try:
         user = d.get("username", "admin")
         pwd = d.get("password", "")
         try:
+            client = get_ptz_client_for_camera(ip, port, user, pwd)
+            res = client.stop()
+            if res and isinstance(res, dict) and res.get("status") in ["success", "ok"]:
+                return res
+        except Exception as e:
+            print(f"[PTZ-STOP-FAST-FAIL] {e}, falling back to OnvifController")
+        try:
             from utilities.onvif_controller import OnvifController
             ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
             ctrl.connect()
             ctrl.stop()
             return {"status": "success", "action": "stop"}
-        except Exception:
-            client = get_ptz_client_for_camera(ip, port, user, pwd)
-            return client.stop()
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     @app.post("/api/ptz/zoom")
     async def api_ptz_zoom(d: dict = Body(default={})):
