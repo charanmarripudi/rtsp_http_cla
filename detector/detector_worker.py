@@ -271,7 +271,9 @@ class DetectorWorker:
                                 if not matched:
                                     continue
                             elif enabled_classes is None:
-                                pass  # No config for this model — allow all classes through
+                                if m_name in ppe_models_set or m_clean in ppe_models_set:
+                                    continue  # PPE models require explicit enabled_classes — skip unconfigured boxes
+                                pass  # Non-PPE models allow all classes through if unconfigured
 
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
                             x1, y1, x2, y2 = box_xyxy

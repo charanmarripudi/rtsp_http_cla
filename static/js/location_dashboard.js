@@ -388,14 +388,15 @@ class LocationDashboard {
             }
 
             this.cameraModels[key].forEach(m => {
+                const normModel = m.endsWith(".pt") ? m : `${m}.pt`;
                 const cleanName = m.replace(".pt", "");
-                const existingCfg = stream.model_configs[m] || stream.model_configs[cleanName] || {};
-                const activeClasses = enabledClassesPerModel[m] || [];
+                const existingCfg = stream.model_configs[normModel] || stream.model_configs[cleanName] || {};
+                const activeClasses = enabledClassesPerModel[m] || enabledClassesPerModel[normModel] || enabledClassesPerModel[cleanName] || [];
                 
                 const updatedCfg = Object.assign({}, existingCfg, {
                     enabled_classes: activeClasses
                 });
-                cleanModelConfigs[m] = updatedCfg;
+                cleanModelConfigs[normModel] = updatedCfg;
                 cleanModelConfigs[cleanName] = updatedCfg;
             });
 
@@ -428,14 +429,25 @@ class LocationDashboard {
                             const cVal = parseFloat(cSlider.value);
                             const iVal = parseFloat(iSlider.value);
                             const normModel = mName.endsWith(".pt") ? mName : `${mName}.pt`;
+                            const cleanName = mName.replace(".pt", "");
                             
+                            const origClasses = (modelConfigs[normModel] && modelConfigs[normModel].enabled_classes) ||
+                                                (modelConfigs[cleanName] && modelConfigs[cleanName].enabled_classes) || [];
+
                             if (cls) {
                                 modelConfigs[normModel] = modelConfigs[normModel] || {};
+                                modelConfigs[normModel].enabled_classes = origClasses;
                                 modelConfigs[normModel].class_configs = modelConfigs[normModel].class_configs || {};
                                 modelConfigs[normModel].class_configs[cls] = { conf: cVal, iou: iVal };
+
+                                modelConfigs[cleanName] = modelConfigs[cleanName] || {};
+                                modelConfigs[cleanName].enabled_classes = origClasses;
+                                modelConfigs[cleanName].class_configs = modelConfigs[cleanName].class_configs || {};
+                                modelConfigs[cleanName].class_configs[cls] = { conf: cVal, iou: iVal };
                             } else {
                                 const existingPt = modelConfigs[normModel] || {};
-                                modelConfigs[normModel] = Object.assign({}, existingPt, { conf: cVal, iou: iVal });
+                                modelConfigs[normModel] = Object.assign({}, existingPt, { conf: cVal, iou: iVal, enabled_classes: origClasses });
+                                modelConfigs[cleanName] = Object.assign({}, existingPt, { conf: cVal, iou: iVal, enabled_classes: origClasses });
                             }
                         }
                     });
