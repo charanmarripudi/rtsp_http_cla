@@ -227,9 +227,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                 const cleanName = m.replace(".pt", "");
                 const mCfg = modelConfigs[m] || modelConfigs[cleanName] || {};
                 const enabled = Array.from(new Set(mCfg.enabled_classes || []));
-                if (enabled.length === 0) {
-                    return;
-                }
 
                 if (enabled.length > 0) {
                     enabled.forEach(cls => {
@@ -266,7 +263,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             thresholdSyncTimer = setTimeout(() => {
                                 const cNum = parseFloat(cSlider.value);
                                 const iNum = parseFloat(iSlider.value);
-                                
                                 meta.model_configs = meta.model_configs || {};
                                 const normM = m.endsWith(".pt") ? m : `${m}.pt`;
                                 meta.model_configs[normM] = meta.model_configs[normM] || {};
