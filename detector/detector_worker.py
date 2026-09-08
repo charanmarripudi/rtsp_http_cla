@@ -119,6 +119,7 @@ class DetectorWorker:
         self._latest_raw_frame = None
         self._latest_boxes = []
         self._latest_box_time = 0.0
+        self._tracked_boxes = []
         self._frame_lock, self._box_lock = threading.Lock(), threading.Lock()
         self._stop_event = threading.Event()
         self._frame_queue, self._result_queue = queue.Queue(maxsize=1), queue.Queue(maxsize=1)
@@ -355,8 +356,80 @@ class DetectorWorker:
                                 
                     if not suppress:
                         kept_items.append(item)
-                        boxes_data.append((b1_xyxy, l1_text, c1_color))
-                        cur_cls.add(cls1_name)
+
+            # ── TEMPORAL BOX PERSISTENCE & SMOOTHING ──
+            # Holds boxes steady across consecutive frames even if confidence dips briefly
+            new_tracked = []
+            matched_indices = set()
+
+            for item in kept_items:
+                b1_xyxy, l1_text, c1_color, conf1_val, cls1_name = item
+                x1_1, y1_1, x2_1, y2_1 = b1_xyxy
+                area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
+                
+                best_match_idx = None
+                best_match_iou = 0.0
+
+                for t_idx, t_box in enumerate(getattr(self, '_tracked_boxes', [])):
+                    if t_idx in matched_indices:
+                        continue
+                    if t_box.get('cls') != cls1_name:
+                        continue
+                    
+                    x1_2, y1_2, x2_2, y2_2 = t_box['box']
+                    area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
+                    ix1, iy1 = max(x1_1, x1_2), max(y1_1, y1_2)
+                    ix2, iy2 = min(x2_1, x2_2), min(y2_1, y2_2)
+                    if ix2 > ix1 and iy2 > iy1:
+                        inter = (ix2 - ix1) * (iy2 - iy1)
+                        union = area1 + area2 - inter
+                        iou_val = inter / max(1.0, union)
+                        if iou_val > 0.30 and iou_val > best_match_iou:
+                            best_match_iou = iou_val
+                            best_match_idx = t_idx
+
+                if best_match_idx is not None:
+                    matched_indices.add(best_match_idx)
+                    prev_box = self._tracked_boxes[best_match_idx]['box']
+                    smooth_box = [
+                        0.75 * x1_1 + 0.25 * prev_box[0],
+                        0.75 * y1_1 + 0.25 * prev_box[1],
+                        0.75 * x2_1 + 0.25 * prev_box[2],
+                        0.75 * y2_1 + 0.25 * prev_box[3]
+                    ]
+                    new_tracked.append({
+                        'box': smooth_box,
+                        'label': l1_text,
+                        'color': c1_color,
+                        'cls': cls1_name,
+                        'conf': conf1_val,
+                        'ttl': 5  # Hold box for 5 frames (~1 second) if missing in subsequent frames
+                    })
+                else:
+                    new_tracked.append({
+                        'box': b1_xyxy,
+                        'label': l1_text,
+                        'color': c1_color,
+                        'cls': cls1_name,
+                        'conf': conf1_val,
+                        'ttl': 5
+                    })
+
+            # Carry over active tracked boxes whose ttl > 1 (prevents frame-by-frame dropping)
+            for t_idx, t_box in enumerate(getattr(self, '_tracked_boxes', [])):
+                if t_idx not in matched_indices:
+                    new_ttl = t_box['ttl'] - 1
+                    if new_ttl > 0:
+                        t_copy = dict(t_box)
+                        t_copy['ttl'] = new_ttl
+                        new_tracked.append(t_copy)
+
+            self._tracked_boxes = new_tracked
+
+            boxes_data = []
+            for t_box in self._tracked_boxes:
+                boxes_data.append((t_box['box'], t_box['label'], t_box['color']))
+                cur_cls.add(t_box['cls'])
 
             # Render alert image snapshot with green ROI and identical color-coded boxes
             snap_img = f.copy()
