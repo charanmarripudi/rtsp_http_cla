@@ -662,7 +662,15 @@
   }
 
   async function ptzZoom(direction) {
-    if (!activePtzCamera) return;
+    if (!activePtzCamera) {
+      activePtzCamera = (ptzCameras && ptzCameras.length > 0) ? ptzCameras[0] : {
+        ip: "192.168.96.30",
+        port: 80,
+        username: "admin",
+        password: "",
+        rtsp: "rtsp://admin:@192.168.96.30:554/ch0_0.264"
+      };
+    }
     showStatusToast(`Zoom ${direction.toUpperCase()}...`);
 
     // 1. Digital player zoom scaling (matching onvif_ptz_zoom_package)
@@ -870,11 +878,14 @@
     return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
+  window.ptzZoom = ptzZoom;
+  window.triggerZoom = ptzZoom;
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
       if (!isControlsBound) bindPtzControls();
     });
   } else {
-    bindPtzControls();
+    if (!isControlsBound) bindPtzControls();
   }
 })();
