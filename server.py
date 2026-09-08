@@ -1590,9 +1590,9 @@ def start_detection(d: dict):
         e_classes = None
         if isinstance(cfg, dict):
             e_classes = cfg.get("enabled_classes")
-            if (e_classes is None or (isinstance(e_classes, list) and len(e_classes) == 0)) and isinstance(cfg.get("class_configs"), dict) and len(cfg["class_configs"]) > 0:
+            if e_classes is None and isinstance(cfg.get("class_configs"), dict) and len(cfg["class_configs"]) > 0:
                 e_classes = list(cfg["class_configs"].keys())
-        e_classes = e_classes or []
+        e_classes = e_classes if e_classes is not None else []
         if norm_m in ppe_models_set:
             if len(e_classes) > 0:
                 if norm_m not in active_mods: active_mods.append(norm_m)

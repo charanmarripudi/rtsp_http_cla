@@ -395,17 +395,23 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                 const iVal = parseFloat(iSlider.value);
                 const clean = mName.replace(".pt", "");
                 
+                const origClasses = (meta.model_configs && meta.model_configs[mName] && meta.model_configs[mName].enabled_classes) ||
+                                    (meta.model_configs && meta.model_configs[clean] && meta.model_configs[clean].enabled_classes);
                 if (cls) {
                     domModelConfigs[mName] = domModelConfigs[mName] || {};
+                    if (origClasses) domModelConfigs[mName].enabled_classes = origClasses;
                     domModelConfigs[mName].class_configs = domModelConfigs[mName].class_configs || {};
                     domModelConfigs[mName].class_configs[cls] = { conf: cVal, iou: iVal };
 
                     domModelConfigs[clean] = domModelConfigs[clean] || {};
+                    if (origClasses) domModelConfigs[clean].enabled_classes = origClasses;
                     domModelConfigs[clean].class_configs = domModelConfigs[clean].class_configs || {};
                     domModelConfigs[clean].class_configs[cls] = { conf: cVal, iou: iVal };
                 } else {
                     domModelConfigs[mName] = Object.assign({}, domModelConfigs[mName], { conf: cVal, iou: iVal });
+                    if (origClasses) domModelConfigs[mName].enabled_classes = origClasses;
                     domModelConfigs[clean] = Object.assign({}, domModelConfigs[clean], { conf: cVal, iou: iVal });
+                    if (origClasses) domModelConfigs[clean].enabled_classes = origClasses;
                 }
             }
         });
