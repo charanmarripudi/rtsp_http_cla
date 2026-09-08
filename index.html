@@ -1820,7 +1820,7 @@
             const key = String(idx);
             newCameraModelsMap[key] = [];
 
-            // 1. Parent model checkboxes
+            // 1. Parent non-PPE model checkboxes
             const parentCbs = document.querySelectorAll(`.parent-model-checkbox[data-cam="${idx}"]:checked`);
             parentCbs.forEach(cb => {
                 const m = cb.value;
@@ -1831,15 +1831,45 @@
 
             // 2. PPE class checkboxes
             const classCbs = document.querySelectorAll(`.class-checkbox[data-cam="${idx}"]:checked`);
+            const enabledClassesPerModel = {};
             classCbs.forEach(cb => {
                 const m = cb.getAttribute("data-model");
-                if (m && !newCameraModelsMap[key].includes(m)) {
-                    newCameraModelsMap[key].push(m);
+                const cls = cb.value;
+                if (m) {
+                    if (!newCameraModelsMap[key].includes(m)) {
+                        newCameraModelsMap[key].push(m);
+                    }
+                    enabledClassesPerModel[m] = enabledClassesPerModel[m] || [];
+                    if (!enabledClassesPerModel[m].includes(cls)) {
+                        enabledClassesPerModel[m].push(cls);
+                    }
                 }
             });
+
+            // Synchronize stream model_configs strictly with checked classes
+            s.model_configs = s.model_configs || {};
+            const cleanModelConfigs = {};
+
+            if (s.model_configs.roi_polygon) {
+                cleanModelConfigs.roi_polygon = s.model_configs.roi_polygon;
+            }
+
+            newCameraModelsMap[key].forEach(m => {
+                const cleanName = m.replace(".pt", "");
+                const existingCfg = s.model_configs[m] || s.model_configs[cleanName] || {};
+                const activeClasses = enabledClassesPerModel[m] || [];
+                
+                const updatedCfg = Object.assign({}, existingCfg, {
+                    enabled_classes: activeClasses
+                });
+                cleanModelConfigs[m] = updatedCfg;
+                cleanModelConfigs[cleanName] = updatedCfg;
+            });
+
+            s.model_configs = cleanModelConfigs;
         });
 
-        // Use dynamically built map if checkboxes exist in DOM
+        // Update global cameraModelsMap with strictly selected models
         if (document.querySelectorAll(".parent-model-checkbox, .class-checkbox").length > 0) {
             cameraModelsMap = newCameraModelsMap;
         }
