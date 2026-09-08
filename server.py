@@ -944,9 +944,22 @@ async def serve_hls(path: str):
     
     try:
         if path.endswith(".m3u8"):
+            # Apply start-time query prefix cache-buster to playlist segment URLs
+            t_val = get_stream_start_time(path) or int(os.path.getmtime(fp))
             with open(fp, "r") as f:
                 content = f.read()
-            return Response(content=content, media_type=mt, headers=headers)
+            lines = []
+            for line in content.splitlines():
+                if line.strip().endswith(".ts"):
+                    base_line = line.strip()
+                    if "?" in base_line:
+                        lines.append(f"{base_line}&t={t_val}")
+                    else:
+                        lines.append(f"{base_line}?t={t_val}")
+                else:
+                    lines.append(line)
+            modified_content = "\n".join(lines)
+            return Response(content=modified_content, media_type=mt, headers=headers)
         else:
             # Memory-safe direct read of active .ts segments to prevent Content-Length mismatches
             with open(fp, "rb") as f:
