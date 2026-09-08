@@ -1700,6 +1700,7 @@ def dsta_alias(): return get_status()
 def get_cm():
     cm = json.load(open(CAMERA_MODELS_JSON)) if os.path.exists(CAMERA_MODELS_JSON) else {}
     streams = read_streams_metadata()
+    ppe_model_names = {"ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"}
     clean_cm = {}
     for idx, s in enumerate(streams):
         cid = str(s.get("id", idx))
@@ -1707,15 +1708,15 @@ def get_cm():
         m_cfgs = s.get("model_configs") or {}
         active_models = []
         for m in c_models:
-            clean_m = m.replace(".pt", "")
-            cfg = m_cfgs.get(m) or m_cfgs.get(clean_m) or {}
-            enabled = cfg.get("enabled_classes")
-            if enabled is not None:
-                if isinstance(enabled, list) and len(enabled) > 0:
-                    active_models.append(m)
+            norm_m = m if m.endswith(".pt") else f"{m}.pt"
+            clean_m = norm_m.replace(".pt", "")
+            cfg = m_cfgs.get(norm_m) or m_cfgs.get(clean_m) or {}
+            enabled = cfg.get("enabled_classes") or []
+            if norm_m in ppe_model_names:
+                if len(enabled) > 0:
+                    active_models.append(norm_m)
             else:
-                # Non-class filtered model or explicitly assigned parent model
-                active_models.append(m)
+                active_models.append(norm_m)
         clean_cm[cid] = active_models
     return clean_cm
 

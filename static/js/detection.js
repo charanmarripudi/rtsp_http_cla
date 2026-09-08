@@ -227,77 +227,80 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                 }
             });
 
+            const ppeModelNames = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"];
             uniqueAssigned.forEach(m => {
                 const cleanName = m.replace(".pt", "");
+                const normM = m.endsWith(".pt") ? m : `${m}.pt`;
                 const mCfg = modelConfigs[m] || modelConfigs[cleanName] || {};
                 const enabled = Array.from(new Set(mCfg.enabled_classes || []));
 
-                if (enabled.length > 0) {
-                    enabled.forEach(cls => {
-                        const existingCard = chipsList.querySelector(`[data-model-clean="${cleanName}"][data-class="${cls}"]`);
-                        if (existingCard) return;
+                if (ppeModelNames.includes(normM)) {
+                    if (enabled.length > 0) {
+                        enabled.forEach(cls => {
+                            const existingCard = chipsList.querySelector(`[data-model-clean="${cleanName}"][data-class="${cls}"]`);
+                            if (existingCard) return;
 
-                        const cCfg = (mCfg.class_configs && mCfg.class_configs[cls]) || {};
-                        const cVal = cCfg.conf !== undefined ? parseFloat(cCfg.conf).toFixed(2) : parseFloat(mCfg.conf || meta.conf || 0.40).toFixed(2);
-                        const iVal = cCfg.iou !== undefined ? parseFloat(cCfg.iou).toFixed(2) : parseFloat(mCfg.iou || meta.iou || 0.45).toFixed(2);
+                            const cCfg = (mCfg.class_configs && mCfg.class_configs[cls]) || {};
+                            const cVal = cCfg.conf !== undefined ? parseFloat(cCfg.conf).toFixed(2) : parseFloat(mCfg.conf || meta.conf || 0.40).toFixed(2);
+                            const iVal = cCfg.iou !== undefined ? parseFloat(cCfg.iou).toFixed(2) : parseFloat(mCfg.iou || meta.iou || 0.45).toFixed(2);
 
-                        const card = document.createElement("div");
-                        card.className = "model-card-box";
-                        card.setAttribute("data-model", m);
-                        card.setAttribute("data-model-clean", cleanName);
-                        card.setAttribute("data-class", cls);
-                        card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
-                        card.innerHTML = `
-                            <div class="model-chip-header" style="margin-bottom:6px;">
-                                <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${cleanName} - ${cls}</span>
-                            </div>
-                            <div class="thresholds compact" style="display:flex;gap:12px;">
-                                <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
-                                <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
-                            </div>`;
-                        chipsList.appendChild(card);
+                            const card = document.createElement("div");
+                            card.className = "model-card-box";
+                            card.setAttribute("data-model", m);
+                            card.setAttribute("data-model-clean", cleanName);
+                            card.setAttribute("data-class", cls);
+                            card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
+                            card.innerHTML = `
+                                <div class="model-chip-header" style="margin-bottom:6px;">
+                                    <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${cleanName} - ${cls}</span>
+                                </div>
+                                <div class="thresholds compact" style="display:flex;gap:12px;">
+                                    <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
+                                    <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
+                                </div>`;
+                            chipsList.appendChild(card);
 
-                        const cSlider = card.querySelector(".model-conf-slider");
-                        const iSlider = card.querySelector(".model-iou-slider");
-                        const cSpan = card.querySelector(".model-conf-val");
-                        const iSpan = card.querySelector(".model-iou-val");
+                            const cSlider = card.querySelector(".model-conf-slider");
+                            const iSlider = card.querySelector(".model-iou-slider");
+                            const cSpan = card.querySelector(".model-conf-val");
+                            const iSpan = card.querySelector(".model-iou-val");
 
-                        const syncClassThreshold = () => {
-                            clearTimeout(thresholdSyncTimer);
-                            thresholdSyncTimer = setTimeout(() => {
-                                const cNum = parseFloat(cSlider.value);
-                                const iNum = parseFloat(iSlider.value);
-                                meta.model_configs = meta.model_configs || {};
-                                const normM = m.endsWith(".pt") ? m : `${m}.pt`;
-                                meta.model_configs[normM] = meta.model_configs[normM] || {};
-                                meta.model_configs[normM].class_configs = meta.model_configs[normM].class_configs || {};
-                                meta.model_configs[normM].class_configs[cls] = { conf: cNum, iou: iNum };
+                            const syncClassThreshold = () => {
+                                clearTimeout(thresholdSyncTimer);
+                                thresholdSyncTimer = setTimeout(() => {
+                                    const cNum = parseFloat(cSlider.value);
+                                    const iNum = parseFloat(iSlider.value);
+                                    meta.model_configs = meta.model_configs || {};
+                                    meta.model_configs[normM] = meta.model_configs[normM] || {};
+                                    meta.model_configs[normM].class_configs = meta.model_configs[normM].class_configs || {};
+                                    meta.model_configs[normM].class_configs[cls] = { conf: cNum, iou: iNum };
 
-                                if (window.roiDrawStates && window.roiDrawStates[i] && window.roiDrawStates[i].vertices && window.roiDrawStates[i].vertices.length === 2) {
-                                    meta.model_configs.roi_polygon = window.roiDrawStates[i].vertices;
-                                }
+                                    if (window.roiDrawStates && window.roiDrawStates[i] && window.roiDrawStates[i].vertices && window.roiDrawStates[i].vertices.length === 2) {
+                                        meta.model_configs.roi_polygon = window.roiDrawStates[i].vertices;
+                                    }
 
-                                fetch("/api/update-thresholds", {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ camera: i, model: m, conf: cNum, iou: iNum, model_configs: meta.model_configs })
-                                }).catch(() => {});
-                            }, 200);
-                        };
-
-                        if (cSlider) {
-                            cSlider.oninput = () => {
-                                if (cSpan) cSpan.textContent = parseFloat(cSlider.value).toFixed(2);
-                                syncClassThreshold();
+                                    fetch("/api/update-thresholds", {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ camera: i, model: m, conf: cNum, iou: iNum, model_configs: meta.model_configs })
+                                    }).catch(() => {});
+                                }, 200);
                             };
-                        }
-                        if (iSlider) {
-                            iSlider.oninput = () => {
-                                if (iSpan) iSpan.textContent = parseFloat(iSlider.value).toFixed(2);
-                                syncClassThreshold();
-                            };
-                        }
-                    });
+
+                            if (cSlider) {
+                                cSlider.oninput = () => {
+                                    if (cSpan) cSpan.textContent = parseFloat(cSlider.value).toFixed(2);
+                                    syncClassThreshold();
+                                };
+                            }
+                            if (iSlider) {
+                                iSlider.oninput = () => {
+                                    if (iSpan) iSpan.textContent = parseFloat(iSlider.value).toFixed(2);
+                                    syncClassThreshold();
+                                };
+                            }
+                        });
+                    }
                 } else {
                     const cVal = mCfg.conf !== undefined ? parseFloat(mCfg.conf).toFixed(2) : (meta.conf !== undefined ? parseFloat(meta.conf).toFixed(2) : "0.40");
                     const iVal = mCfg.iou !== undefined ? parseFloat(mCfg.iou).toFixed(2) : (meta.iou !== undefined ? parseFloat(meta.iou).toFixed(2) : "0.45");
