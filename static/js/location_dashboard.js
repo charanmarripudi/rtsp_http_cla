@@ -352,26 +352,54 @@ class LocationDashboard {
 
     async saveCameras(shouldReload = true) {
         const ppeModelsList = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"];
-        this.streams.forEach(stream => {
-            const cid = String(stream.id);
-            this.cameraModels[cid] = this.cameraModels[cid] || [];
-            if (stream.model_configs) {
-                Object.entries(stream.model_configs).forEach(([mKey, mVal]) => {
-                    if (mKey === "roi_polygon" || !mVal) return;
-                    const normM = mKey.endsWith(".pt") ? mKey : `${mKey}.pt`;
-                    let activeClasses = (mVal && mVal.enabled_classes) || [];
-                    if (activeClasses.length === 0 && mVal && mVal.class_configs && typeof mVal.class_configs === "object") {
-                        activeClasses = Object.keys(mVal.class_configs);
+        this.streams.forEach((stream, idx) => {
+            const key = String(stream.id !== undefined ? stream.id : idx);
+            this.cameraModels[key] = [];
+
+            const parentCbs = document.querySelectorAll(`.parent-model-checkbox[data-cam="${stream.id}"]:checked, .parent-model-checkbox[data-cam="${idx}"]:checked`);
+            parentCbs.forEach(cb => {
+                const m = cb.value;
+                if (!this.cameraModels[key].includes(m)) {
+                    this.cameraModels[key].push(m);
+                }
+            });
+
+            const classCbs = document.querySelectorAll(`.class-checkbox[data-camera="${stream.id}"]:checked, .class-checkbox[data-cam="${idx}"]:checked`);
+            const enabledClassesPerModel = {};
+            classCbs.forEach(cb => {
+                const m = cb.getAttribute("data-model");
+                const cls = cb.value;
+                if (m) {
+                    if (!this.cameraModels[key].includes(m)) {
+                        this.cameraModels[key].push(m);
                     }
-                    if (activeClasses.length > 0) {
-                        if (!this.cameraModels[cid].includes(normM)) {
-                            this.cameraModels[cid].push(normM);
-                        }
-                    } else if (ppeModelsList.includes(normM)) {
-                        this.cameraModels[cid] = this.cameraModels[cid].filter(m => m !== normM && m !== mKey);
+                    enabledClassesPerModel[m] = enabledClassesPerModel[m] || [];
+                    if (!enabledClassesPerModel[m].includes(cls)) {
+                        enabledClassesPerModel[m].push(cls);
                     }
-                });
+                }
+            });
+
+            stream.model_configs = stream.model_configs || {};
+            const cleanModelConfigs = {};
+
+            if (stream.model_configs.roi_polygon) {
+                cleanModelConfigs.roi_polygon = stream.model_configs.roi_polygon;
             }
+
+            this.cameraModels[key].forEach(m => {
+                const cleanName = m.replace(".pt", "");
+                const existingCfg = stream.model_configs[m] || stream.model_configs[cleanName] || {};
+                const activeClasses = enabledClassesPerModel[m] || [];
+                
+                const updatedCfg = Object.assign({}, existingCfg, {
+                    enabled_classes: activeClasses
+                });
+                cleanModelConfigs[m] = updatedCfg;
+                cleanModelConfigs[cleanName] = updatedCfg;
+            });
+
+            stream.model_configs = cleanModelConfigs;
         });
 
         const payload = this.streams
@@ -677,14 +705,16 @@ class LocationDashboard {
     bindModelCheckbox(cb, stream) {
         cb.addEventListener("change", () => {
             cb.closest(".model-chip").classList.toggle("checked", cb.checked);
-            const parentModel = cb.getAttribute("data-model") || "";
             const labelSpan = cb.nextElementSibling;
-            if (labelSpan && parentModel) {
-                if (parentModel === "nik_ppe_best.pt") labelSpan.style.color = cb.checked ? "#f5a623" : "";
-                else if (parentModel === "hf_ppe_detection.pt") labelSpan.style.color = cb.checked ? "#a78bfa" : "";
-                else if (parentModel === "keremberke_ppe_gear.pt") labelSpan.style.color = cb.checked ? "#38bdf8" : "";
-                else if (parentModel === "hansung_ppe_violations.pt") labelSpan.style.color = cb.checked ? "#fb7185" : "";
-                else if (parentModel === "ppe_new.pt") labelSpan.style.color = cb.checked ? "#00ffaa" : "";
+            const parentModel = cb.getAttribute("data-model") || "ppe_new.pt";
+            if (parentModel === "nik_ppe_best.pt" && labelSpan) {
+                labelSpan.style.color = cb.checked ? "#f5a623" : "";
+            } else if (parentModel === "hf_ppe_detection.pt" && labelSpan) {
+                labelSpan.style.color = cb.checked ? "#a78bfa" : "";
+            } else if (parentModel === "keremberke_ppe_gear.pt" && labelSpan) {
+                labelSpan.style.color = cb.checked ? "#38bdf8" : "";
+            } else if (parentModel === "hansung_ppe_violations.pt" && labelSpan) {
+                labelSpan.style.color = cb.checked ? "#fb7185" : "";
             }
         });
     }

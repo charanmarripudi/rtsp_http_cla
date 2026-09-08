@@ -42,7 +42,7 @@ async function playHLS(video, url, idx, forceReload = false) {
         enableWorker: true,
         lowLatencyMode: true,
         startPosition: -1,
-        liveSyncDurationCount: 4.0,      // 4.0 segments cushion (absorbs network spikes)
+        liveSyncDurationCount: 4.0,      // 4.0 segments cushion (absorbs Tailscale Funnel network spikes)
         liveMaxLatencyDurationCount: 8,  // Auto-catchup if delay > 8 segments
         liveDurationInfinity: true,
         liveBackBufferLength: 0,
@@ -50,11 +50,11 @@ async function playHLS(video, url, idx, forceReload = false) {
         maxBufferLength: 10,
         maxMaxBufferLength: 15,
         manifestLoadingTimeOut: 20000,
-        manifestLoadingMaxRetry: 25,
-        manifestLoadingRetryDelay: 1000,
+        manifestLoadingMaxRetry: 10,
+        manifestLoadingRetryDelay: 500,
         fragLoadingTimeOut: 20000,
-        fragLoadingMaxRetry: 25,
-        fragLoadingRetryDelay: 1000
+        fragLoadingMaxRetry: 10,
+        fragLoadingRetryDelay: 500
     });
     hlsInstances[idx] = hls;
 
@@ -93,13 +93,8 @@ async function playHLS(video, url, idx, forceReload = false) {
         if (data.fatal) { 
             switch(data.type) {
                 case Hls.ErrorTypes.NETWORK_ERROR:
-                    console.warn(`HLS Network Error for camera ${idx}, retrying manifest load...`, data);
-                    setTimeout(() => {
-                        if (hlsInstances[idx] === hls) {
-                            hls.loadSource(fullUrl);
-                            hls.startLoad();
-                        }
-                    }, 1200);
+                    console.warn("HLS Network Error, attempting recovery...", data);
+                    hls.startLoad();
                     break;
                 case Hls.ErrorTypes.MEDIA_ERROR:
                     console.warn("HLS Media Error, attempting recovery...", data);
@@ -109,7 +104,7 @@ async function playHLS(video, url, idx, forceReload = false) {
                     console.error("Fatal HLS Error, restarting player...", data);
                     hls.destroy(); 
                     delete hlsInstances[idx]; 
-                    setTimeout(() => playHLS(video, url, idx, true), 2000); 
+                    setTimeout(() => playHLS(video, url, idx), 2000); 
                     break;
             }
         }
