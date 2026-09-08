@@ -276,7 +276,7 @@
         const MAX_ZOOM = 4.0;
         const MIN_ZOOM = 1.0;
 
-        const API_BASE = "http://127.0.0.1:5001/devices";
+        const API_BASE = "/devices";
         const CAMERA_IP = "192.168.96.30";
 
         function logStatus(msg) {
@@ -292,7 +292,7 @@
         function handleStreamError(img) {
             logStatus("⚠️ Stream reconnecting...");
             setTimeout(() => {
-                img.src = "http://127.0.0.1:5001/video_feed?t=" + new Date().getTime();
+                img.src = "/hls/stream0_raw/playlist.m3u8?t=" + new Date().getTime();
             }, 1000);
         }
 
@@ -332,8 +332,13 @@
             
             // Apply visual real-time player zoom instantly
             const streamImg = document.getElementById("streamFrame");
-            streamImg.style.transform = `scale(${currentZoomLevel})`;
-            document.getElementById("zoomBadge").innerText = `${currentZoomLevel.toFixed(2)}X`;
+            if (streamImg) {
+                streamImg.style.transform = `scale(${currentZoomLevel})`;
+                streamImg.style.transformOrigin = "center center";
+                streamImg.style.transition = "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
+            }
+            const badge = document.getElementById("zoomBadge");
+            if (badge) badge.innerText = `${currentZoomLevel.toFixed(2)}X`;
 
             logStatus(`Zoom: ${action} -> Live Scale: ${currentZoomLevel}X`);
 
@@ -357,7 +362,9 @@
 
         window.addEventListener('load', () => {
             const img = document.getElementById('streamFrame');
-            img.src = "http://127.0.0.1:5001/video_feed?load=" + new Date().getTime();
+            if (img && img.tagName.toLowerCase() === 'img') {
+                img.src = "/hls/stream0_raw/playlist.m3u8?load=" + new Date().getTime();
+            }
         });
     </script>
 </body>

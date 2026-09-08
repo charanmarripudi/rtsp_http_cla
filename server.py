@@ -3062,7 +3062,7 @@ app.mount("/static", CachedStaticFiles(directory=os.path.join(BASE_DIR, "static"
 # Explicit routes for each HTML page — avoids exposing BASE_DIR (which contains
 # the ever-growing logs/server.log) via StaticFiles, which caused h11
 # "Too much data for declared Content-Length" errors on hard refresh.
-_HTML_FILES = ["index.html", "stream.html", "location_dashboard.html", "alerts.html"]
+_HTML_FILES = ["index.html", "stream.html", "location_dashboard.html", "alerts.html", "ptz_camera_dashboard.html"]
 
 @app.get("/")
 @app.head("/")
