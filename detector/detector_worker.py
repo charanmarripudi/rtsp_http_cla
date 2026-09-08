@@ -7,6 +7,10 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["TORCH_NUM_THREADS"] = "1"
 
 import cv2, subprocess, time, threading, queue, json
+try:
+    cv2.setNumThreads(1)
+except Exception:
+    pass
 from datetime import datetime
 from ultralytics import YOLO
 from ultralytics.utils.plotting import Annotator, colors

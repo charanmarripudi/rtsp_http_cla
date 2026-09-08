@@ -1816,21 +1816,7 @@
       }
 
       async function saveCurrentConfiguration(shouldReload) {
-        // Remove any model that has no enabled classes from camera assignment
-        Object.keys(cameraModelsMap).forEach(cid => {
-            const stream = streamsArray[Number(cid)];
-            if (stream) {
-                cameraModelsMap[cid] = cameraModelsMap[cid].filter(model => {
-                    const clean = model.replace(".pt", "");
-                    const cfg = (stream.model_configs && (stream.model_configs[model] || stream.model_configs[clean])) || {};
-                    const enabled = cfg.enabled_classes;
-                    // If the model has a class list (PPE-type), only keep it if classes are selected
-                    if (Array.isArray(enabled)) return enabled.length > 0;
-                    // Non-class-filtered models (e.g. fire_smoke, construction) are always kept
-                    return true;
-                });
-            }
-        });
+        // Keep cameraModelsMap intact as checked by user (do not auto-remove models)
 
         const payload = streamsArray
           .map((item, idx) => ({
