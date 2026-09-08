@@ -938,7 +938,7 @@ async def serve_hls(path: str):
 
                 if rtsp_url:
                     start_raw_stream(cid, rtsp_url)
-                    for _ in range(30):
+                    for _ in range(50):
                         if os.path.exists(fp):
                             break
                         await asyncio.sleep(0.1)
