@@ -111,7 +111,7 @@ class DetectorWorker:
         self.roi_polygon = None
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
-        self.fps, self.width, self.height = 15.0, 854, 480
+        self.fps, self.width, self.height = 15.0, 1280, 720
         self._latest_raw_frame = None
         self._latest_boxes = []
         self._latest_box_time = 0.0

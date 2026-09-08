@@ -217,7 +217,7 @@ class DetectorWorker:
             self._stop_event.clear(); self._frame_queue, self._result_queue, self._latest_raw_frame, self._cap_ok = queue.Queue(maxsize=2), queue.Queue(maxsize=2), None, True
             try:
                 # Initialize default dimensions early for fallback frame
-                self.width, self.height = 854, 480
+                self.width, self.height = 1280, 720
                 
                 cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
