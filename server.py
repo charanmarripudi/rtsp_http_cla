@@ -374,7 +374,15 @@ def read_streams_metadata():
     with config_cache_lock:
         if _streams_metadata_cache is not None:
             return [dict(item) for item in _streams_metadata_cache]
-    if not os.path.exists(STREAMS_JSON): return []
+    if not os.path.exists(STREAMS_JSON) or os.path.getsize(STREAMS_JSON) == 0:
+        conf_urls = read_streams_conf()
+        data = [{"id": idx, "rtsp": u, "location": f"Location {idx+1}", "models": []} for idx, u in enumerate(conf_urls)]
+        if data:
+            try:
+                write_json_atomic(STREAMS_JSON, data)
+            except Exception:
+                pass
+        return data
     try:
         with open(STREAMS_JSON) as fp:
             data = json.load(fp)
@@ -568,18 +576,19 @@ def _kill_raw_ffmpeg_for_camera(cid: str):
     only one consuming camera bandwidth — prevents slow-motion caused by two
     concurrent RTSP connections competing for the same stream."""
     cid = str(cid)
-    if cid not in cid_to_rtsp:
+    proc_info = raw_streams_procs.get(cid)
+    if not proc_info:
         return
-    rtsp = cid_to_rtsp[cid]
-    # Only kill if this camera is the sole user of this RTSP URL.
-    # If multiple camera IDs share the same RTSP, keep the proc alive for others.
-    count = sum(1 for k, v in cid_to_rtsp.items() if v == rtsp)
-    if count <= 1:
-        cached = rtsp_cache.pop(rtsp, None)
-        if cached:
-            if cached["proc"].poll() is None:
-                _async_kill(cached["proc"])
-    cid_to_rtsp.pop(cid, None)
+    rtsp = proc_info.get("rtsp")
+    if not proc_info.get("symlink"):
+        count = sum(1 for k, v in raw_streams_procs.items() if v.get("rtsp") == rtsp and not v.get("symlink"))
+        if count <= 1 and proc_info.get("proc"):
+            try:
+                if proc_info["proc"].poll() is None:
+                    proc_info["proc"].kill()
+            except Exception:
+                pass
+    raw_streams_procs.pop(cid, None)
 
 def _clean_stale_detected_segments(camera: str):
     """Remove stale .ts segments from the detected HLS directory.
@@ -903,10 +912,8 @@ def get_stream_start_time(path: str) -> int:
                     if cam_id in running:
                         return running[cam_id].get("start_time", 0)
                 else:
-                    if cam_id in cid_to_rtsp:
-                        rtsp = cid_to_rtsp[cam_id]
-                        if rtsp in rtsp_cache:
-                            return rtsp_cache[rtsp].get("start_time", 0)
+                    if cam_id in raw_streams_procs:
+                        return raw_streams_procs[cam_id].get("start_time", 0)
     except:
         pass
     return 0
@@ -937,6 +944,10 @@ async def serve_hls(path: str):
                         idx = int(cid)
                         if 0 <= idx < len(streams):
                             rtsp_url = streams[idx].get("rtsp")
+                        if not rtsp_url:
+                            conf_urls = read_streams_conf()
+                            if 0 <= idx < len(conf_urls):
+                                rtsp_url = conf_urls[idx]
                     else:
                         for s in streams:
                             if s.get("location_id") == cid:
