@@ -1590,6 +1590,18 @@ def start_detection(d: dict):
         e_classes = None
         if isinstance(cfg, dict):
             e_classes = cfg.get("enabled_classes")
+        if e_classes is None:
+            metadata = read_streams_metadata()
+            saved_cfg = {}
+            if cid.isdigit() and int(cid) < len(metadata) and isinstance(metadata[int(cid)], dict):
+                saved_mc = metadata[int(cid)].get("model_configs") or {}
+                saved_cfg = saved_mc.get(norm_m) or saved_mc.get(m_clean) or {}
+            if isinstance(saved_cfg, dict) and saved_cfg.get("enabled_classes"):
+                e_classes = saved_cfg.get("enabled_classes")
+                if isinstance(cfg, dict):
+                    cfg["enabled_classes"] = e_classes
+                else:
+                    cfg = saved_cfg
         e_classes = e_classes if e_classes is not None else []
         if norm_m in ppe_models_set:
             if len(e_classes) > 0:

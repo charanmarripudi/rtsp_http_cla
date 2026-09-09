@@ -225,6 +225,17 @@ class DetectorWorker:
                         enabled_classes = cfg.get("enabled_classes")
                         m_imgsz = int(cfg.get("imgsz", 640))
 
+                if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
+                    try:
+                        cid = str(self.cam_id)
+                        if cid.isdigit() and int(cid) < len(self.streams_metadata) and isinstance(self.streams_metadata[int(cid)], dict):
+                            saved_mc = self.streams_metadata[int(cid)].get("model_configs") or {}
+                            saved_cfg = saved_mc.get(m_name) or saved_mc.get(m_clean) or {}
+                            if isinstance(saved_cfg, dict) and saved_cfg.get("enabled_classes"):
+                                enabled_classes = saved_cfg.get("enabled_classes")
+                    except Exception:
+                        pass
+
                 # Skip PPE model entirely if it is class-configurable and has 0 enabled classes or no enabled_classes key
                 ppe_models_set = {"ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt", "ppe_new", "nik_ppe_best", "hf_ppe_detection", "keremberke_ppe_gear", "hansung_ppe_violations"}
                 if m_name in ppe_models_set or m_clean in ppe_models_set:
