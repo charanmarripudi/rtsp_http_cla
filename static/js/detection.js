@@ -98,7 +98,8 @@ async function playHLS(video, url, idx, forceReload = false) {
     });
 
     hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.details === 'bufferStalledError') {
+        if (data.details === 'bufferStalledError' || data.details === 'levelLoadTimeOut') {
+            if (hls) hls.startLoad();
             if (video.paused) {
                 video.play().catch(() => {});
             }
@@ -118,7 +119,7 @@ async function playHLS(video, url, idx, forceReload = false) {
                     console.error("Fatal HLS Error, restarting player...", data);
                     hls.destroy(); 
                     delete hlsInstances[idx]; 
-                    setTimeout(() => playHLS(video, url, idx), 2000); 
+                    setTimeout(() => playHLS(video, url, idx), 1000); 
                     break;
             }
         }
@@ -135,7 +136,7 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
             if (r.ok) {
                 const text = await r.text();
                 const tsCount = (text.match(/\.ts/g) || []).length;
-                if (tsCount >= 2) {
+                if (tsCount >= 1) {
                     if (!box.classList.contains("detecting")) {
                         window.cameraTransitioning[idx] = false;
                         return;

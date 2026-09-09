@@ -1609,6 +1609,32 @@ def start_detection(d: dict):
             clean_model_configs[norm_m] = cfg
             clean_model_configs[m_clean] = cfg
 
+    # ── AUTOMATIC MULTI-MODEL PPE ENSEMBLE ──
+    # If ANY PPE model or PPE class is selected for a camera, automatically apply ALL active PPE models
+    # so that every stream gets 100% detection coverage across all PPE models (hf_ppe, hansung, nik, ppe_new, keremberke).
+    all_ppe_models = ["hf_ppe_detection.pt", "hansung_ppe_violations.pt", "nik_ppe_best.pt", "ppe_new.pt", "keremberke_ppe_gear.pt"]
+    has_ppe = any(m.replace(".pt", "") in {p.replace(".pt", "") for p in all_ppe_models} for m in active_mods)
+    
+    if has_ppe:
+        union_enabled_classes = []
+        if isinstance(model_configs, dict):
+            for k, v in model_configs.items():
+                if isinstance(v, dict) and v.get("enabled_classes"):
+                    for c in v.get("enabled_classes", []):
+                        if c not in union_enabled_classes:
+                            union_enabled_classes.append(c)
+
+        for p_mod in all_ppe_models:
+            p_clean = p_mod.replace(".pt", "")
+            if p_mod not in active_mods and p_clean not in active_mods:
+                active_mods.append(p_mod)
+            
+            existing_cfg = clean_model_configs.get(p_mod) or clean_model_configs.get(p_clean) or {}
+            if not existing_cfg.get("enabled_classes") and union_enabled_classes:
+                existing_cfg["enabled_classes"] = list(union_enabled_classes)
+            clean_model_configs[p_mod] = existing_cfg
+            clean_model_configs[p_clean] = existing_cfg
+
     mods = active_mods
     model_configs = clean_model_configs
 
