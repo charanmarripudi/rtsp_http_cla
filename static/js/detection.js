@@ -40,15 +40,16 @@ async function playHLS(video, url, idx, forceReload = false) {
     
     const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
+        lowLatencyMode: false,          // False for standard TS HLS streams -> avoids byte-range stalls
         startPosition: -1,
-        liveSyncDurationCount: 2.0,      // 2.0 segments cushion for immediate smooth playback
-        liveMaxLatencyDurationCount: 5,  // Auto-catchup if delay > 5 segments
+        liveSyncDurationCount: 3.0,      // 3 segments cushion for 100% smooth zero-stutter playback
+        liveMaxLatencyDurationCount: 6,  // Smooth catchup if network delays
         liveDurationInfinity: true,
         liveBackBufferLength: 0,
         backBufferLength: 0,
         maxBufferLength: 10,
         maxMaxBufferLength: 15,
+        highBufferWatchdogPeriod: 2,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
         manifestLoadingRetryDelay: 500,
@@ -60,6 +61,19 @@ async function playHLS(video, url, idx, forceReload = false) {
 
     hls.attachMedia(video);
     hls.loadSource(fullUrl);
+
+    if (video._syncInterval) clearInterval(video._syncInterval);
+    video._syncInterval = setInterval(() => {
+        if (!hls || !hls.liveSyncPosition || video.paused || video.readyState < 3) return;
+        const drift = hls.liveSyncPosition - video.currentTime;
+        if (drift > 2.5) {
+            video.playbackRate = 1.08; // Smoothly catch up without stuttering
+        } else if (drift > 1.2) {
+            video.playbackRate = 1.03;
+        } else {
+            video.playbackRate = 1.0;  // Normal speed
+        }
+    }, 1000);
 
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
         stopSimulatedCanvas(idx, video);

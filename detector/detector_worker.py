@@ -271,12 +271,14 @@ class DetectorWorker:
                             conf_val = float(b.conf[0])
                             detected_this_model.append((cls, conf_val))
                             
-                            # Filter by enabled classes (strictly per box)
-                            norm_cls = re.sub(r'[-_\s]+', '-', cls.lower())
+                            def normalize_cls(s):
+                                return re.sub(r'[^a-z0-9]', '', str(s).lower().replace("saftey", "safety"))
+
+                            box_cls_clean = normalize_cls(cls)
                             if enabled_classes is not None and isinstance(enabled_classes, list):
                                 if len(enabled_classes) == 0:
                                     continue  # 0 classes enabled for this model -> skip box
-                                matched = any(norm_cls == re.sub(r'[-_\s]+', '-', str(e).lower()) for e in enabled_classes)
+                                matched = any(box_cls_clean == normalize_cls(e) for e in enabled_classes)
                                 if not matched:
                                     continue
                             elif enabled_classes is None:
@@ -295,11 +297,9 @@ class DetectorWorker:
                             if cfg and isinstance(cfg, dict):
                                 class_configs = cfg.get("class_configs")
                                 if class_configs and isinstance(class_configs, dict):
-                                    import re
-                                    norm_cls = re.sub(r'[-_\s]+', '-', cls.lower())
                                     c_cfg = None
                                     for k, val in class_configs.items():
-                                        if re.sub(r'[-_\s]+', '-', k.lower()) == norm_cls:
+                                        if normalize_cls(k) == box_cls_clean:
                                             c_cfg = val
                                             break
                                     if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
