@@ -47,6 +47,8 @@ from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db
 
 YOLO_CACHE = {}
 
+INFERENCE_SEMAPHORE = threading.Semaphore(2)
+
 def get_yolo_model(model_path):
     if model_path not in YOLO_CACHE:
         print(f"[CACHE] Loading model weights into memory: {model_path}", flush=True)
@@ -111,7 +113,7 @@ class DetectorWorker:
                     self._latest_boxes = []
         print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, roi_polygon={self.roi_polygon}", flush=True)
 
-    def __init__(self, rtsp_url, output_dir, model_paths, conf=0.40, iou=0.45, location="Camera", model_configs=None):
+    def __init__(self, rtsp_url, output_dir, model_paths, conf=0.20, iou=0.45, location="Camera", model_configs=None):
         self.roi_polygon = None
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
@@ -260,7 +262,9 @@ class DetectorWorker:
 
                 detected_this_model = []
                 # Predict at base confidence (0.01) to capture all moving, distant, and close objects
-                for r in model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False):
+                with INFERENCE_SEMAPHORE:
+                    results = model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                for r in results:
                     if r.boxes:
                         for b in r.boxes:
                             cls = r.names[int(b.cls[0])]
