@@ -1350,6 +1350,7 @@ def save_streams(
                 if norm_k not in clean_mc:
                     clean_mc[norm_k] = v
                 else:
+                    existing = clean_mc[norm_k]
                     e_classes = (isinstance(existing, dict) and existing.get("enabled_classes")) or []
                     v_classes = (isinstance(v, dict) and v.get("enabled_classes")) or []
                     if len(v_classes) >= len(e_classes):
