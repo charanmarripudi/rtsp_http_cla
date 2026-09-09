@@ -356,7 +356,7 @@ class LocationDashboard {
             const key = String(stream.id !== undefined ? stream.id : idx);
             this.cameraModels[key] = [];
 
-            const parentCbs = document.querySelectorAll(`.parent-model-checkbox[data-cam="${stream.id}"]:checked, .parent-model-checkbox[data-cam="${idx}"]:checked`);
+            const parentCbs = document.querySelectorAll(`.parent-model-checkbox[data-camera="${stream.id}"]:checked, .parent-model-checkbox[data-camera="${idx}"]:checked, .parent-model-checkbox[data-cam="${stream.id}"]:checked, .parent-model-checkbox[data-cam="${idx}"]:checked`);
             parentCbs.forEach(cb => {
                 const m = cb.value;
                 if (!this.cameraModels[key].includes(m)) {
@@ -364,7 +364,7 @@ class LocationDashboard {
                 }
             });
 
-            const classCbs = document.querySelectorAll(`.class-checkbox[data-camera="${stream.id}"]:checked, .class-checkbox[data-cam="${idx}"]:checked`);
+            const classCbs = document.querySelectorAll(`.class-checkbox[data-camera="${stream.id}"]:checked, .class-checkbox[data-camera="${idx}"]:checked, .class-checkbox[data-cam="${stream.id}"]:checked, .class-checkbox[data-cam="${idx}"]:checked`);
             const enabledClassesPerModel = {};
             classCbs.forEach(cb => {
                 const m = cb.getAttribute("data-model");
@@ -392,7 +392,7 @@ class LocationDashboard {
                 const cleanName = m.replace(".pt", "");
                 const existingCfg = stream.model_configs[normModel] || stream.model_configs[cleanName] || {};
                 const activeClasses = enabledClassesPerModel[m] || enabledClassesPerModel[normModel] || enabledClassesPerModel[cleanName] || [];
-                
+
                 const updatedCfg = Object.assign({}, existingCfg, {
                     enabled_classes: activeClasses
                 });
@@ -413,7 +413,7 @@ class LocationDashboard {
                 }
                 let topConf = item.conf !== undefined && item.conf !== null ? parseFloat(item.conf) : 0.40;
                 let topIou = item.iou !== undefined && item.iou !== null ? parseFloat(item.iou) : 0.45;
-                
+
                 if (camBox) {
                     const topConfEl = camBox.querySelector(".conf-slider");
                     const topIouEl = camBox.querySelector(".iou-slider");
@@ -430,9 +430,9 @@ class LocationDashboard {
                             const iVal = parseFloat(iSlider.value);
                             const normModel = mName.endsWith(".pt") ? mName : `${mName}.pt`;
                             const cleanName = mName.replace(".pt", "");
-                            
+
                             const origClasses = (modelConfigs[normModel] && modelConfigs[normModel].enabled_classes) ||
-                                                (modelConfigs[cleanName] && modelConfigs[cleanName].enabled_classes) || [];
+                                (modelConfigs[cleanName] && modelConfigs[cleanName].enabled_classes) || [];
 
                             if (cls) {
                                 modelConfigs[normModel] = modelConfigs[normModel] || {};
@@ -625,9 +625,9 @@ class LocationDashboard {
     modelChips(cameraIndex, stream) {
         const assigned = this.cameraModels[String(cameraIndex)] || [];
         if (!this.allModels.length) return '<span style="color:var(--muted);font-size:.68rem;">No models available</span>';
-        
+
         let html = "";
-        
+
         const ppeModels = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"];
         this.allModels.forEach(model => {
             if (ppeModels.includes(model)) return;
@@ -639,9 +639,9 @@ class LocationDashboard {
         });
 
         const ppeNewClasses = [
-          "Cap-Lamp", "Gloves", "Gum-Boots", "Hard-Hat", "Mask", "NO-Mask",
-          "No-Cap-Lamp", "No-Gloves", "No-Gum-Boots", "No-Hard-Hat", 
-          "No-Saftey-Belt", "No-Saftey-Vest", "Saftey-Belt", "Saftey-Vest"
+            "Cap-Lamp", "Gloves", "Gum-Boots", "Hard-Hat", "Mask", "NO-Mask",
+            "No-Cap-Lamp", "No-Gloves", "No-Gum-Boots", "No-Hard-Hat",
+            "No-Saftey-Belt", "No-Saftey-Vest", "Saftey-Belt", "Saftey-Vest"
         ];
         const ppeNewCfg = (stream && stream.model_configs && (stream.model_configs["ppe_new.pt"] || stream.model_configs["ppe_new"])) || {};
         const ppeNewEnabled = ppeNewCfg.enabled_classes || [];
@@ -656,9 +656,9 @@ class LocationDashboard {
         });
 
         const nikPpeClasses = [
-          "Fall-Detected", "Gloves", "Goggles", "Helmet", "Mask", "NO-Mask",
-          "No_Gloves", "No_Goggles", "No_Harness", "No_boots", "No_helmet",
-          "No_safety_vest", "Safety Vest", "boots", "harness"
+            "Fall-Detected", "Gloves", "Goggles", "Helmet", "Mask", "NO-Mask",
+            "No_Gloves", "No_Goggles", "No_Harness", "No_boots", "No_helmet",
+            "No_safety_vest", "Safety Vest", "boots", "harness"
         ];
         const nikCfg = (stream && stream.model_configs && (stream.model_configs["nik_ppe_best.pt"] || stream.model_configs["nik_ppe_best"])) || {};
         const nikEnabled = nikCfg.enabled_classes || [];
@@ -697,7 +697,7 @@ class LocationDashboard {
                 <span style="color:${checked ? '#38bdf8' : ''}">${this.escapeHtml(cls)}</span>
             </label>`;
         });
-        
+
         const hsClasses = ["Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle"];
         const hsCfg = (stream && stream.model_configs && (stream.model_configs["hansung_ppe_violations.pt"] || stream.model_configs["hansung_ppe_violations"])) || {};
         const hsEnabled = hsCfg.enabled_classes || [];
@@ -710,7 +710,7 @@ class LocationDashboard {
                 <span style="color:${checked ? '#fb7185' : ''}">${this.escapeHtml(cls)}</span>
             </label>`;
         });
-        
+
         return html;
     }
 
@@ -773,7 +773,7 @@ class LocationDashboard {
         // 2. Remove from local memory state and sync localStorage
         if (targetIdx !== -1) {
             this.streams.splice(targetIdx, 1);
-            
+
             // Shift cameraModels keys for all indices > targetIdx
             const newMap = {};
             const keys = Object.keys(this.cameraModels);
