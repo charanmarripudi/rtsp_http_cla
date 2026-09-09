@@ -1774,24 +1774,30 @@ def dsta_alias(): return get_status()
 def get_cm():
     cm = json.load(open(CAMERA_MODELS_JSON)) if os.path.exists(CAMERA_MODELS_JSON) else {}
     streams = read_streams_metadata()
-    ppe_model_names = {"ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"}
     clean_cm = {}
+    
+    # Initialize entries for all cameras
     for idx, s in enumerate(streams):
         cid = str(s.get("id", idx))
-        c_models = cm.get(cid, [])
-        m_cfgs = s.get("model_configs") or {}
+        c_models = cm.get(cid) or cm.get(idx) or []
         active_models = []
         for m in c_models:
             norm_m = m if m.endswith(".pt") else f"{m}.pt"
-            clean_m = norm_m.replace(".pt", "")
-            cfg = m_cfgs.get(norm_m) or m_cfgs.get(clean_m) or {}
-            enabled = cfg.get("enabled_classes") or []
-            if norm_m in ppe_model_names:
-                if len(enabled) > 0:
-                    active_models.append(norm_m)
-            else:
+            if norm_m not in active_models:
                 active_models.append(norm_m)
         clean_cm[cid] = active_models
+        
+    # Include any extra camera IDs from cm
+    for cid, c_models in cm.items():
+        str_cid = str(cid)
+        if str_cid not in clean_cm and isinstance(c_models, list):
+            active_models = []
+            for m in c_models:
+                norm_m = m if m.endswith(".pt") else f"{m}.pt"
+                if norm_m not in active_models:
+                    active_models.append(norm_m)
+            clean_cm[str_cid] = active_models
+
     return clean_cm
 
 @app.get("/api/camera-models/{camera_id}")
@@ -1833,6 +1839,17 @@ def save_cm(d: dict = Body(...)):
             if int(cid) < len(urls): 
                 start_raw_stream(int(cid), urls[int(cid)])
     
+    # Automatically update active workers when model assignment changes
+    for cid, mods in clean_d.items():
+        if cid in running and mods:
+            try:
+                existing_worker = running[cid].get("worker")
+                rtsp_url = getattr(existing_worker, "rtsp_url", None) if existing_worker else None
+                if rtsp_url:
+                    start_detection({"camera": cid, "models": mods, "rtsp": rtsp_url})
+            except Exception as e:
+                print(f"[ERROR] Failed to auto-restart worker for camera {cid} on model save: {e}")
+
     return {"status": "saved"}
 
 @app.get("/api/locations")
