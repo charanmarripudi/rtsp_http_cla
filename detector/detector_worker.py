@@ -272,7 +272,31 @@ class DetectorWorker:
                             detected_this_model.append((cls, conf_val))
                             
                             def normalize_cls(s):
-                                return re.sub(r'[^a-z0-9]', '', str(s).lower().replace("saftey", "safety"))
+                                clean = re.sub(r'[^a-z0-9]', '', str(s).lower())
+                                clean = clean.replace("saftey", "safety")
+                                if clean in ("nohardhat", "nohelmet"):
+                                    return "nohelmet"
+                                if clean in ("hardhat", "helmet"):
+                                    return "helmet"
+                                if clean in ("nosafetyvest", "nosafteyvest", "novest"):
+                                    return "nosafetyvest"
+                                if clean in ("safetyvest", "safteyvest", "vest"):
+                                    return "safetyvest"
+                                if clean in ("noglove", "nogloves"):
+                                    return "nogloves"
+                                if clean in ("glove", "gloves"):
+                                    return "gloves"
+                                if clean in ("nogoggles", "nogoggle"):
+                                    return "nogoggles"
+                                if clean in ("goggles", "goggle"):
+                                    return "goggles"
+                                if clean in ("noshoes", "nogumboots", "noboots"):
+                                    return "noboots"
+                                if clean in ("shoes", "boots", "gumboots"):
+                                    return "boots"
+                                if clean in ("nomask",):
+                                    return "nomask"
+                                return clean
 
                             box_cls_clean = normalize_cls(cls)
                             if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) > 0:
