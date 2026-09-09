@@ -344,7 +344,15 @@ if not os.path.exists(ALERTS_JSON): json.dump([], open(ALERTS_JSON, "w"))
 
 app = FastAPI()
 app.mount("/hls/alerts", StaticFiles(directory=ALERTS_DIR), name="alerts")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_origin_regex=".*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 try:
@@ -893,13 +901,14 @@ async def hls_options_handler(path: str = None, cam_id: str = None, filename: st
         }
     )
 
-@app.get("/hls/camera/{cam_id}/{filename}")
-async def serve_camera_virtual_file(cam_id: str, filename: str):
+@app.api_route("/hls/camera/{cam_id}/{filename}", methods=["GET", "HEAD", "OPTIONS"])
+async def serve_camera_virtual_file(cam_id: str, filename: str, request: Request = None):
     sub = f"stream{cam_id}_detected" if cam_id in running and os.path.exists(os.path.join(HLS_DIR, f"stream{cam_id}_detected/playlist.m3u8")) else f"stream{cam_id}_raw"
-    return await serve_hls(f"{sub}/{filename}")
+    return await serve_hls(f"{sub}/{filename}", request=request)
 
-@app.get("/hls/camera/{cam_id}/playlist.m3u8")
-async def smart_hls_playlist(cam_id: str): return await serve_camera_virtual_file(cam_id, "playlist.m3u8")
+@app.api_route("/hls/camera/{cam_id}/playlist.m3u8", methods=["GET", "HEAD", "OPTIONS"])
+async def smart_hls_playlist(cam_id: str, request: Request = None):
+    return await serve_camera_virtual_file(cam_id, "playlist.m3u8", request=request)
 
 def get_stream_start_time(path: str) -> int:
     try:
@@ -918,8 +927,21 @@ def get_stream_start_time(path: str) -> int:
         pass
     return 0
 
-@app.get("/hls/{path:path}")
-async def serve_hls(path: str):
+@app.api_route("/hls/{path:path}", methods=["GET", "HEAD", "OPTIONS"])
+async def serve_hls(path: str, request: Request = None):
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Expose-Headers": "*",
+        "Access-Control-Max-Age": "86400",
+        "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    }
+    if request and request.method == "OPTIONS":
+        return Response(status_code=200, headers=headers)
+
     clean_path = path.split("?")[0].lstrip("/")
     fp = os.path.join(HLS_DIR, clean_path)
 
@@ -963,7 +985,7 @@ async def serve_hls(path: str):
         except Exception as e:
             logger.error(f"Auto-start stream on HLS request error: {e}")
 
-    if not os.path.exists(fp): return Response(status_code=404)
+    if not os.path.exists(fp): return Response(status_code=404, headers=headers)
     mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
     headers = {
         "Access-Control-Allow-Origin": "*",
