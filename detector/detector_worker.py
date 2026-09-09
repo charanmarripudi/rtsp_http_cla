@@ -271,36 +271,13 @@ class DetectorWorker:
                             conf_val = float(b.conf[0])
                             detected_this_model.append((cls, conf_val))
                             
-                            def normalize_cls(s):
-                                clean = re.sub(r'[^a-z0-9]', '', str(s).lower())
-                                clean = clean.replace("saftey", "safety")
-                                if clean in ("nohardhat", "nohelmet"):
-                                    return "nohelmet"
-                                if clean in ("hardhat", "helmet"):
-                                    return "helmet"
-                                if clean in ("nosafetyvest", "nosafteyvest", "novest"):
-                                    return "nosafetyvest"
-                                if clean in ("safetyvest", "safteyvest", "vest"):
-                                    return "safetyvest"
-                                if clean in ("noglove", "nogloves"):
-                                    return "nogloves"
-                                if clean in ("glove", "gloves"):
-                                    return "gloves"
-                                if clean in ("nogoggles", "nogoggle"):
-                                    return "nogoggles"
-                                if clean in ("goggles", "goggle"):
-                                    return "goggles"
-                                if clean in ("noshoes", "nogumboots", "noboots"):
-                                    return "noboots"
-                                if clean in ("shoes", "boots", "gumboots"):
-                                    return "boots"
-                                if clean in ("nomask",):
-                                    return "nomask"
-                                return clean
+                            def clean_str(s):
+                                res = re.sub(r'[^a-z0-9]', '', str(s).lower())
+                                return res.replace("saftey", "safety")
 
-                            box_cls_clean = normalize_cls(cls)
+                            box_cls_clean = clean_str(cls)
                             if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) > 0:
-                                matched = any(box_cls_clean == normalize_cls(e) for e in enabled_classes)
+                                matched = any(box_cls_clean == clean_str(e) for e in enabled_classes)
                                 if not matched:
                                     continue
 
@@ -317,7 +294,7 @@ class DetectorWorker:
                                 if class_configs and isinstance(class_configs, dict):
                                     c_cfg = None
                                     for k, val in class_configs.items():
-                                        if normalize_cls(k) == box_cls_clean:
+                                        if clean_str(k) == box_cls_clean:
                                             c_cfg = val
                                             break
                                     if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
