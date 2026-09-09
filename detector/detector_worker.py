@@ -43,9 +43,15 @@ try:
 except Exception:
     pass
 
+import re
+
 from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db
 
 YOLO_CACHE = {}
+
+def clean_str(s):
+    res = re.sub(r'[^a-z0-9]', '', str(s).lower())
+    return res.replace("saftey", "safety")
 
 INFERENCE_SEMAPHORE = threading.Semaphore(2)
 
@@ -166,9 +172,9 @@ class DetectorWorker:
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2",
             "-profile:v", "baseline", "-level:v", "3.1",
             "-b:v", "400k", "-maxrate", "500k", "-bufsize", "1M",
-            "-g", str(int(self.fps * 2)), 
-            "-keyint_min", str(int(self.fps * 2)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
+            "-g", str(max(1, int(self.fps * 1))), 
+            "-keyint_min", str(max(1, int(self.fps * 1))), "-sc_threshold", "0",
+            "-f", "hls", "-hls_time", "1", "-hls_list_size", "6",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
@@ -355,8 +361,11 @@ class DetectorWorker:
                             union = area1 + area2 - inter
                             iou = inter / max(1.0, union)
                             
-                            # Suppress only if nearly identical overlap (0.65) so adjacent workers are both detected
-                            if iou >= 0.65:
+                            # Same/equivalent class (e.g. duplicate no-helmet boxes): suppress if IoU >= 0.50
+                            # Different violation classes (e.g. No_safety_vest vs NO-Hardhat): allow both to show unless 92%+ duplicate box
+                            is_same_cls = (clean_str(cls1_name) == clean_str(cls2_name))
+                            iou_thresh = 0.50 if is_same_cls else 0.92
+                            if iou >= iou_thresh:
                                 suppress = True
                                 break
                                 

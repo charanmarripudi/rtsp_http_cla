@@ -846,16 +846,23 @@ async def startup_event():
     # Pre-load all available models in the background to ensure instant start (0ms load latency)
     def preload_all_models():
         try:
-            print("[STARTUP] Initializing background model preloading...")
+            print("[STARTUP] Initializing background model preloading & PyTorch JIT warmup...")
             from detector.detector_worker import get_yolo_model
+            import numpy as np
+            dummy_img = np.zeros((640, 640, 3), dtype=np.uint8)
             model_dir = os.path.join(BASE_DIR, "models")
             if os.path.exists(model_dir):
                 pts = [f for f in os.listdir(model_dir) if f.endswith(".pt")]
                 for m in pts:
                     p = os.path.join(model_dir, m)
-                    print(f"[STARTUP] Background pre-loading model weights: {m}")
-                    get_yolo_model(p)
-                print("[STARTUP] All safety models successfully cached in memory!")
+                    print(f"[STARTUP] Background pre-loading & warming up model weights: {m}")
+                    m_obj = get_yolo_model(p)
+                    if m_obj:
+                        try:
+                            m_obj.predict(dummy_img, verbose=False, imgsz=640)
+                        except Exception:
+                            pass
+                print("[STARTUP] All safety models successfully cached & warmed up in memory!")
         except Exception as e:
             print(f"[STARTUP] Error pre-loading models: {e}")
 
@@ -1630,13 +1637,37 @@ def start_detection(d: dict):
         cm = {}
     cm[cid] = clean_mods
     json.dump(cm, open(CAMERA_MODELS_JSON, "w"), indent=2)
-    
-    if cid in running: 
-        proc = running[cid].get("proc")
-        if proc:
+
+    # Check if worker is already running with IDENTICAL assigned models and RTSP URL
+    if cid in running:
+        existing_info = running[cid]
+        existing_worker = existing_info.get("worker")
+        existing_proc = existing_info.get("proc")
+        existing_models = existing_info.get("models", [])
+        
+        # If worker is alive and assigned models & RTSP match, update dynamically in 0ms!
+        if (existing_worker and not existing_worker._stop_event.is_set() and 
+            existing_proc and existing_proc.poll() is None and
+            sorted(existing_models) == sorted(mods) and 
+            getattr(existing_worker, "rtsp_url", None) == rtsp):
+            
+            existing_worker.conf = conf
+            existing_worker.iou = iou
+            existing_worker.model_configs = model_configs
+            existing_worker.location = loc
+            
+            existing_info["conf"] = conf
+            existing_info["iou"] = iou
+            existing_info["model_configs"] = model_configs
+            existing_info["location"] = loc
+            print(f"[START_DETECTION] Camera {cid}: Worker thread already running with models {mods}. Dynamically updated model_configs in 0ms without restarting!", flush=True)
+            return {"status": "started", "camera": cid, "models": mods, "location": loc}
+
+        # Otherwise, stop previous worker before starting new models
+        if existing_proc:
             try:
-                proc.kill()
-                proc.wait(timeout=2.0)
+                existing_proc.kill()
+                existing_proc.wait(timeout=2.0)
             except: pass
         running.pop(cid, None)
 
