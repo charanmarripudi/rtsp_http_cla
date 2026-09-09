@@ -1603,20 +1603,20 @@ def start_detection(d: dict):
                 else:
                     cfg = saved_cfg
         e_classes = e_classes if e_classes is not None else []
-        if norm_m in ppe_models_set:
-            if len(e_classes) > 0:
-                if norm_m not in active_mods: active_mods.append(norm_m)
-                if isinstance(cfg, dict):
-                    clean_model_configs[norm_m] = cfg
-                    clean_model_configs[m_clean] = cfg
-        else:
-            if norm_m not in active_mods: active_mods.append(norm_m)
-            if isinstance(cfg, dict):
-                clean_model_configs[norm_m] = cfg
-                clean_model_configs[m_clean] = cfg
+        if norm_m not in active_mods: 
+            active_mods.append(norm_m)
+        if isinstance(cfg, dict):
+            clean_model_configs[norm_m] = cfg
+            clean_model_configs[m_clean] = cfg
 
     mods = active_mods
     model_configs = clean_model_configs
+
+    print(f"\n[START_DETECTION] Camera {cid}: Starting detection thread for RTSP={rtsp}", flush=True)
+    print(f"[START_DETECTION] Camera {cid}: Active assigned models = {mods}", flush=True)
+    for m in mods:
+        m_cls = model_configs.get(m, {}).get("enabled_classes") if isinstance(model_configs.get(m), dict) else None
+        print(f"[START_DETECTION] Camera {cid} -> Model '{m}': enabled_classes = {m_cls if m_cls else 'ALL (unfiltered default)'}", flush=True)
 
     # Save model assignment to camera_models.json
     clean_mods = []

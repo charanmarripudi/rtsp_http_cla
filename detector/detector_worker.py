@@ -236,11 +236,7 @@ class DetectorWorker:
                     except Exception:
                         pass
 
-                # Skip PPE model entirely if it is class-configurable and has 0 enabled classes or no enabled_classes key
                 ppe_models_set = {"ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt", "ppe_new", "nik_ppe_best", "hf_ppe_detection", "keremberke_ppe_gear", "hansung_ppe_violations"}
-                if m_name in ppe_models_set or m_clean in ppe_models_set:
-                    if enabled_classes is None or (isinstance(enabled_classes, list) and len(enabled_classes) == 0):
-                        continue
 
                 # Dynamically set YOLO predict confidence to the minimum of active class sliders
                 detect_conf = m_conf
@@ -275,16 +271,10 @@ class DetectorWorker:
                                 return re.sub(r'[^a-z0-9]', '', str(s).lower().replace("saftey", "safety"))
 
                             box_cls_clean = normalize_cls(cls)
-                            if enabled_classes is not None and isinstance(enabled_classes, list):
-                                if len(enabled_classes) == 0:
-                                    continue  # 0 classes enabled for this model -> skip box
+                            if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) > 0:
                                 matched = any(box_cls_clean == normalize_cls(e) for e in enabled_classes)
                                 if not matched:
                                     continue
-                            elif enabled_classes is None:
-                                if m_name in ppe_models_set or m_clean in ppe_models_set:
-                                    continue  # PPE models require explicit enabled_classes — skip unconfigured boxes
-                                pass  # Non-PPE models allow all classes through if unconfigured
 
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
                             x1, y1, x2, y2 = box_xyxy
