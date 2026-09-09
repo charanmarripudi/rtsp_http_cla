@@ -1,4 +1,5 @@
 import os
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;5000000"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -602,6 +603,20 @@ class DetectorWorker:
                 self._cap_ok = True
 
                 try:
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} creating FFmpeg process...", flush=True)
+                    t_ff_start = time.time()
+                    ffmpeg = self._create_ffmpeg()
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} FFmpeg process created in {int((time.time() - t_ff_start)*1000)}ms", flush=True)
+                    
+                    # Feed initial connecting frames so FFmpeg writes playlist.m3u8 instantly (<200ms)
+                    init_frame = self._get_connecting_frame()
+                    try:
+                        for _ in range(6):
+                            ffmpeg.stdin.write(init_frame.tobytes())
+                        ffmpeg.stdin.flush()
+                    except Exception:
+                        pass
+
                     print(f"[WORKER-TIMER] Camera {self.cam_id} connecting to RTSP at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...", flush=True)
                     t_conn_start = time.time()
                     cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
@@ -617,20 +632,6 @@ class DetectorWorker:
                         break
                     
                     print(f"[WORKER-TIMER] Camera {self.cam_id} RTSP connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-                    
-                    print(f"[WORKER-TIMER] Camera {self.cam_id} creating FFmpeg process...", flush=True)
-                    t_ff_start = time.time()
-                    ffmpeg = self._create_ffmpeg()
-                    print(f"[WORKER-TIMER] Camera {self.cam_id} FFmpeg process created in {int((time.time() - t_ff_start)*1000)}ms", flush=True)
-                    
-                    # Feed initial connecting frames so FFmpeg writes playlist.m3u8 instantly (<200ms)
-                    init_frame = self._get_connecting_frame()
-                    try:
-                        for _ in range(6):
-                            ffmpeg.stdin.write(init_frame.tobytes())
-                        ffmpeg.stdin.flush()
-                    except Exception:
-                        pass
 
                     if cap and cap.isOpened():
                         cap_t = threading.Thread(target=self._capture_thread, args=(cap,), daemon=True)
