@@ -264,9 +264,9 @@ class DetectorWorker:
                     detect_conf = min_cls_conf
 
                 detected_this_model = []
-                predict_conf = max(0.12, detect_conf * 0.7)
+                # Predict at base confidence (0.01) to capture all moving, distant, and close objects
                 with INFERENCE_SEMAPHORE:
-                    results = model.predict(f, conf=predict_conf, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                    results = model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False)
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
