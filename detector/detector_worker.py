@@ -414,7 +414,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 5  # Hold box for 5 frames (~1 second) if missing in subsequent frames
+                        'ttl': 8  # Hold box for 8 frames (~1.6 seconds) to keep all classes visible simultaneously
                     })
                 else:
                     new_tracked.append({
@@ -423,7 +423,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 5
+                        'ttl': 8
                     })
 
             # Carry over active tracked boxes whose ttl > 1 (prevents frame-by-frame dropping)
@@ -546,11 +546,17 @@ class DetectorWorker:
                 f = self._frame_queue.get(timeout=0.2)
             except:
                 continue
-            boxes = self._run_all_models(f)
+            try:
+                if 'torch' in globals():
+                    with torch.inference_mode():
+                        boxes = self._run_all_models(f)
+                else:
+                    boxes = self._run_all_models(f)
+            except Exception as e:
+                boxes = self._run_all_models(f)
             with self._box_lock:
                 self._latest_boxes = boxes
                 self._latest_box_time = time.time()
-            time.sleep(0.01)
 
     def _capture_thread(self, cap):
         while not self._stop_event.is_set():
