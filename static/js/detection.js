@@ -42,8 +42,8 @@ async function playHLS(video, url, idx, forceReload = false) {
         enableWorker: true,
         lowLatencyMode: false,          // False for standard TS HLS streams -> avoids byte-range stalls
         startPosition: -1,
-        liveSyncDurationCount: 3.0,      // 3 segments cushion for 100% smooth zero-stutter playback
-        liveMaxLatencyDurationCount: 6,  // Smooth catchup if network delays
+        liveSyncDurationCount: 1.0,      // Start immediately on segment 1 for instant playback
+        liveMaxLatencyDurationCount: 3,  // Smooth catchup if network delays
         liveDurationInfinity: true,
         liveBackBufferLength: 0,
         backBufferLength: 0,

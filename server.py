@@ -1682,32 +1682,42 @@ def start_detection(d: dict):
     cm[cid] = clean_mods
     json.dump(cm, open(CAMERA_MODELS_JSON, "w"), indent=2)
 
-    # Check if worker is already running with IDENTICAL assigned models and RTSP URL
+    model_paths = [os.path.join(BASE_DIR, "models", m if m.endswith(".pt") else f"{m}.pt") for m in mods]
+
+    # Check if worker is already running for this camera and RTSP URL
     if cid in running:
         existing_info = running[cid]
         existing_worker = existing_info.get("worker")
         existing_proc = existing_info.get("proc")
-        existing_models = existing_info.get("models", [])
         
-        # If worker is alive and assigned models & RTSP match, update dynamically in 0ms!
+        # If worker is alive and RTSP matches, dynamically update models and thresholds in 0ms!
         if (existing_worker and not existing_worker._stop_event.is_set() and 
             existing_proc and existing_proc.poll() is None and
-            sorted(existing_models) == sorted(mods) and 
             getattr(existing_worker, "rtsp_url", None) == rtsp):
             
-            existing_worker.conf = conf
-            existing_worker.iou = iou
-            existing_worker.model_configs = model_configs
-            existing_worker.location = loc
+            if hasattr(existing_worker, "update_models"):
+                existing_worker.update_models(model_paths, model_configs=model_configs, conf=conf, iou=iou, location=loc)
+            else:
+                existing_worker.model_paths = model_paths
+                existing_worker.models = [get_yolo_model(mp) for mp in model_paths]
+                existing_worker.model_configs = model_configs
+                existing_worker.conf = conf
+                existing_worker.iou = iou
+                existing_worker.location = loc
+                if hasattr(existing_worker, "_box_lock"):
+                    with existing_worker._box_lock:
+                        existing_worker._latest_boxes = []
+                        existing_worker._tracked_boxes = []
             
+            existing_info["models"] = mods
             existing_info["conf"] = conf
             existing_info["iou"] = iou
             existing_info["model_configs"] = model_configs
             existing_info["location"] = loc
-            print(f"[START_DETECTION] Camera {cid}: Worker thread already running with models {mods}. Dynamically updated model_configs in 0ms without restarting!", flush=True)
+            print(f"[START_DETECTION] Camera {cid}: Hot-swapped models to {mods} in 0ms without restarting stream!", flush=True)
             return {"status": "started", "camera": cid, "models": mods, "location": loc}
 
-        # Otherwise, stop previous worker before starting new models
+        # Otherwise, stop previous worker before starting new worker
         if existing_proc:
             try:
                 existing_proc.kill()

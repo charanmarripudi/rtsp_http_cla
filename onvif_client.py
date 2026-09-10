@@ -80,10 +80,6 @@ class OnvifPtzClient:
         elif dir_lower == "down": x, y = 0.0, -speed
         elif dir_lower == "left": x, y = -speed, 0.0
         elif dir_lower == "right": x, y = speed, 0.0
-        elif dir_lower in ["upleft", "leftup"]: x, y = -speed, speed
-        elif dir_lower in ["upright", "rightup"]: x, y = speed, speed
-        elif dir_lower in ["downleft", "leftdown"]: x, y = -speed, -speed
-        elif dir_lower in ["downright", "rightdown"]: x, y = speed, -speed
         else:
             return {"status": "error", "message": f"Unknown direction '{direction}'"}
 

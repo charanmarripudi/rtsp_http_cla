@@ -139,6 +139,25 @@ class DetectorWorker:
         self.models = None
         self._db_conn = None
 
+    def update_models(self, model_paths, model_configs=None, conf=None, iou=None, location=None):
+        if model_paths is not None:
+            paths = model_paths if isinstance(model_paths, list) else [model_paths]
+            self.model_paths = paths
+            self.models = [get_yolo_model(mp) for mp in paths]
+        if model_configs is not None:
+            self.model_configs = model_configs
+        if conf is not None:
+            self.conf = conf
+        if iou is not None:
+            self.iou = iou
+        if location is not None:
+            self.location = location
+        if hasattr(self, "_box_lock"):
+            with self._box_lock:
+                self._latest_boxes = []
+                self._tracked_boxes = []
+        print(f"[WORKER-DYNAMIC-UPDATE] Camera {getattr(self, 'cam_id', '?')} dynamically updated models to {self.model_paths} in 0ms without restarting RTSP or FFmpeg", flush=True)
+
     def stop(self):
         self._stop_event.set()
 
@@ -384,7 +403,7 @@ class DetectorWorker:
                 for t_idx, t_box in enumerate(getattr(self, '_tracked_boxes', [])):
                     if t_idx in matched_indices:
                         continue
-                    if t_box.get('cls') != cls1_name:
+                    if clean_str(t_box.get('cls')) != clean_str(cls1_name):
                         continue
                     
                     x1_2, y1_2, x2_2, y2_2 = t_box['box']
