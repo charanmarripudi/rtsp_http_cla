@@ -135,12 +135,8 @@ class DetectorWorker:
         self._last_frame_time, self._cap_ok = time.time(), True
         self.alert_timers, self.alert_triggered = {}, set()
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
-        # Load YOLO models synchronously during worker startup (runs in subprocess, doesn't block main server)
-        paths = model_paths if isinstance(model_paths, list) else [model_paths]
-        print(f"[WORKER-TIMER] Camera {self.cam_id} model loading started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-        t_load_start = time.time()
-        self.models = [get_yolo_model(mp) for mp in paths]
-        print(f"[WORKER-TIMER] Camera {self.cam_id} models loaded in {int((time.time() - t_load_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: {paths}", flush=True)
+        self.model_paths = model_paths
+        self.models = None
         self._db_conn = None
 
     def stop(self):
@@ -585,6 +581,13 @@ class DetectorWorker:
     def run(self):
         ffmpeg, cap, inf_t, cap_t = None, None, None, None
         try:
+            if self.models is None:
+                paths = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+                print(f"[WORKER-TIMER] Camera {self.cam_id} background model loading started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+                t_load_start = time.time()
+                self.models = [get_yolo_model(mp) for mp in paths]
+                print(f"[WORKER-TIMER] Camera {self.cam_id} models loaded in {int((time.time() - t_load_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: {paths}", flush=True)
+
             while not self._stop_event.is_set():
                 if inf_t: inf_t.join(timeout=1)
                 if cap: cap.release(); cap = None
@@ -608,14 +611,6 @@ class DetectorWorker:
                     ffmpeg = self._create_ffmpeg()
                     print(f"[WORKER-TIMER] Camera {self.cam_id} FFmpeg process created in {int((time.time() - t_ff_start)*1000)}ms", flush=True)
                     
-                    # Feed initial connecting frames so FFmpeg writes playlist.m3u8 instantly (<200ms)
-                    init_frame = self._get_connecting_frame()
-                    try:
-                        for _ in range(6):
-                            ffmpeg.stdin.write(init_frame.tobytes())
-                        ffmpeg.stdin.flush()
-                    except Exception:
-                        pass
 
                     print(f"[WORKER-TIMER] Camera {self.cam_id} connecting to RTSP at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...", flush=True)
                     t_conn_start = time.time()
