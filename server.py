@@ -314,7 +314,7 @@ def get_db_pool():
     global _db_pool
     if _db_pool is None and PSYCOPG2_AVAILABLE:
         try:
-            _db_pool = pg_pool.ThreadedConnectionPool(1, 10, dsn=DB_DSN)
+            _db_pool = pg_pool.ThreadedConnectionPool(1, 10, dsn=DB_DSN, connect_timeout=2)
         except Exception as e: print(f"[DB] pool error: {e}")
     return _db_pool
 
@@ -945,15 +945,15 @@ async def serve_hls(path: str, request: Request = None):
     clean_path = path.split("?")[0].lstrip("/")
     fp = os.path.join(HLS_DIR, clean_path)
 
-    # Auto-start stream on demand if playlist.m3u8 is requested and does not exist yet (RAW ONLY)
-    if not os.path.exists(fp) and "playlist.m3u8" in path and "_detected" not in path:
+    # Auto-start stream on demand or wait for initializing stream if playlist.m3u8 does not exist yet
+    if not os.path.exists(fp) and "playlist.m3u8" in path:
         try:
             parts = path.strip("/").split("/")
             if len(parts) >= 2 and parts[1] == "playlist.m3u8":
                 folder = parts[0]  # e.g. "stream0_raw", "streamptz0_raw", "stream1_raw"
                 cid = folder.replace("stream", "").replace("_raw", "").replace("_detected", "")
                 
-                if cid not in running and cid not in raw_streams_procs:
+                if cid not in running and cid not in raw_streams_procs and "_detected" not in path:
                     rtsp_url = None
                     if cid.startswith("ptz"):
                         ptz_cams = read_ptz_cameras()
@@ -979,10 +979,12 @@ async def serve_hls(path: str, request: Request = None):
 
                     if rtsp_url:
                         start_raw_stream(cid, rtsp_url)
-                        for _ in range(30):
-                            if os.path.exists(fp):
-                                break
-                            await asyncio.sleep(0.1)
+
+                # Wait up to 3.0s for FFmpeg/Detector to write the first playlist.m3u8
+                for _ in range(30):
+                    if os.path.exists(fp):
+                        break
+                    await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"Auto-start stream on HLS request error: {e}")
 
@@ -1016,9 +1018,17 @@ async def serve_hls(path: str, request: Request = None):
             modified_content = "\n".join(lines)
             return Response(content=modified_content, media_type=mt, headers=headers)
         else:
-            # Memory-safe direct read of active .ts segments to prevent Content-Length mismatches
-            with open(fp, "rb") as f:
-                content = f.read()
+            # Memory-safe direct read of active .ts segments with retry if mid-write
+            try:
+                with open(fp, "rb") as f:
+                    content = f.read()
+            except (FileNotFoundError, PermissionError):
+                await asyncio.sleep(0.05)
+                if os.path.exists(fp):
+                    with open(fp, "rb") as f:
+                        content = f.read()
+                else:
+                    return Response(status_code=404, headers=headers)
             return Response(content=content, media_type=mt, headers=headers)
     except Exception as e:
         print(f"[ERROR] Failed serving HLS path {path}: {e}")
@@ -1704,6 +1714,9 @@ def start_detection(d: dict):
                 existing_proc.wait(timeout=2.0)
             except: pass
         running.pop(cid, None)
+
+    # Stop raw FFmpeg stream for this camera so detector has exclusive RTSP access & no duplicate CPU/bandwidth load
+    _kill_raw_ffmpeg_for_camera(cid)
 
     # Clean only detected dir
     det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")

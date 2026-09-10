@@ -165,6 +165,7 @@
   async function switchActivePtzCamera(index) {
     if (!ptzCameras[index]) return;
     activePtzCamera = ptzCameras[index];
+    resetDigitalZoom();
 
     const select = document.getElementById("ptzCameraSelect");
     if (select) select.value = String(index);
@@ -694,22 +695,16 @@
 
     const currentZoom = window._ptzDigitalZoom;
 
-    // Direct target: ptzLiveVideo, streamFrame, and all active video stream elements
+    // Target ONLY active PTZ preview elements (never touch dashboard location cameras)
     const videoElements = [
       document.getElementById("ptzLiveVideo"),
-      document.getElementById("streamFrame"),
-      ...document.querySelectorAll("video"),
-      ...document.querySelectorAll(".video-wrap video"),
-      ...document.querySelectorAll("svg.roi-draw-canvas"),
-      ...document.querySelectorAll("canvas")
-    ];
+      document.getElementById("streamFrame")
+    ].filter(Boolean);
 
     videoElements.forEach((el) => {
-      if (el) {
-        el.style.transform = `scale(${currentZoom})`;
-        el.style.transformOrigin = "center center";
-        el.style.transition = "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
-      }
+      el.style.transform = `scale(${currentZoom})`;
+      el.style.transformOrigin = "center center";
+      el.style.transition = "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
     });
 
     const overlayBadge = document.getElementById("zoomBadge");
@@ -717,11 +712,6 @@
 
     const telemetryZoom = document.getElementById("ptzTelemetryZoom");
     if (telemetryZoom) telemetryZoom.textContent = `${currentZoom.toFixed(2)}X`;
-
-    // Also update any badge element on main dashboard cards
-    document.querySelectorAll(".zoom-level-badge").forEach((badge) => {
-      badge.textContent = `${currentZoom.toFixed(2)}X`;
-    });
 
     // 2. Send hardware zoom command to backend (/devices/control-zoom)
     const portVal = (activePtzCamera.port && activePtzCamera.port !== 8888) ? activePtzCamera.port : 80;
@@ -743,6 +733,26 @@
       console.error("PTZ zoom error:", e);
     }
   }
+
+  function resetDigitalZoom() {
+    window._ptzDigitalZoom = 1.0;
+    const videoElements = [
+      document.getElementById("ptzLiveVideo"),
+      document.getElementById("streamFrame")
+    ].filter(Boolean);
+
+    videoElements.forEach((el) => {
+      el.style.transform = "scale(1.0)";
+      el.style.transformOrigin = "center center";
+    });
+
+    const overlayBadge = document.getElementById("zoomBadge");
+    if (overlayBadge) overlayBadge.innerText = "1.00X";
+
+    const telemetryZoom = document.getElementById("ptzTelemetryZoom");
+    if (telemetryZoom) telemetryZoom.textContent = "1.00X";
+  }
+  window.resetDigitalZoom = resetDigitalZoom;
 
   async function ptzStop() {
     if (!activePtzCamera) return;

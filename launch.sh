@@ -203,10 +203,11 @@ start() {
     # generate_streams_json
 
     #######################################################
-    # START PYTHON SERVER
+    # START PYTHON SERVER (with auto-restart supervisor)
     #######################################################
 
     echo "Starting HTTP server..."
+    rm -f "$SCRIPT_DIR/stop.flag"
 
     PYTHON_BIN="python3"
     if [ -f "$SCRIPT_DIR/rpi_env/bin/python3" ]; then
@@ -217,14 +218,25 @@ start() {
         PYTHON_BIN="$SCRIPT_DIR/hpcl_env/bin/python3"
     fi
 
-    nohup $PYTHON_BIN -u "$SCRIPT_DIR/server.py" \
-        >> "$LOG_DIR/server.log" 2>&1 &
+    server_supervisor() {
+        local py_bin="$1"
+        while true; do
+            [ -f "$SCRIPT_DIR/stop.flag" ] && break
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [SUPERVISOR] Starting server.py..." >> "$LOG_DIR/server_supervisor.log"
+            $py_bin -u "$SCRIPT_DIR/server.py" >> "$LOG_DIR/server.log" 2>&1
+            local exit_code=$?
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [SUPERVISOR] server.py exited with code $exit_code. Restarting in 2s..." >> "$LOG_DIR/server_supervisor.log"
+            [ -f "$SCRIPT_DIR/stop.flag" ] && break
+            sleep 2
+        done
+    }
 
+    server_supervisor "$PYTHON_BIN" &
     echo $! > "$SCRIPT_DIR/server.pid"
 
     sleep 2
 
-    echo "Server started (PID $(cat "$SCRIPT_DIR/server.pid"))"
+    echo "Server supervisor started (PID $(cat "$SCRIPT_DIR/server.pid"))"
 
     #######################################################
     # START FFMPEG STREAMS (Managed by server.py on startup)
@@ -312,6 +324,7 @@ start() {
 stop() {
 
     echo "Stopping system..."
+    touch "$SCRIPT_DIR/stop.flag"
 
     pkill -9 -f ffmpeg          2>/dev/null
     pkill -9 -f server.py       2>/dev/null
@@ -321,13 +334,16 @@ stop() {
     if [ -f "$SCRIPT_DIR/cleanup.pid" ]; then
         kill "$(cat "$SCRIPT_DIR/cleanup.pid")" 2>/dev/null
     fi
+    if [ -f "$SCRIPT_DIR/server.pid" ]; then
+        kill "$(cat "$SCRIPT_DIR/server.pid")" 2>/dev/null
+    fi
 
     # Disable Tailscale Funnel cleanly
     tailscale funnel --bg=false 8080 2>/dev/null \
         && echo "Tailscale Funnel stopped." \
         || echo "Tailscale Funnel was not running."
 
-    rm -f "$SCRIPT_DIR"/*.pid
+    rm -f "$SCRIPT_DIR"/*.pid "$SCRIPT_DIR/stop.flag"
 
     echo "Stopped."
 }

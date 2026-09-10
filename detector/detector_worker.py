@@ -54,7 +54,7 @@ def clean_str(s):
     res = re.sub(r'[^a-z0-9]', '', str(s).lower())
     return res.replace("saftey", "safety")
 
-INFERENCE_SEMAPHORE = threading.Semaphore(2)
+INFERENCE_SEMAPHORE = threading.Semaphore(4)
 
 def get_yolo_model(model_path):
     if model_path not in YOLO_CACHE:
@@ -178,7 +178,7 @@ class DetectorWorker:
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
         print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 400k (max 500k)", flush=True)
-        return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
+        return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL, bufsize=10*1024*1024)
 
     def _letterbox(self, f):
         h, w = f.shape[:2]
@@ -264,9 +264,9 @@ class DetectorWorker:
                     detect_conf = min_cls_conf
 
                 detected_this_model = []
-                # Predict at base confidence (0.01) to capture all moving, distant, and close objects
+                predict_conf = max(0.12, detect_conf * 0.7)
                 with INFERENCE_SEMAPHORE:
-                    results = model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                    results = model.predict(f, conf=predict_conf, iou=m_iou, imgsz=m_imgsz, verbose=False)
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
@@ -332,10 +332,9 @@ class DetectorWorker:
 
             # Cross-Class Non-Maximum Suppression (NMS) - 0.65 threshold to allow side-by-side seated workers
             boxes_data = []
+            kept_items = []
             if raw_boxes:
                 raw_boxes.sort(key=lambda x: x[3], reverse=True)
-                kept_items = []
-                
                 for item in raw_boxes:
                     b1_xyxy, l1_text, c1_color, conf1_val, cls1_name = item
                     x1_1, y1_1, x2_1, y2_1 = b1_xyxy
@@ -724,7 +723,10 @@ class DetectorWorker:
 
                         # Draw latest bounding boxes
                         with self._box_lock:
-                            cur_boxes = list(self._latest_boxes)
+                            if hasattr(self, '_latest_boxes') and self._latest_boxes:
+                                cur_boxes = list(self._latest_boxes)
+                            else:
+                                cur_boxes = []
                         
                         if cur_boxes:
                             for b_xyxy, label_text, color_val in cur_boxes:
@@ -750,7 +752,6 @@ class DetectorWorker:
                         if ffmpeg.poll() is not None: break
                         try:
                             ffmpeg.stdin.write(pf.tobytes())
-                            ffmpeg.stdin.flush()
                         except: break
                 except:
                     import traceback

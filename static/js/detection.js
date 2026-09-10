@@ -108,18 +108,20 @@ async function playHLS(video, url, idx, forceReload = false) {
         if (data.fatal) { 
             switch(data.type) {
                 case Hls.ErrorTypes.NETWORK_ERROR:
-                    console.warn("HLS Network Error, attempting recovery...", data);
-                    hls.startLoad();
+                    console.warn("[HLS] Fatal Network Error, destroying player and retrying in 2s...", data);
+                    try { hls.destroy(); } catch(_) {}
+                    delete hlsInstances[idx];
+                    setTimeout(() => playHLS(video, url, idx, true), 2000);
                     break;
                 case Hls.ErrorTypes.MEDIA_ERROR:
-                    console.warn("HLS Media Error, attempting recovery...", data);
+                    console.warn("[HLS] Media Error, attempting recovery...", data);
                     hls.recoverMediaError();
                     break;
                 default:
-                    console.error("Fatal HLS Error, restarting player...", data);
-                    hls.destroy(); 
+                    console.error("[HLS] Fatal HLS Error, restarting player...", data);
+                    try { hls.destroy(); } catch(_) {}
                     delete hlsInstances[idx]; 
-                    setTimeout(() => playHLS(video, url, idx), 1000); 
+                    setTimeout(() => playHLS(video, url, idx, true), 1000); 
                     break;
             }
         }
@@ -544,6 +546,17 @@ function startClientSync() {
                     if (badge) { badge.className = "mode-badge raw"; badge.textContent = "○ RAW: SWITCHING..."; }
                     window.cameraTransitioning[camId] = true;
                     waitAndSwitchRaw(video, meta, Number(camId), box, badge);
+                } else if (video && !window.cameraTransitioning[camId]) {
+                    // Auto-recover stalled/errored streams (e.g. after server restart or transient network failure)
+                    const isStalledOrErrored = video.error || video.ended || (video.readyState === 0 && !hlsInstances[camId]);
+                    if (isStalledOrErrored && !video._recovering) {
+                        video._recovering = true;
+                        const targetUrl = isDetecting ? meta.hls_detected : meta.hls_raw;
+                        console.warn(`[AUTORECOVER] Video stream stalled/errored for Camera ${camId}, auto-recovering...`);
+                        playHLS(video, targetUrl, Number(camId), true).finally(() => {
+                            setTimeout(() => { video._recovering = false; }, 3000);
+                        });
+                    }
                 }
             });
         } catch (_) {}
