@@ -385,37 +385,41 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
             domModelConfigs.roi_polygon = window.roiDrawStates[i].vertices;
         }
 
-        let models = [];
-        for (const [mKey, mVal] of Object.entries(domModelConfigs)) {
-            if (mKey === "roi_polygon") continue;
-            const normM = mKey.endsWith(".pt") ? mKey : `${mKey}.pt`;
-            if (mVal && Array.isArray(mVal.enabled_classes)) {
-                if (mVal.enabled_classes.length > 0 && !models.includes(normM)) {
-                    models.push(normM);
+        const models = [];
+        const domEnabledClasses = {};
+
+        // 1. Gather all active models and classes directly from the DOM cards on screen
+        box.querySelectorAll(".model-card-box").forEach(card => {
+            const mName = card.getAttribute("data-model");
+            const cls = card.getAttribute("data-class");
+            if (mName) {
+                const norm = mName.endsWith(".pt") ? mName : `${mName}.pt`;
+                const clean = mName.replace(".pt", "");
+                if (!models.includes(norm)) models.push(norm);
+                if (cls) {
+                    domEnabledClasses[norm] = domEnabledClasses[norm] || [];
+                    if (!domEnabledClasses[norm].includes(cls)) domEnabledClasses[norm].push(cls);
+                    domEnabledClasses[clean] = domEnabledClasses[clean] || [];
+                    if (!domEnabledClasses[clean].includes(cls)) domEnabledClasses[clean].push(cls);
                 }
-            } else if (mVal && typeof mVal === "object") {
+            }
+        });
+
+        // 2. Fallback: check domModelConfigs if no DOM cards found
+        if (!models.length) {
+            for (const [mKey, mVal] of Object.entries(domModelConfigs)) {
+                if (mKey === "roi_polygon") continue;
+                const normM = mKey.endsWith(".pt") ? mKey : `${mKey}.pt`;
                 if (!models.includes(normM)) models.push(normM);
             }
         }
         if (!models.length) {
             const cm = await (await fetch("/api/camera-models")).json().catch(() => ({}));
-            models = cm[camStr] || [];
+            models.push(...(cm[camStr] || []));
         }
         if (!models.length) return alert("No active models or classes assigned");
-        const domEnabledClasses = {};
-        box.querySelectorAll(".model-card-box").forEach(card => {
-            const mName = card.getAttribute("data-model");
-            const cls = card.getAttribute("data-class");
-            if (mName && cls) {
-                const norm = mName.endsWith(".pt") ? mName : `${mName}.pt`;
-                const clean = mName.replace(".pt", "");
-                domEnabledClasses[norm] = domEnabledClasses[norm] || [];
-                if (!domEnabledClasses[norm].includes(cls)) domEnabledClasses[norm].push(cls);
-                domEnabledClasses[clean] = domEnabledClasses[clean] || [];
-                if (!domEnabledClasses[clean].includes(cls)) domEnabledClasses[clean].push(cls);
-            }
-        });
 
+        // 3. Build class-specific confidence and enabled_classes configurations
         box.querySelectorAll(".model-card-box").forEach(card => {
             const mName = card.getAttribute("data-model");
             const cls = card.getAttribute("data-class");

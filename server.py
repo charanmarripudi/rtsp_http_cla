@@ -1715,9 +1715,6 @@ def start_detection(d: dict):
             except: pass
         running.pop(cid, None)
 
-    # Stop raw FFmpeg stream for this camera so detector has exclusive RTSP access & no duplicate CPU/bandwidth load
-    _kill_raw_ffmpeg_for_camera(cid)
-
     # Clean only detected dir
     det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
     if os.path.exists(det_dir):
