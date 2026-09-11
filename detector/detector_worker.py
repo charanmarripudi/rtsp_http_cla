@@ -314,8 +314,20 @@ class DetectorWorker:
             f_h, f_w = f.shape[:2]
             f_area = f_w * f_h
 
-            # NOTE: No global class union — each model filters ONLY by its own enabled_classes.
-            # Merging classes across models caused cross-contamination.
+            # Collect union of all active enabled classes for this camera
+            all_camera_enabled_classes = []
+            if isinstance(self.model_configs, dict):
+                for m_idx in range(len(self.models)):
+                    m_p = self.model_paths[m_idx] if (isinstance(self.model_paths, list) and m_idx < len(self.model_paths)) else str(self.model_paths)
+                    m_n = os.path.basename(m_p)
+                    m_c = get_config_for_model(self.model_configs, m_n)
+                    if m_c and isinstance(m_c, dict):
+                        e_cls = m_c.get("enabled_classes")
+                        if e_cls and isinstance(e_cls, list):
+                            for ec in e_cls:
+                                if ec not in all_camera_enabled_classes:
+                                    all_camera_enabled_classes.append(ec)
+
             for midx, model in enumerate(self.models):
                 m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
                 m_name = os.path.basename(m_path)
@@ -343,10 +355,13 @@ class DetectorWorker:
                     except Exception:
                         pass
 
+                # Combine model-specific enabled_classes with camera-wide union so any assigned model detects all requested classes instantly
+                filter_classes = list(all_camera_enabled_classes) if all_camera_enabled_classes else (enabled_classes if enabled_classes else [])
+
                 detected_this_model = []
-                # Predict with low-latency confidence (0.10) to capture distant & small violations while keeping CPU execution ultra-fast (<30ms)
+                # Predict at conf 0.05 to capture all moving, distant, and close objects instantly
                 with INFERENCE_SEMAPHORE:
-                    results = model.predict(f, conf=0.10, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                    results = model.predict(f, conf=0.05, iou=m_iou, imgsz=m_imgsz, verbose=False)
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
@@ -354,8 +369,8 @@ class DetectorWorker:
                             conf_val = float(b.conf[0])
                             detected_this_model.append((cls, conf_val))
 
-                            if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) > 0:
-                                matched = any(match_class(cls, e) for e in enabled_classes)
+                            if filter_classes:
+                                matched = any(match_class(cls, e) for e in filter_classes)
                                 if not matched:
                                     continue
 
@@ -379,7 +394,7 @@ class DetectorWorker:
                                         cls_conf = float(c_cfg.get("conf", m_conf))
 
                             # Ensure active enabled classes detect simultaneously on all models and streams
-                            if enabled_classes and any(match_class(cls, e) for e in enabled_classes):
+                            if filter_classes and any(match_class(cls, e) for e in filter_classes):
                                 cls_conf = min(cls_conf, 0.12)
 
                             # Validate Box using class-specific confidence
