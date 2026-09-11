@@ -393,9 +393,9 @@ class DetectorWorker:
                                     if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
                                         cls_conf = float(c_cfg.get("conf", m_conf))
 
-                            # Ensure active enabled classes detect simultaneously on all models and streams
-                            if filter_classes and any(match_class(cls, e) for e in filter_classes):
-                                cls_conf = min(cls_conf, 0.12)
+                            # Default floor if conf is unconfigured (0.15), otherwise respect user UI slider
+                            if not cls_conf or cls_conf < 0.05:
+                                cls_conf = 0.15
 
                             # Validate Box using class-specific confidence
                             if not self._is_valid_box(conf_val, cls_conf, bw, bh, box_area, f_w, f_h, f_area):
@@ -424,7 +424,7 @@ class DetectorWorker:
                     m_name = os.path.basename(self.model_paths[midx])
                     print(f"[DEBUG] Camera {self.cam_id} {m_name}: raw_detected={len(detected_this_model)}, filter={enabled_classes}, kept={len(raw_boxes)} boxes", flush=True)
 
-            # Cross-Class Non-Maximum Suppression (NMS)
+            # Strict Non-Maximum Suppression (NMS) to guarantee single clean bounding boxes per object
             boxes_data = []
             kept_items = []
             if raw_boxes:
@@ -452,7 +452,8 @@ class DetectorWorker:
                             iou = inter / max(1.0, union)
                             
                             is_same_cls = match_class(cls1_name, cls2_name)
-                            iou_thresh = 0.50 if is_same_cls else 0.92
+                            # Strict IoU: 0.35 for same/equivalent class to eliminate duplicate boxes on same object
+                            iou_thresh = 0.35 if is_same_cls else 0.70
                             if iou >= iou_thresh:
                                 suppress = True
                                 break
