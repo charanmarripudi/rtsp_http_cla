@@ -179,6 +179,21 @@ def get_dynamic_class_color(class_name):
     ]
     return palette[abs(hash(norm_name)) % len(palette)]
 
+def get_config_for_model(model_configs, m_name):
+    if not isinstance(model_configs, dict) or not model_configs:
+        return {}
+    m_clean = m_name.replace(".pt", "")
+    m_norm = m_clean.lower().replace("_", "-").replace(" ", "-")
+    for k, v in model_configs.items():
+        if isinstance(v, dict):
+            k_clean = str(k).replace(".pt", "")
+            k_norm = k_clean.lower().replace("_", "-").replace(" ", "-")
+            if k_norm == m_norm or k_clean == m_clean:
+                return v
+    if "enabled_classes" in model_configs or "class_configs" in model_configs or "conf" in model_configs:
+        return model_configs
+    return {}
+
 class DetectorWorker:
     @property
     def model_configs(self):
@@ -304,33 +319,24 @@ class DetectorWorker:
             for midx, model in enumerate(self.models):
                 m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
                 m_name = os.path.basename(m_path)
-                m_clean = m_name.replace(".pt", "")
                 
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
                 m_imgsz = 640
-                if isinstance(self.model_configs, dict):
-                    cfg = self.model_configs.get(m_name) or self.model_configs.get(m_clean) or self.model_configs.get(m_name.lower())
-                    if not cfg:
-                        m_norm_target = m_clean.lower().replace("_", "-").replace(" ", "-")
-                        for k, v in self.model_configs.items():
-                            if str(k).replace(".pt", "").lower().replace("_", "-").replace(" ", "-") == m_norm_target:
-                                cfg = v
-                    if not cfg and ("enabled_classes" in self.model_configs or "class_configs" in self.model_configs or "conf" in self.model_configs):
-                        cfg = self.model_configs
-                    if cfg and isinstance(cfg, dict):
-                        m_conf = float(cfg.get("conf", self.conf))
-                        m_iou = float(cfg.get("iou", self.iou))
-                        enabled_classes = cfg.get("enabled_classes")
-                        m_imgsz = int(cfg.get("imgsz", 640))
+                cfg = get_config_for_model(self.model_configs, m_name)
+                if cfg and isinstance(cfg, dict):
+                    m_conf = float(cfg.get("conf", self.conf))
+                    m_iou = float(cfg.get("iou", self.iou))
+                    enabled_classes = cfg.get("enabled_classes")
+                    m_imgsz = int(cfg.get("imgsz", 640))
 
                 if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
                     try:
                         cid = str(self.cam_id)
                         if cid.isdigit() and int(cid) < len(self.streams_metadata) and isinstance(self.streams_metadata[int(cid)], dict):
                             saved_mc = self.streams_metadata[int(cid)].get("model_configs") or {}
-                            saved_cfg = saved_mc.get(m_name) or saved_mc.get(m_clean) or {}
+                            saved_cfg = get_config_for_model(saved_mc, m_name)
                             if isinstance(saved_cfg, dict) and saved_cfg.get("enabled_classes"):
                                 enabled_classes = saved_cfg.get("enabled_classes")
                     except Exception:
@@ -641,16 +647,18 @@ class DetectorWorker:
 
     def _capture_thread(self, cap):
         while not self._stop_event.is_set():
-            t_start = time.time()
             if not cap.grab():
                 time.sleep(0.005)
                 continue
             
-            # Drain buffer: discard old frames queued in socket buffer to reach live edge
+            # Drain buffer: rapidly grab queued frames until socket buffer is empty (reaches real-time live edge)
             grab_count = 0
-            while grab_count < 30 and (time.time() - t_start) < 0.005:
-                t_start = time.time()
+            while grab_count < 50:
+                t_grab = time.time()
                 if not cap.grab():
+                    break
+                # When grab takes > 2ms, we have drained socket buffer and reached real-time live edge
+                if (time.time() - t_grab) > 0.002:
                     break
                 grab_count += 1
             
