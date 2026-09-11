@@ -654,10 +654,10 @@ class DetectorWorker:
                     if c in self.alert_triggered:
                         self.alert_triggered.remove(c)
 
-            return boxes_data
+            return res, boxes_data
         except Exception as err:
             print(f"[ERROR] _run_all_models error: {err}", flush=True)
-            return []
+            return f, []
 
     def _save_alert(self, class_name, frame):
         try:
@@ -707,13 +707,21 @@ class DetectorWorker:
             except:
                 continue
             try:
-                boxes = self._run_all_models(f)
+                ann_frame, boxes = self._run_all_models(f)
             except Exception as e:
                 print(f"[INFERENCE-ERR] Camera {self.cam_id} inference error: {e}", flush=True)
-                boxes = []
+                ann_frame, boxes = f, []
             with self._box_lock:
                 self._latest_boxes = boxes
                 self._latest_box_time = time.time()
+                self._latest_ann_frame = ann_frame
+            if hasattr(self, '_result_queue'):
+                if self._result_queue.full():
+                    try:
+                        self._result_queue.get_nowait()
+                    except:
+                        pass
+                self._result_queue.put(ann_frame)
 
     def _capture_thread(self, cap):
         while not self._stop_event.is_set():
@@ -837,84 +845,22 @@ class DetectorWorker:
                                 self._frame_queue.put_nowait(pf.copy())
                             except:
                                 pass
-                        
-                        # Draw ROI boundary if active
-                        if self.roi_polygon and len(self.roi_polygon) == 2:
-                            try:
-                                fh, fw = pf.shape[:2]
-                                min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0])
-                                max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0])
-                                min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1])
-                                max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
-                                
-                                rx1, ry1 = int(min_x * fw), int(min_y * fh)
-                                rx2, ry2 = int(max_x * fw), int(max_y * fh)
-                                
-                                def _corner_dist(x_pct, y_pct):
-                                    d_fwd = 2.5 / (max(0.08, y_pct - 0.05)**0.95)
-                                    d_lat = (x_pct - 0.5) * (5.0 / (max(0.08, y_pct - 0.05)**0.5))
-                                    return round((d_fwd**2 + d_lat**2)**0.5, 1)
 
-                                d_tl = _corner_dist(min_x, min_y)
-                                d_tr = _corner_dist(max_x, min_y)
-                                d_bl = _corner_dist(min_x, max_y)
-                                d_br = _corner_dist(max_x, max_y)
+                        # Fetch latest annotated frame from inference result queue
+                        try:
+                            ann = self._result_queue.get_nowait()
+                            self._latest_ann_frame = ann
+                        except:
+                            pass
 
-                                cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
-                                
-                                # Distance display (commented out for now, preserved for future use):
-                                # def _draw_tag(text, px, py, align_right=False, center=False):
-                                #     tsz = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
-                                #     if center:
-                                #         bx = px - tsz[0] // 2 - 4
-                                #     elif align_right:
-                                #         bx = px - tsz[0] - 6
-                                #     else:
-                                #         bx = px
-                                #     by = max(0, min(fh - 18, py))
-                                #     cv2.rectangle(pf, (bx, by), (bx + tsz[0] + 6, by + tsz[1] + 6), (0, 255, 0), -1)
-                                #     cv2.putText(pf, text, (bx + 3, by + tsz[1] + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1, cv2.LINE_AA)
-                                # dist_near = min(d_bl, d_br)
-                                # dist_far = max(d_tl, d_tr)
-                                # _draw_tag(f"ROI: {dist_near}m - {dist_far}m", int((rx1 + rx2) / 2), max(0, ry1 - 18), center=True)
-                                # _draw_tag(f"TL: {d_tl}m", rx1 + 3, ry1 + 3)
-                                # _draw_tag(f"TR: {d_tr}m", rx2 - 3, ry1 + 3, align_right=True)
-                                # _draw_tag(f"BL: {d_bl}m", rx1 + 3, ry2 - 18)
-                                # _draw_tag(f"BR: {d_br}m", rx2 - 3, ry2 - 18, align_right=True)
-                            except:
-                                pass
+                        out = getattr(self, '_latest_ann_frame', None)
+                        if out is None:
+                            out = pf
 
-                        # Draw latest bounding boxes (cleared automatically if older than 3.0s)
-                        with self._box_lock:
-                            if hasattr(self, '_latest_boxes') and self._latest_boxes and (time.time() - getattr(self, '_latest_box_time', 0.0) < 3.0):
-                                cur_boxes = list(self._latest_boxes)
-                            else:
-                                cur_boxes = []
-                        
-                        if cur_boxes:
-                            for b_xyxy, label_text, color_val in cur_boxes:
-                                try:
-                                    x1, y1, x2, y2 = [int(v) for v in b_xyxy]
-                                    if self.roi_polygon and len(self.roi_polygon) == 2:
-                                        fh, fw = pf.shape[:2]
-                                        rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                        ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                                        rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                        ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                                        cx = int((x1 + x2) / 2)
-                                        cy = int((y1 + y2) / 2)
-                                        if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
-                                            continue
-
-                                    cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
-                                    t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
-                                    cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), color_val, -1)
-                                    cv2.putText(pf, label_text, (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
-                                except: pass
-                        
                         if ffmpeg.poll() is not None: break
                         try:
-                            ffmpeg.stdin.write(pf.tobytes())
+                            ffmpeg.stdin.write(out.tobytes())
+                            ffmpeg.stdin.flush()
                         except: break
                 except:
                     import traceback
@@ -925,248 +871,3 @@ class DetectorWorker:
                 try: ffmpeg.stdin.close()
                 except: pass
                 ffmpeg.kill(); ffmpeg.wait()
-# import cv2, subprocess, os, time, threading, queue, json
-# from datetime import datetime
-# from ultralytics import YOLO
-# from ultralytics.utils.plotting import Annotator, colors
-# try:
-#     import psycopg2
-#     PSYCOPG2_AVAILABLE = True
-# except ImportError:
-#     PSYCOPG2_AVAILABLE = False
-
-# # Load .env file
-# try:
-#     from dotenv import load_dotenv
-#     load_dotenv()
-# except ImportError:
-#     pass  # If dotenv not installed, just use system env vars
-
-# from pathlib import Path
-# import sys
-
-# BASE_DIR = Path(__file__).resolve().parents[1]
-# if str(BASE_DIR) not in sys.path:
-#     sys.path.insert(0, str(BASE_DIR))
-
-# from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db
-
-# ALERTS_BASE_URL = os.getenv("ALERTS_BASE_URL", "")
-
-# os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;30000000|reorder_queue_size;30|probesize;10000000|analyzeduration;10000000"
-
-# class DetectorWorker:
-#     def __init__(self, rtsp_url, output_dir, model_paths, fps=15, conf=0.25, iou=0.45, location=None):
-#         self.rtsp_url, self.output_dir, self.fps, self.conf, self.iou = rtsp_url, output_dir, fps, conf, iou
-#         self.location = location or f"Camera {os.path.basename(output_dir).replace('stream', '').replace('_detected', '')}"
-#         self.width, self.height = 1280, 720
-#         self._stop_event, self._frame_queue, self._result_queue = threading.Event(), queue.Queue(maxsize=2), queue.Queue(maxsize=2)
-#         self._latest_raw_frame, self._frame_lock, self._cap_ok, self._last_frame_time = None, threading.Lock(), True, time.time()
-#         self.alert_timers, self.alert_triggered = {}, set()
-#         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
-#         self.models = [YOLO(mp) for mp in (model_paths if isinstance(model_paths, list) else [model_paths])]
-#         self._db_conn = None
-
-#     def _get_db_conn(self):
-#         if not PSYCOPG2_AVAILABLE: return None
-#         if self._db_conn is None or self._db_conn.closed:
-#             try:
-#                 self._db_conn = psycopg2.connect(DB_DSN, connect_timeout=5)
-#             except: self._db_conn = None
-#         return self._db_conn
-
-#     def _create_ffmpeg(self):
-#         os.makedirs(self.output_dir, exist_ok=True)
-#         # Optimized for Remote/VPN (Tailscale) viewing:
-#         # - Set hls_time to 2s for lower latency
-#         # - Increased quality and bitrate (500k) for crisp visual inspection
-#         # - Added ultra-fast preset and zerolatency tune for minimal latency
-#         # - Added temp_file flag to prevent incomplete segment reading
-#         cmd = [
-#             "ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
-#             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
-#             "-tune", "zerolatency", "-pix_fmt", "yuv420p", 
-#             "-b:v", "500k", "-maxrate", "600k", "-bufsize", "1000k",
-#             "-g", str(int(self.fps * 2)), # GOP = 2 * FPS for 2s segments
-#             "-keyint_min", str(int(self.fps * 2)), 
-#             "-f", "hls", "-hls_time", "2", "-hls_list_size", "8",
-#             "-hls_flags", "delete_segments+independent_segments+discont_start+temp_file", 
-#             "-hls_segment_filename", os.path.join(self.output_dir, "segment_%d.ts"), 
-#             os.path.join(self.output_dir, "playlist.m3u8")
-#         ]
-#         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-#         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
-
-#     def _letterbox(self, f):
-#         h, w = f.shape[:2]
-#         s = min(self.width/w, self.height/h)
-#         nw, nh = int(w*s), int(h*s)
-#         res = cv2.resize(f, (nw, nh))
-#         return cv2.copyMakeBorder(res, (self.height-nh)//2, (self.height-nh+1)//2, (self.width-nw)//2, (self.width-nw+1)//2, cv2.BORDER_CONSTANT, value=[0,0,0])
-
-#     def _run_all_models(self, f):
-#         try:
-#             ann, cur_cls, now = Annotator(f.copy(), line_width=2), set(), time.time()
-#             for midx, model in enumerate(self.models):
-#                 for r in model.predict(f, conf=self.conf, iou=self.iou, imgsz=640, verbose=False):
-#                     if r.boxes:
-#                         for b in r.boxes:
-#                             cls = r.names[int(b.cls[0])]
-#                             cur_cls.add(cls)
-#                             ann.box_label(b.xyxy[0].cpu().numpy().tolist(), f"{cls} {float(b.conf[0]):.2f}", color=colors(int(b.cls[0])+midx*50, True))
-#             res = ann.result()
-#             for c in cur_cls:
-#                 if c not in self.alert_timers: self.alert_timers[c] = now
-#                 elif now - self.alert_timers[c] >= 3.0 and c not in self.alert_triggered:
-#                     self.alert_triggered.add(c); self._save_alert(c, res)
-#             for c in list(self.alert_timers):
-#                 if c not in cur_cls:
-#                     del self.alert_timers[c]
-#                     if c in self.alert_triggered: self.alert_triggered.remove(c)
-#             return res
-#         except: return f
-
-#     def _save_alert(self, class_name, frame):
-#         try:
-#             now_dt = datetime.now()
-#             ts = now_dt.strftime("%Y%m%d_%H%M%S")
-#             filename = f"cam{self.cam_id}_{ts}_{class_name}.jpg"
-#             adir = os.path.join(os.path.dirname(self.output_dir), "alerts")
-#             os.makedirs(adir, exist_ok=True)
-#             cv2.imwrite(os.path.join(adir, filename), frame)
-
-#             # Create full image path
-#             if ALERTS_BASE_URL:
-#                 image_path = f"{ALERTS_BASE_URL.rstrip('/')}/hls/alerts/{filename}"
-#             else:
-#                 image_path = f"/hls/alerts/{filename}"
-
-#             # Direct DB Store using provided logic and custom location
-#             conn = self._get_db_conn()
-#             if conn:
-#                 try:
-#                     cur = conn.cursor()
-#                     ensure_alerts_schema(cur)
-#                     insert_alert_db(cur, self.cam_id, self.location, f"{class_name} Detected", image_path, now_dt)
-#                     conn.commit()
-#                     cur.close()
-#                 except: 
-#                     if self._db_conn: self._db_conn.rollback()
-
-#             # Local JSON Store
-#             try:
-#                 adir_root = os.path.dirname(os.path.dirname(self.output_dir))
-#                 alog = os.path.join(adir_root, "hls", "alerts", "alerts.json")
-#                 os.makedirs(os.path.dirname(alog), exist_ok=True)
-#                 data = json.load(open(alog)) if os.path.exists(alog) else []
-#                 data.append({"camera": self.cam_id, "time": now_dt.strftime("%Y-%m-%d %H:%M:%S"), "event": f"{class_name} Detected", "image": image_path})
-#                 json.dump(data, open(alog, "w"), indent=4)
-#             except: pass
-#         except: pass
-
-#     def _get_connecting_frame(self):
-#         # Create a fallback frame with message
-#         import numpy as np
-#         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-#         cv2.putText(frame, "Connecting to Camera...", 
-#                    (int(self.width*0.2), int(self.height*0.5)), 
-#                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
-#         return frame
-
-#     def _inference_thread(self):
-#         while not self._stop_event.is_set():
-#             try: f = self._frame_queue.get(timeout=1.0)
-#             except: continue
-#             ann = self._run_all_models(f)
-#             if self._result_queue.full():
-#                 try: self._result_queue.get_nowait()
-#                 except: pass
-#             self._result_queue.put(ann)
-
-#     def _capture_thread(self, cap):
-#         retry_count = 0
-#         max_retries = 10
-#         while not self._stop_event.is_set():
-#             ret, f = cap.read()
-#             if not ret:
-#                 retry_count +=1
-#                 if retry_count > max_retries:
-#                     self._cap_ok = False
-#                     break
-#                 time.sleep(2)
-#                 continue
-#             retry_count =0 # Reset retry count on success
-#             with self._frame_lock:
-#                 self._latest_raw_frame, self._cap_ok, self._last_frame_time = f, True, time.time()
-
-#     def run(self):
-#         ffmpeg, cap, inf_t, cap_t = None, None, None, None
-#         while True:
-#             self._stop_event.set()
-#             if inf_t: inf_t.join(timeout=5)
-#             if cap: cap.release()
-#             if ffmpeg:
-#                 try: ffmpeg.stdin.close()
-#                 except: pass
-#                 ffmpeg.kill(); ffmpeg.wait()
-#             self._stop_event.clear(); self._frame_queue, self._result_queue, self._latest_raw_frame, self._cap_ok = queue.Queue(maxsize=2), queue.Queue(maxsize=2), None, True
-#             try:
-#                 # Initialize default dimensions early for fallback frame
-#                 self.width, self.height = 854, 480
-                
-#                 cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-#                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
-                
-#                 retry_count = 0
-#                 while not cap.isOpened() and retry_count < 10:
-#                     time.sleep(2)
-#                     cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-#                     retry_count +=1
-#                 if not cap.isOpened(): 
-#                     # If we can't open camera, still run FFmpeg with fallback frame
-#                     h, w = 480, 854
-#                 else:
-#                     h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-#                     w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-#                     if not h or not w: h, w = 480, 854
-                
-#                 self.width = 854; self.height = int(int(h) * (854 / int(w)))
-#                 self.height += self.height % 2; ffmpeg = self._create_ffmpeg()
-#                 inf_t = threading.Thread(target=self._inference_thread, daemon=True); inf_t.start()
-#                 if cap and cap.isOpened():
-#                     cap_t = threading.Thread(target=self._capture_thread, args=(cap,), daemon=True); cap_t.start()
-                
-#                 f_int, last_w, last_ann = 1.0 / self.fps, 0.0, None
-#                 while True:
-#                     if cap and cap.isOpened():
-#                         if not self._cap_ok or time.time() - self._last_frame_time > 15.0: break
-#                     with self._frame_lock: f = self._latest_raw_frame
-                    
-#                     # Use fallback connecting frame if no frame available
-#                     if f is None: 
-#                         f = self._get_connecting_frame()
-                    
-#                     now = time.time()
-#                     # Only letterbox if we are going to use it for FFmpeg OR if inference queue is empty
-#                     if now - last_w >= f_int or not self._frame_queue.full():
-#                         pf = self._letterbox(f)
-#                         if not self._frame_queue.full() and cap and cap.isOpened(): 
-#                             self._frame_queue.put(pf)
-#                     else:
-#                         time.sleep(0.005)
-#                         continue
-
-#                     try: last_ann = self._result_queue.get_nowait()
-#                     except: pass
-                    
-#                     if now - last_w < f_int: continue
-#                     last_w = now; out = last_ann if last_ann is not None else pf
-#                     if ffmpeg.poll() is not None: break
-#                     try: 
-#                         ffmpeg.stdin.write(out.tobytes())
-#                         ffmpeg.stdin.flush()
-#                     except: break
-#             except: 
-#                 import traceback
-#                 traceback.print_exc()
-#             time.sleep(3)
