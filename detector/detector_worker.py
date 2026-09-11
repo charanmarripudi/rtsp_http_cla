@@ -332,9 +332,9 @@ class DetectorWorker:
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2",
             "-profile:v", "baseline", "-level:v", "3.1",
             "-b:v", "500k", "-maxrate", "700k", "-bufsize", "1M",
-            "-g", str(max(1, int(self.fps * 2))), 
-            "-keyint_min", str(max(1, int(self.fps * 1))), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "5",
+            "-g", str(max(1, int(self.fps))), 
+            "-keyint_min", str(max(1, int(self.fps))), "-sc_threshold", "0",
+            "-f", "hls", "-hls_time", "2", "-hls_list_size", "4",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
@@ -350,7 +350,7 @@ class DetectorWorker:
         res = cv2.resize(f, (nw, nh))
         return cv2.copyMakeBorder(res, (self.height-nh)//2, (self.height-nh+1)//2, (self.width-nw)//2, (self.width-nw+1)//2, cv2.BORDER_CONSTANT, value=[0,0,0])
 
-    def _is_valid_box(self, conf_val, m_conf, bw, bh, box_area, f_w, f_h, f_area):
+    def _is_valid_box(self, conf_val, m_conf, bw, bh, box_area, f_w, f_h, f_area, crop_img=None):
         if conf_val < m_conf:
             return False
         # Absolute Minimum Size Bounds (Rejects single-pixel noise only)
@@ -359,6 +359,15 @@ class DetectorWorker:
         # Maximum Size Bounds (Rejects 80% full-screen hallucinations)
         if box_area > 0.85 * f_area or bh > 0.95 * f_h or bw > 0.95 * f_w:
             return False
+        # Reject empty floor / desk / wall hallucinations using Laplacian texture variance
+        if crop_img is not None and crop_img.size > 0:
+            try:
+                gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
+                lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+                if lap_var < 80.0:
+                    return False
+            except Exception:
+                pass
         return True
 
     def _run_all_models(self, f):
@@ -487,8 +496,13 @@ class DetectorWorker:
 
                             effective_conf = 0.08 if is_tracked_place else cls_conf
 
-                            # Validate Box using effective confidence threshold
-                            if not self._is_valid_box(conf_val, effective_conf, bw, bh, box_area, f_w, f_h, f_area):
+                            # Extract crop slice to verify texture & eliminate bare floor hallucinations
+                            cy1, cy2 = max(0, int(y1)), min(f_h, int(y2))
+                            cx1, cx2 = max(0, int(x1)), min(f_w, int(x2))
+                            box_crop = f[cy1:cy2, cx1:cx2]
+
+                            # Validate Box using effective confidence threshold and texture variance
+                            if not self._is_valid_box(conf_val, effective_conf, bw, bh, box_area, f_w, f_h, f_area, crop_img=box_crop):
                                 continue
 
                             # Apply ROI rectangle filter if configured
