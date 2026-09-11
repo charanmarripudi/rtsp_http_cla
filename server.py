@@ -1665,9 +1665,6 @@ def start_detection(d: dict):
         if isinstance(cfg, dict):
             clean_model_configs[norm_m] = cfg
             clean_model_configs[m_clean] = cfg
-        elif isinstance(model_configs, dict):
-            clean_model_configs[norm_m] = model_configs
-            clean_model_configs[m_clean] = model_configs
 
     mods = active_mods
     model_configs = clean_model_configs

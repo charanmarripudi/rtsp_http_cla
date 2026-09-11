@@ -319,6 +319,7 @@ class DetectorWorker:
             for midx, model in enumerate(self.models):
                 m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
                 m_name = os.path.basename(m_path)
+                m_clean = m_name.replace(".pt", "")
                 
                 m_conf = self.conf
                 m_iou = self.iou
@@ -342,29 +343,10 @@ class DetectorWorker:
                     except Exception:
                         pass
 
-                # Dynamically set YOLO predict confidence to minimum of active class sliders
-                detect_conf = m_conf
-                if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) > 0:
-                    min_cls_conf = m_conf
-                    if cfg and isinstance(cfg, dict):
-                        class_configs = cfg.get("class_configs")
-                        if class_configs and isinstance(class_configs, dict):
-                            for cls_name in enabled_classes:
-                                c_cfg = class_configs.get(cls_name)
-                                if not c_cfg:
-                                    for k, val in class_configs.items():
-                                        if match_class(cls_name, k):
-                                            c_cfg = val
-                                            break
-                                if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
-                                    min_cls_conf = min(min_cls_conf, float(c_cfg["conf"]))
-                    detect_conf = min_cls_conf
-
-                pred_conf = max(0.05, min(detect_conf - 0.05, 0.15))
                 detected_this_model = []
-                # Predict with dynamic low-latency confidence threshold for 10x speed boost
+                # Predict at base confidence (0.01) as in 78891b7 to capture all moving, distant, and close objects
                 with INFERENCE_SEMAPHORE:
-                    results = model.predict(f, conf=pred_conf, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                    results = model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False)
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
@@ -395,6 +377,10 @@ class DetectorWorker:
                                             break
                                     if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
                                         cls_conf = float(c_cfg.get("conf", m_conf))
+
+                            # Ensure active enabled classes detect simultaneously without requiring close-up proximity
+                            if enabled_classes and any(match_class(cls, e) for e in enabled_classes):
+                                cls_conf = min(cls_conf, 0.20)
 
                             # Validate Box using class-specific confidence
                             if not self._is_valid_box(conf_val, cls_conf, bw, bh, box_area, f_w, f_h, f_area):
@@ -647,18 +633,16 @@ class DetectorWorker:
 
     def _capture_thread(self, cap):
         while not self._stop_event.is_set():
+            t_start = time.time()
             if not cap.grab():
                 time.sleep(0.005)
                 continue
             
-            # Drain buffer: rapidly grab queued frames until socket buffer is empty (reaches real-time live edge)
+            # Drain buffer: discard old frames queued in socket buffer to reach live edge
             grab_count = 0
-            while grab_count < 50:
-                t_grab = time.time()
+            while grab_count < 30 and (time.time() - t_start) < 0.005:
+                t_start = time.time()
                 if not cap.grab():
-                    break
-                # When grab takes > 2ms, we have drained socket buffer and reached real-time live edge
-                if (time.time() - t_grab) > 0.002:
                     break
                 grab_count += 1
             
