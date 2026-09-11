@@ -131,7 +131,7 @@ def match_class(box_cls, enabled_cls):
         
     return False
 
-INFERENCE_SEMAPHORE = threading.Semaphore(4)
+INFERENCE_LOCK = threading.Lock()
 
 def get_yolo_model(model_path):
     if model_path not in YOLO_CACHE:
@@ -414,7 +414,7 @@ class DetectorWorker:
 
                 detected_this_model = []
                 # Predict at conf 0.05 to capture all moving, distant, and close objects instantly
-                with INFERENCE_SEMAPHORE:
+                with INFERENCE_LOCK:
                     results = model.predict(f, conf=0.05, iou=m_iou, imgsz=m_imgsz, verbose=False)
                 for r in results:
                     if r.boxes:
@@ -690,13 +690,10 @@ class DetectorWorker:
             except:
                 continue
             try:
-                if 'torch' in globals():
-                    with torch.inference_mode():
-                        boxes = self._run_all_models(f)
-                else:
-                    boxes = self._run_all_models(f)
-            except Exception as e:
                 boxes = self._run_all_models(f)
+            except Exception as e:
+                print(f"[INFERENCE-ERR] Camera {self.cam_id} inference error: {e}", flush=True)
+                boxes = []
             with self._box_lock:
                 self._latest_boxes = boxes
                 self._latest_box_time = time.time()
