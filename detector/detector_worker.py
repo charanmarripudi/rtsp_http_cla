@@ -464,8 +464,10 @@ class DetectorWorker:
                                     if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
                                         cls_conf = float(c_cfg.get("conf", m_conf))
 
-                            # Default floor if conf is unconfigured (0.15), otherwise respect user UI slider
-                            if not cls_conf or cls_conf < 0.05:
+                            # Automatically set detection threshold floor for enabled violation classes to 0.15 max so all cameras detect across the full area
+                            if filter_classes:
+                                cls_conf = min(cls_conf, 0.15)
+                            elif not cls_conf or cls_conf < 0.05:
                                 cls_conf = 0.15
 
                             # Hysteresis: if this object's place is already tracked on screen, allow retention down to conf 0.08
@@ -594,7 +596,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 2
+                        'ttl': 3
                     })
                 else:
                     new_tracked.append({
@@ -603,7 +605,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 2
+                        'ttl': 3
                     })
 
             # Carry over active tracked boxes whose ttl > 1
