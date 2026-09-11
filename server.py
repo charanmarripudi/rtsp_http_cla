@@ -1641,6 +1641,12 @@ def start_detection(d: dict):
         e_classes = None
         if isinstance(cfg, dict):
             e_classes = cfg.get("enabled_classes")
+        if e_classes is None and isinstance(model_configs, dict) and "enabled_classes" in model_configs:
+            e_classes = model_configs.get("enabled_classes")
+            if isinstance(cfg, dict):
+                cfg["enabled_classes"] = e_classes
+            else:
+                cfg = dict(model_configs)
         if e_classes is None:
             metadata = read_streams_metadata()
             saved_cfg = {}

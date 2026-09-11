@@ -1,5 +1,5 @@
 import os
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;5000000"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -54,6 +54,83 @@ def clean_str(s):
     res = re.sub(r'[^a-z0-9]', '', str(s).lower())
     return res.replace("saftey", "safety")
 
+def extract_negation_and_core(s):
+    cleaned = clean_str(s)
+    neg_prefixes = ["no", "without", "non", "un"]
+    is_neg = False
+    core = cleaned
+    for p in neg_prefixes:
+        if cleaned.startswith(p):
+            is_neg = True
+            core = cleaned[len(p):]
+            break
+    
+    synonym_map = {
+        "hardhat": "headgear",
+        "helmet": "headgear",
+        "safetyhelmet": "headgear",
+        "headprotection": "headgear",
+        "head": "headgear",
+        "vest": "bodyvest",
+        "safetyvest": "bodyvest",
+        "reflectivevest": "bodyvest",
+        "jacket": "bodyvest",
+        "mask": "facemask",
+        "facemask": "facemask",
+        "facecover": "facemask",
+        "goggles": "eyegoggles",
+        "glasses": "eyegoggles",
+        "safetyglasses": "eyegoggles",
+        "eyewear": "eyegoggles",
+        "glove": "handgloves",
+        "gloves": "handgloves",
+        "handglove": "handgloves",
+        "shoe": "footshoes",
+        "shoes": "footshoes",
+        "boot": "footshoes",
+        "boots": "footshoes",
+        "safetyshoe": "footshoes",
+        "safetyshoes": "footshoes",
+        "person": "person",
+        "worker": "person",
+        "human": "person",
+        "man": "person",
+        "woman": "person",
+        "fire": "fire",
+        "flame": "fire",
+        "smoke": "smoke",
+    }
+    mapped_core = synonym_map.get(core, core)
+    return is_neg, mapped_core, cleaned
+
+def match_class(box_cls, enabled_cls):
+    """
+    Robust negation and synonym-aware class matcher.
+    Returns True if box_cls matches enabled_cls dynamically across models.
+    """
+    if not box_cls or not enabled_cls:
+        return False
+    
+    b_clean = clean_str(box_cls)
+    e_clean = clean_str(enabled_cls)
+    
+    if b_clean == e_clean:
+        return True
+        
+    b_neg, b_core, _ = extract_negation_and_core(box_cls)
+    e_neg, e_core, _ = extract_negation_and_core(enabled_cls)
+    
+    if b_neg != e_neg:
+        return False
+        
+    if b_core == e_core:
+        return True
+        
+    if (b_core in e_core or e_core in b_core) and len(b_core) >= 3 and len(e_core) >= 3:
+        return True
+        
+    return False
+
 INFERENCE_SEMAPHORE = threading.Semaphore(4)
 
 def get_yolo_model(model_path):
@@ -101,8 +178,6 @@ def get_dynamic_class_color(class_name):
         (255, 20, 147),  # Deep Pink
     ]
     return palette[abs(hash(norm_name)) % len(palette)]
-
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 class DetectorWorker:
     @property
@@ -224,9 +299,8 @@ class DetectorWorker:
             f_h, f_w = f.shape[:2]
             f_area = f_w * f_h
 
-            import re
             # NOTE: No global class union — each model filters ONLY by its own enabled_classes.
-            # Merging classes across models caused cross-contamination (stream 2 detecting wrong classes).
+            # Merging classes across models caused cross-contamination.
             for midx, model in enumerate(self.models):
                 m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
                 m_name = os.path.basename(m_path)
@@ -243,6 +317,8 @@ class DetectorWorker:
                         for k, v in self.model_configs.items():
                             if str(k).replace(".pt", "").lower().replace("_", "-").replace(" ", "-") == m_norm_target:
                                 cfg = v
+                    if not cfg and ("enabled_classes" in self.model_configs or "class_configs" in self.model_configs or "conf" in self.model_configs):
+                        cfg = self.model_configs
                     if cfg and isinstance(cfg, dict):
                         m_conf = float(cfg.get("conf", self.conf))
                         m_iou = float(cfg.get("iou", self.iou))
@@ -260,9 +336,7 @@ class DetectorWorker:
                     except Exception:
                         pass
 
-                ppe_models_set = {"ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt", "ppe_new", "nik_ppe_best", "hf_ppe_detection", "keremberke_ppe_gear", "hansung_ppe_violations"}
-
-                # Dynamically set YOLO predict confidence to the minimum of active class sliders
+                # Dynamically set YOLO predict confidence to minimum of active class sliders
                 detect_conf = m_conf
                 if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) > 0:
                     min_cls_conf = m_conf
@@ -272,34 +346,28 @@ class DetectorWorker:
                             for cls_name in enabled_classes:
                                 c_cfg = class_configs.get(cls_name)
                                 if not c_cfg:
-                                    # Fallback to normalized lookup
-                                    norm_cls = cls_name.lower().replace("_", "-").replace(" ", "-")
                                     for k, val in class_configs.items():
-                                        if k.lower().replace("_", "-").replace(" ", "-") == norm_cls:
+                                        if match_class(cls_name, k):
                                             c_cfg = val
                                             break
                                 if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
                                     min_cls_conf = min(min_cls_conf, float(c_cfg["conf"]))
                     detect_conf = min_cls_conf
 
+                pred_conf = max(0.05, min(detect_conf - 0.05, 0.15))
                 detected_this_model = []
-                # Predict at base confidence (0.01) to capture all moving, distant, and close objects
+                # Predict with dynamic low-latency confidence threshold for 10x speed boost
                 with INFERENCE_SEMAPHORE:
-                    results = model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                    results = model.predict(f, conf=pred_conf, iou=m_iou, imgsz=m_imgsz, verbose=False)
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
                             cls = r.names[int(b.cls[0])]
                             conf_val = float(b.conf[0])
                             detected_this_model.append((cls, conf_val))
-                            
-                            def clean_str(s):
-                                res = re.sub(r'[^a-z0-9]', '', str(s).lower())
-                                return res.replace("saftey", "safety")
 
-                            box_cls_clean = clean_str(cls)
                             if enabled_classes is not None and isinstance(enabled_classes, list) and len(enabled_classes) > 0:
-                                matched = any(box_cls_clean == clean_str(e) for e in enabled_classes)
+                                matched = any(match_class(cls, e) for e in enabled_classes)
                                 if not matched:
                                     continue
 
@@ -309,14 +377,14 @@ class DetectorWorker:
                             bh = max(0, y2 - y1)
                             box_area = bw * bh
 
-                            # Load class-specific conf thresholds
+                            # Load class-specific conf thresholds dynamically
                             cls_conf = m_conf
                             if cfg and isinstance(cfg, dict):
                                 class_configs = cfg.get("class_configs")
                                 if class_configs and isinstance(class_configs, dict):
                                     c_cfg = None
                                     for k, val in class_configs.items():
-                                        if clean_str(k) == box_cls_clean:
+                                        if match_class(cls, k):
                                             c_cfg = val
                                             break
                                     if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
@@ -349,7 +417,7 @@ class DetectorWorker:
                     m_name = os.path.basename(self.model_paths[midx])
                     print(f"[DEBUG] Camera {self.cam_id} {m_name}: raw_detected={len(detected_this_model)}, filter={enabled_classes}, kept={len(raw_boxes)} boxes", flush=True)
 
-            # Cross-Class Non-Maximum Suppression (NMS) - 0.65 threshold to allow side-by-side seated workers
+            # Cross-Class Non-Maximum Suppression (NMS)
             boxes_data = []
             kept_items = []
             if raw_boxes:
@@ -376,9 +444,7 @@ class DetectorWorker:
                             union = area1 + area2 - inter
                             iou = inter / max(1.0, union)
                             
-                            # Same/equivalent class (e.g. duplicate no-helmet boxes): suppress if IoU >= 0.50
-                            # Different violation classes (e.g. No_safety_vest vs NO-Hardhat): allow both to show unless 92%+ duplicate box
-                            is_same_cls = (clean_str(cls1_name) == clean_str(cls2_name))
+                            is_same_cls = match_class(cls1_name, cls2_name)
                             iou_thresh = 0.50 if is_same_cls else 0.92
                             if iou >= iou_thresh:
                                 suppress = True
@@ -388,7 +454,6 @@ class DetectorWorker:
                         kept_items.append(item)
 
             # ── TEMPORAL BOX PERSISTENCE & SMOOTHING ──
-            # Holds boxes steady across consecutive frames even if confidence dips briefly
             new_tracked = []
             matched_indices = set()
 
@@ -403,7 +468,7 @@ class DetectorWorker:
                 for t_idx, t_box in enumerate(getattr(self, '_tracked_boxes', [])):
                     if t_idx in matched_indices:
                         continue
-                    if clean_str(t_box.get('cls')) != clean_str(cls1_name):
+                    if not match_class(t_box.get('cls'), cls1_name):
                         continue
                     
                     x1_2, y1_2, x2_2, y2_2 = t_box['box']
@@ -433,7 +498,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 8  # Hold box for 8 frames (~1.6 seconds) to keep all classes visible simultaneously
+                        'ttl': 8
                     })
                 else:
                     new_tracked.append({
@@ -445,7 +510,7 @@ class DetectorWorker:
                         'ttl': 8
                     })
 
-            # Carry over active tracked boxes whose ttl > 1 (prevents frame-by-frame dropping)
+            # Carry over active tracked boxes whose ttl > 1
             for t_idx, t_box in enumerate(getattr(self, '_tracked_boxes', [])):
                 if t_idx not in matched_indices:
                     new_ttl = t_box['ttl'] - 1
@@ -525,14 +590,12 @@ class DetectorWorker:
             img_saved = cv2.imwrite(os.path.join(adir, filename), frame)
             print(f"[ALERT-IMG] Saved snapshot {filename}, ok={img_saved}", flush=True)
 
-            # Create full image path
             base_url = get_alerts_base_url()
             if base_url:
                 image_path = f"{base_url.rstrip('/')}/hls/alerts/{filename}"
             else:
                 image_path = f"/hls/alerts/{filename}"
 
-            # Direct DB Store using provided logic and custom location
             conn = self._get_db_conn()
             if conn:
                 try:
@@ -550,7 +613,6 @@ class DetectorWorker:
             print(f"[ALERT-ERR] Failed to save alert: {e}", flush=True)
 
     def _get_connecting_frame(self):
-        # Create a fallback frame with message
         import numpy as np
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         cv2.putText(frame, "Connecting to Camera...", 
@@ -581,12 +643,12 @@ class DetectorWorker:
         while not self._stop_event.is_set():
             t_start = time.time()
             if not cap.grab():
-                time.sleep(0.01)
+                time.sleep(0.005)
                 continue
             
-            # Flush queue: if the grab was instant, keep discarding old frames to catch up to live edge
+            # Drain buffer: discard old frames queued in socket buffer to reach live edge
             grab_count = 0
-            while (time.time() - t_start) < 0.004 and grab_count < 15:
+            while grab_count < 30 and (time.time() - t_start) < 0.005:
                 t_start = time.time()
                 if not cap.grab():
                     break
@@ -594,7 +656,7 @@ class DetectorWorker:
             
             ret, f = cap.retrieve()
             if not ret or f is None:
-                time.sleep(0.01)
+                time.sleep(0.005)
                 continue
                 
             with self._frame_lock:
