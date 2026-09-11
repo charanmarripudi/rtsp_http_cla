@@ -368,19 +368,36 @@ class DetectorWorker:
             f_h, f_w = f.shape[:2]
             f_area = f_w * f_h
 
-            # Collect union of all active enabled classes for this camera
+            # Collect union of all active enabled classes across all models for this camera
             all_camera_enabled_classes = []
             if isinstance(self.model_configs, dict):
-                for m_idx in range(len(self.models)):
-                    m_p = self.model_paths[m_idx] if (isinstance(self.model_paths, list) and m_idx < len(self.model_paths)) else str(self.model_paths)
-                    m_n = os.path.basename(m_p)
-                    m_c = get_config_for_model(self.model_configs, m_n)
-                    if m_c and isinstance(m_c, dict):
-                        e_cls = m_c.get("enabled_classes")
-                        if e_cls and isinstance(e_cls, list):
-                            for ec in e_cls:
-                                if ec not in all_camera_enabled_classes:
-                                    all_camera_enabled_classes.append(ec)
+                for k, v in self.model_configs.items():
+                    if isinstance(v, dict) and "enabled_classes" in v and isinstance(v["enabled_classes"], list):
+                        for ec in v["enabled_classes"]:
+                            if ec not in all_camera_enabled_classes:
+                                all_camera_enabled_classes.append(ec)
+                    elif k == "enabled_classes" and isinstance(v, list):
+                        for ec in v:
+                            if ec not in all_camera_enabled_classes:
+                                all_camera_enabled_classes.append(ec)
+
+            if hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
+                try:
+                    cid = str(self.cam_id)
+                    if cid.isdigit() and int(cid) < len(self.streams_metadata) and isinstance(self.streams_metadata[int(cid)], dict):
+                        saved_mc = self.streams_metadata[int(cid)].get("model_configs") or {}
+                        if isinstance(saved_mc, dict):
+                            for k, v in saved_mc.items():
+                                if isinstance(v, dict) and "enabled_classes" in v and isinstance(v["enabled_classes"], list):
+                                    for ec in v["enabled_classes"]:
+                                        if ec not in all_camera_enabled_classes:
+                                            all_camera_enabled_classes.append(ec)
+                                elif k == "enabled_classes" and isinstance(v, list):
+                                    for ec in v:
+                                        if ec not in all_camera_enabled_classes:
+                                            all_camera_enabled_classes.append(ec)
+                except Exception:
+                    pass
 
             for midx, model in enumerate(self.models):
                 m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
@@ -577,7 +594,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 15
+                        'ttl': 2
                     })
                 else:
                     new_tracked.append({
@@ -586,7 +603,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 15
+                        'ttl': 2
                     })
 
             # Carry over active tracked boxes whose ttl > 1
@@ -846,20 +863,38 @@ class DetectorWorker:
                             except:
                                 pass
 
-                        # Fetch latest annotated frame from inference result queue
-                        try:
-                            ann = self._result_queue.get_nowait()
-                            self._latest_ann_frame = ann
-                        except:
-                            pass
+                        # Draw ROI boundary if active
+                        if self.roi_polygon and len(self.roi_polygon) == 2:
+                            try:
+                                fh, fw = pf.shape[:2]
+                                min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                                max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                                min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                                max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                                rx1, ry1 = int(min_x * fw), int(min_y * fh)
+                                rx2, ry2 = int(max_x * fw), int(max_y * fh)
+                                cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
+                            except: pass
 
-                        out = getattr(self, '_latest_ann_frame', None)
-                        if out is None:
-                            out = pf
+                        # Overlay latest active tracked boxes onto fresh live frame pf at 15 FPS
+                        with self._box_lock:
+                            cur_tracked = list(getattr(self, '_tracked_boxes', []))
+                        
+                        for t_box in cur_tracked:
+                            try:
+                                b_xyxy = t_box['box']
+                                label_text = t_box['label']
+                                color_val = t_box['color']
+                                x1, y1, x2, y2 = [int(v) for v in b_xyxy]
+                                cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
+                                t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
+                                cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), color_val, -1)
+                                cv2.putText(pf, label_text, (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+                            except: pass
 
                         if ffmpeg.poll() is not None: break
                         try:
-                            ffmpeg.stdin.write(out.tobytes())
+                            ffmpeg.stdin.write(pf.tobytes())
                             ffmpeg.stdin.flush()
                         except: break
                 except:
