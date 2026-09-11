@@ -473,28 +473,13 @@ class DetectorWorker:
                                     if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
                                         cls_conf = float(c_cfg.get("conf", m_conf))
 
-                            # Automatically set detection threshold floor for enabled violation classes to 0.15 max so all cameras detect across the full area
+                            # Automatically set detection threshold floor to 0.12 max so all objects are detected immediately on Frame 1
                             if filter_classes:
-                                cls_conf = min(cls_conf, 0.15)
+                                cls_conf = min(cls_conf, 0.12)
                             elif not cls_conf or cls_conf < 0.05:
-                                cls_conf = 0.15
+                                cls_conf = 0.12
 
-                            # Hysteresis: if this object's place is already tracked on screen, allow retention down to conf 0.08
-                            is_tracked_place = False
-                            for t_box in getattr(self, '_tracked_boxes', []):
-                                if match_class(t_box.get('cls'), cls):
-                                    tx1, ty1, tx2, ty2 = t_box['box']
-                                    t_area = max(0, tx2 - tx1) * max(0, ty2 - ty1)
-                                    ix1, iy1 = max(x1, tx1), max(y1, ty1)
-                                    ix2, iy2 = min(x2, tx2), min(y2, ty2)
-                                    if ix2 > ix1 and iy2 > iy1:
-                                        inter = (ix2 - ix1) * (iy2 - iy1)
-                                        union = box_area + t_area - inter
-                                        if inter / max(1.0, union) > 0.20:
-                                            is_tracked_place = True
-                                            break
-
-                            effective_conf = 0.08 if is_tracked_place else cls_conf
+                            effective_conf = cls_conf
 
                             # Extract crop slice to verify texture & eliminate bare floor hallucinations
                             cy1, cy2 = max(0, int(y1)), min(f_h, int(y2))
@@ -599,10 +584,10 @@ class DetectorWorker:
                     matched_indices.add(best_match_idx)
                     prev_box = self._tracked_boxes[best_match_idx]['box']
                     smooth_box = [
-                        0.80 * x1_1 + 0.20 * prev_box[0],
-                        0.80 * y1_1 + 0.20 * prev_box[1],
-                        0.80 * x2_1 + 0.20 * prev_box[2],
-                        0.80 * y2_1 + 0.20 * prev_box[3]
+                        0.90 * x1_1 + 0.10 * prev_box[0],
+                        0.90 * y1_1 + 0.10 * prev_box[1],
+                        0.90 * x2_1 + 0.10 * prev_box[2],
+                        0.90 * y2_1 + 0.10 * prev_box[3]
                     ]
                     new_tracked.append({
                         'box': smooth_box,
@@ -610,7 +595,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 3
+                        'ttl': 1
                     })
                 else:
                     new_tracked.append({
@@ -619,7 +604,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 3
+                        'ttl': 1
                     })
 
             # Carry over active tracked boxes whose ttl > 1
