@@ -148,36 +148,90 @@ def get_alerts_base_url():
                 if val and not val.startswith("("):
                     return val
     except: pass
+DYNAMIC_CLASS_COLOR_MAP = {
+    # Violations - Bright High-Contrast Distinct Colors
+    "no-hardhat": (0, 50, 255),          # Bright Coral Red / Orange-Red
+    "no-helmet": (0, 50, 255),
+    "nohardhat": (0, 50, 255),
+    "nohelmet": (0, 50, 255),
+    
+    "no-safety-vest": (255, 230, 0),     # Electric Neon Cyan / Turquoise
+    "no-vest": (255, 230, 0),
+    "nosafetyvest": (255, 230, 0),
+    "novest": (255, 230, 0),
+    "no-saftey-vest": (255, 230, 0),
+    
+    "no-mask": (255, 0, 255),            # Bright Magenta / Neon Pink
+    "nomask": (255, 0, 255),
+    
+    "no-goggles": (0, 215, 255),         # Vivid Golden Yellow
+    "nogoggles": (0, 215, 255),
+    "no-glasses": (0, 215, 255),
+    
+    "no-gloves": (255, 105, 180),        # Light Neon Pink
+    "nogloves": (255, 105, 180),
+    
+    "no-shoes": (0, 140, 255),           # Vivid Tangerine Orange
+    "noshoes": (0, 140, 255),
+    "no-boots": (0, 140, 255),
+    
+    # Positive Equipment - Green / Sky Blue / Lime
+    "hardhat": (0, 220, 100),            # Emerald Green
+    "helmet": (0, 220, 100),
+    
+    "safety-vest": (255, 140, 0),        # Deep Sky Blue
+    "vest": (255, 140, 0),
+    "saftey-vest": (255, 140, 0),
+    
+    "mask": (180, 220, 0),               # Bright Lime Green
+    "goggles": (255, 190, 40),           # Electric Cyan
+    "gloves": (200, 100, 255),           # Lavender Violet
+    "shoes": (50, 205, 50),              # Spring Green
+    "boots": (50, 205, 50),
+    
+    # Objects & People
+    "person": (30, 45, 255),             # Coral Red
+    "worker": (30, 45, 255),
+    "human": (30, 45, 255),
+    "fire": (0, 0, 255),                 # Pure Red
+    "smoke": (180, 180, 180),            # Silver Grey
+}
+
 def get_dynamic_class_color(class_name):
     """
-    Pure dynamic deterministic color generator for ANY class name.
-    Works automatically for all present and future models/classes
-    without hardcoding or modifying code.
+    Returns a unique, fixed, high-contrast BGR color for each class name.
+    Guarantees NO-Hardhat, NO-Safety Vest, NO-Mask, etc., have completely distinct colors.
     """
-    norm_name = str(class_name).lower().strip().replace("_", "-")
+    if not class_name:
+        return (0, 255, 255)
+    
+    norm_name = clean_str(class_name).replace("_", "-").replace(" ", "-")
+    if norm_name in DYNAMIC_CLASS_COLOR_MAP:
+        return DYNAMIC_CLASS_COLOR_MAP[norm_name]
+        
+    for k, v in DYNAMIC_CLASS_COLOR_MAP.items():
+        if k in norm_name or norm_name in k:
+            return v
+            
+    import hashlib
+    h = int(hashlib.md5(norm_name.encode('utf-8')).hexdigest(), 16)
     palette = [
-        (0, 140, 255),   # Bright Amber / Orange
+        (0, 140, 255),   # Vivid Orange
         (255, 190, 40),  # Electric Cyan
         (30, 45, 255),   # Coral Red
         (0, 230, 115),   # Emerald Green
-        (180, 20, 255),  # Magenta Pink
+        (180, 20, 255),  # Magenta
         (0, 215, 255),   # Golden Yellow
         (255, 105, 180), # Neon Pink
         (210, 230, 0),   # Turquoise
-        (0, 165, 255),   # Vivid Orange
         (50, 205, 50),   # Lime Green
         (238, 130, 238), # Violet
-        (30, 144, 255),  # Deep Sky Blue
+        (30, 144, 255),  # Sky Blue
         (255, 215, 0),   # Gold
-        (0, 128, 255),   # Tangerine
         (255, 69, 0),    # Red Orange
         (0, 255, 127),   # Spring Green
-        (147, 20, 255),  # Deep Purple
-        (255, 140, 0),   # Dark Orange
-        (0, 255, 255),   # Pure Cyan
-        (255, 20, 147),  # Deep Pink
     ]
-    return palette[abs(hash(norm_name)) % len(palette)]
+    return palette[h % len(palette)]
 
 def get_config_for_model(model_configs, m_name):
     if not isinstance(model_configs, dict) or not model_configs:
@@ -277,16 +331,16 @@ class DetectorWorker:
             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2",
             "-profile:v", "baseline", "-level:v", "3.1",
-            "-b:v", "400k", "-maxrate", "500k", "-bufsize", "1M",
-            "-g", str(max(1, int(self.fps * 1))), 
+            "-b:v", "500k", "-maxrate", "700k", "-bufsize", "1M",
+            "-g", str(max(1, int(self.fps * 2))), 
             "-keyint_min", str(max(1, int(self.fps * 1))), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "1", "-hls_list_size", "6",
+            "-f", "hls", "-hls_time", "2", "-hls_list_size", "5",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 400k (max 500k)", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 500k (max 700k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL, bufsize=10*1024*1024)
 
     def _letterbox(self, f):
