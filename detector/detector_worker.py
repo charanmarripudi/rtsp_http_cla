@@ -560,7 +560,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 25
+                        'ttl': 1
                     })
                 else:
                     new_tracked.append({
@@ -569,7 +569,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 25
+                        'ttl': 1
                     })
 
             # Carry over active tracked boxes whose ttl > 1
@@ -870,9 +870,9 @@ class DetectorWorker:
                             except:
                                 pass
 
-                        # Draw latest bounding boxes
+                        # Draw latest bounding boxes (cleared automatically if older than 0.8s)
                         with self._box_lock:
-                            if hasattr(self, '_latest_boxes') and self._latest_boxes:
+                            if hasattr(self, '_latest_boxes') and self._latest_boxes and (time.time() - getattr(self, '_latest_box_time', 0.0) < 0.8):
                                 cur_boxes = list(self._latest_boxes)
                             else:
                                 cur_boxes = []
