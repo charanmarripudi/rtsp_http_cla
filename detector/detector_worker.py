@@ -361,6 +361,10 @@ class DetectorWorker:
         # Maximum Size Bounds (Rejects 80% full-screen hallucinations)
         if box_area > 0.85 * f_area or bh > 0.95 * f_h or bw > 0.95 * f_w:
             return False
+        # Aspect Ratio Filter: Rejects thin vertical stripes (doors, window frames) & flat horizontal stripes (table edges)
+        aspect = bh / max(1.0, bw)
+        if aspect > 4.2 or aspect < 0.15:
+            return False
         # Reject empty floor / desk / wall hallucinations using Laplacian texture variance
         if crop_img is not None and crop_img.size > 0:
             try:
@@ -475,13 +479,10 @@ class DetectorWorker:
                                     if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
                                         cls_conf = float(c_cfg.get("conf", m_conf))
 
-                            # Automatically set detection threshold floor to 0.12 max so all objects are detected immediately on Frame 1
-                            if filter_classes:
-                                cls_conf = min(cls_conf, 0.12)
-                            elif not cls_conf or cls_conf < 0.05:
-                                cls_conf = 0.12
-
-                            effective_conf = cls_conf
+                            # Respect configured user slider confidence thresholds strictly without forcing 0.12 override
+                            if not cls_conf or cls_conf < 0.15:
+                                cls_conf = 0.20
+                            effective_conf = float(cls_conf)
 
                             # Extract crop slice to verify texture & eliminate bare floor hallucinations
                             cy1, cy2 = max(0, int(y1)), min(f_h, int(y2))
@@ -543,8 +544,8 @@ class DetectorWorker:
                             iou = inter / max(1.0, union)
                             
                             is_same_cls = match_class(cls1_name, cls2_name)
-                            # Strict IoU: 0.35 for same/equivalent class to eliminate duplicate boxes on same object
-                            iou_thresh = 0.35 if is_same_cls else 0.70
+                            # Strict IoU: 0.25 for same/equivalent class, 0.40 for cross-class overlap to eliminate duplicate cluttered boxes
+                            iou_thresh = 0.25 if is_same_cls else 0.40
                             if iou >= iou_thresh:
                                 suppress = True
                                 break
