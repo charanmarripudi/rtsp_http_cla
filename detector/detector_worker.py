@@ -550,17 +550,21 @@ class DetectorWorker:
                     if not suppress:
                         kept_items.append(item)
 
-            # ── TEMPORAL BOX PERSISTENCE & SMOOTHING ──
+            # ── TEMPORAL CENTROID & IOU MOTION TRACKING ──
             new_tracked = []
             matched_indices = set()
+
+            import math
 
             for item in kept_items:
                 b1_xyxy, l1_text, c1_color, conf1_val, cls1_name = item
                 x1_1, y1_1, x2_1, y2_1 = b1_xyxy
                 area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
+                cx1 = (x1_1 + x2_1) / 2.0
+                cy1 = (y1_1 + y2_1) / 2.0
                 
                 best_match_idx = None
-                best_match_iou = 0.0
+                best_match_score = -1.0
 
                 for t_idx, t_box in enumerate(getattr(self, '_tracked_boxes', [])):
                     if t_idx in matched_indices:
@@ -570,24 +574,39 @@ class DetectorWorker:
                     
                     x1_2, y1_2, x2_2, y2_2 = t_box['box']
                     area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
+                    cx2 = (x1_2 + x2_2) / 2.0
+                    cy2 = (y1_2 + y2_2) / 2.0
+                    
+                    dist = math.hypot(cx1 - cx2, cy1 - cy2)
+
                     ix1, iy1 = max(x1_1, x1_2), max(y1_1, y1_2)
                     ix2, iy2 = min(x2_1, x2_2), min(y2_1, y2_2)
+                    iou_val = 0.0
                     if ix2 > ix1 and iy2 > iy1:
                         inter = (ix2 - ix1) * (iy2 - iy1)
                         union = area1 + area2 - inter
                         iou_val = inter / max(1.0, union)
-                        if iou_val > 0.30 and iou_val > best_match_iou:
-                            best_match_iou = iou_val
-                            best_match_idx = t_idx
+                    
+                    # Match score: blend IoU and centroid distance (max motion radius 180px)
+                    if iou_val > 0.15:
+                        score = 1.0 + iou_val
+                    elif dist < 180.0:
+                        score = 1.0 - (dist / 180.0)
+                    else:
+                        score = -1.0
+
+                    if score > best_match_score and score > 0.10:
+                        best_match_score = score
+                        best_match_idx = t_idx
 
                 if best_match_idx is not None:
                     matched_indices.add(best_match_idx)
                     prev_box = self._tracked_boxes[best_match_idx]['box']
                     smooth_box = [
-                        0.90 * x1_1 + 0.10 * prev_box[0],
-                        0.90 * y1_1 + 0.10 * prev_box[1],
-                        0.90 * x2_1 + 0.10 * prev_box[2],
-                        0.90 * y2_1 + 0.10 * prev_box[3]
+                        0.85 * x1_1 + 0.15 * prev_box[0],
+                        0.85 * y1_1 + 0.15 * prev_box[1],
+                        0.85 * x2_1 + 0.15 * prev_box[2],
+                        0.85 * y2_1 + 0.15 * prev_box[3]
                     ]
                     new_tracked.append({
                         'box': smooth_box,
