@@ -552,7 +552,7 @@ class DetectorWorker:
                     if not suppress:
                         kept_items.append(item)
 
-            # ── TEMPORAL CENTROID & IOU MOTION TRACKING ──
+            # ── TEMPORAL CENTROID & IOU MOTION TRACKING (PERSISTENT & DRIFT-FREE) ──
             new_tracked = []
             matched_indices = set()
 
@@ -561,10 +561,15 @@ class DetectorWorker:
             for item in kept_items:
                 b1_xyxy, l1_text, c1_color, conf1_val, cls1_name = item
                 x1_1, y1_1, x2_1, y2_1 = b1_xyxy
-                area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
+                w1 = max(1.0, x2_1 - x1_1)
+                h1 = max(1.0, y2_1 - y1_1)
+                area1 = w1 * h1
                 cx1 = (x1_1 + x2_1) / 2.0
                 cy1 = (y1_1 + y2_1) / 2.0
                 
+                # Dynamic matching distance tailored to object scale (tight radius to prevent jumping across adjacent desks)
+                max_match_dist = max(40.0, min(100.0, max(w1, h1) * 1.0))
+
                 best_match_idx = None
                 best_match_score = -1.0
 
@@ -589,11 +594,11 @@ class DetectorWorker:
                         union = area1 + area2 - inter
                         iou_val = inter / max(1.0, union)
                     
-                    # Match score: blend IoU and centroid distance (max motion radius 180px)
+                    # Match score: High priority on IoU, strict local radius for centroid
                     if iou_val > 0.15:
-                        score = 1.0 + iou_val
-                    elif dist < 180.0:
-                        score = 1.0 - (dist / 180.0)
+                        score = 2.0 + iou_val
+                    elif dist < max_match_dist:
+                        score = 1.0 - (dist / max_match_dist)
                     else:
                         score = -1.0
 
@@ -604,11 +609,12 @@ class DetectorWorker:
                 if best_match_idx is not None:
                     matched_indices.add(best_match_idx)
                     prev_box = self._tracked_boxes[best_match_idx]['box']
+                    # Smooth box movement (0.75 new + 0.25 prev) to eliminate jitter while staying responsive
                     smooth_box = [
-                        0.85 * x1_1 + 0.15 * prev_box[0],
-                        0.85 * y1_1 + 0.15 * prev_box[1],
-                        0.85 * x2_1 + 0.15 * prev_box[2],
-                        0.85 * y2_1 + 0.15 * prev_box[3]
+                        0.75 * x1_1 + 0.25 * prev_box[0],
+                        0.75 * y1_1 + 0.25 * prev_box[1],
+                        0.75 * x2_1 + 0.25 * prev_box[2],
+                        0.75 * y2_1 + 0.25 * prev_box[3]
                     ]
                     new_tracked.append({
                         'box': smooth_box,
@@ -616,7 +622,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 1
+                        'ttl': 3
                     })
                 else:
                     new_tracked.append({
@@ -625,10 +631,10 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 1
+                        'ttl': 3
                     })
 
-            # Carry over active tracked boxes whose ttl > 1
+            # Carry over active tracked boxes whose ttl > 1 (3-frame temporal memory persistence)
             for t_idx, t_box in enumerate(getattr(self, '_tracked_boxes', [])):
                 if t_idx not in matched_indices:
                     new_ttl = t_box['ttl'] - 1
