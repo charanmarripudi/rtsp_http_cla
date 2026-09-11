@@ -1,13 +1,27 @@
 import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-os.environ["OMP_WAIT_POLICY"] = "PASSIVE"
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["TORCH_NUM_THREADS"] = "1"
+os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
+
+import cv2
+try:
+    cv2.setNumThreads(1)
+    cv2.ocl.setUseOpenCL(False)
+except Exception:
+    pass
+
+import torch
+try:
+    torch.set_num_threads(1)
+    if hasattr(torch, "set_num_interop_threads"):
+        torch.set_num_interop_threads(1)
+except Exception:
+    pass
 
 from fastapi import FastAPI, Body, Query, Request
 from typing import Optional, Tuple, Any

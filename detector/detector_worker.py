@@ -1,15 +1,17 @@
 import os
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["TORCH_NUM_THREADS"] = "1"
+os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
 
 import cv2, subprocess, time, threading, queue, json
 try:
     cv2.setNumThreads(1)
+    cv2.ocl.setUseOpenCL(False)
 except Exception:
     pass
 from datetime import datetime
@@ -736,13 +738,15 @@ class DetectorWorker:
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
         return frame
 
-    def _inference_thread(self):
+    def _inference_thread(self, inf_stop_evt):
         print(f"[LOG] Camera {self.cam_id} inference thread started", flush=True)
-        while not self._stop_event.is_set():
+        while not self._stop_event.is_set() and not inf_stop_evt.is_set():
             try:
                 f = self._frame_queue.get(timeout=0.2)
             except:
                 continue
+            if inf_stop_evt.is_set() or self._stop_event.is_set():
+                break
             try:
                 ann_frame, boxes = self._run_all_models(f)
             except Exception as e:
@@ -760,22 +764,35 @@ class DetectorWorker:
                         pass
                 self._result_queue.put(ann_frame)
 
-    def _capture_thread(self, cap):
-        while not self._stop_event.is_set():
+    def _capture_thread(self, cap, cap_stop_evt):
+        while not self._stop_event.is_set() and not cap_stop_evt.is_set():
             t_start = time.time()
-            if not cap.grab():
-                time.sleep(0.005)
-                continue
+            try:
+                if not cap.grab():
+                    time.sleep(0.005)
+                    continue
+            except Exception:
+                break
             
             # Drain buffer: discard old frames queued in socket buffer to reach live edge
             grab_count = 0
-            while grab_count < 30 and (time.time() - t_start) < 0.005:
+            while grab_count < 30 and (time.time() - t_start) < 0.005 and not cap_stop_evt.is_set():
                 t_start = time.time()
-                if not cap.grab():
+                try:
+                    if not cap.grab():
+                        break
+                except Exception:
                     break
                 grab_count += 1
             
-            ret, f = cap.retrieve()
+            if cap_stop_evt.is_set():
+                break
+
+            try:
+                ret, f = cap.retrieve()
+            except Exception:
+                break
+
             if not ret or f is None:
                 time.sleep(0.005)
                 continue
@@ -787,6 +804,25 @@ class DetectorWorker:
 
     def run(self):
         ffmpeg, cap, inf_t, cap_t = None, None, None, None
+        cap_stop_evt, inf_stop_evt = None, None
+
+        def cleanup_subthreads():
+            nonlocal cap, cap_t, cap_stop_evt, inf_t, inf_stop_evt, ffmpeg
+            if cap_stop_evt: cap_stop_evt.set()
+            if inf_stop_evt: inf_stop_evt.set()
+            if cap_t and cap_t.is_alive(): cap_t.join(timeout=1.0)
+            if inf_t and inf_t.is_alive(): inf_t.join(timeout=1.0)
+            if cap:
+                try: cap.release()
+                except Exception: pass
+                cap = None
+            if ffmpeg:
+                try: ffmpeg.stdin.close()
+                except Exception: pass
+                try: ffmpeg.kill(); ffmpeg.wait(timeout=1.0)
+                except Exception: pass
+                ffmpeg = None
+
         try:
             if self.models is None:
                 paths = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
@@ -796,13 +832,7 @@ class DetectorWorker:
                 print(f"[WORKER-TIMER] Camera {self.cam_id} models loaded in {int((time.time() - t_load_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: {paths}", flush=True)
 
             while not self._stop_event.is_set():
-                if inf_t: inf_t.join(timeout=1)
-                if cap: cap.release(); cap = None
-                if ffmpeg:
-                    try: ffmpeg.stdin.close()
-                    except: pass
-                    ffmpeg.kill(); ffmpeg.wait()
-                    ffmpeg = None
+                cleanup_subthreads()
                 
                 if self._stop_event.is_set():
                     break
@@ -836,7 +866,8 @@ class DetectorWorker:
                     print(f"[WORKER-TIMER] Camera {self.cam_id} RTSP connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
 
                     if cap and cap.isOpened():
-                        cap_t = threading.Thread(target=self._capture_thread, args=(cap,), daemon=True)
+                        cap_stop_evt = threading.Event()
+                        cap_t = threading.Thread(target=self._capture_thread, args=(cap, cap_stop_evt), daemon=True)
                         cap_t.start()
 
                     # Wait for first real raw frame from camera
@@ -849,7 +880,8 @@ class DetectorWorker:
                     
                     print(f"[WORKER-TIMER] Camera {self.cam_id} first raw frame received in {int((time.time() - t_frame_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
                     
-                    inf_t = threading.Thread(target=self._inference_thread, daemon=True)
+                    inf_stop_evt = threading.Event()
+                    inf_t = threading.Thread(target=self._inference_thread, args=(inf_stop_evt,), daemon=True)
                     inf_t.start()
                     
                     f_int = 1.0 / self.fps
@@ -921,8 +953,4 @@ class DetectorWorker:
                     import traceback
                     traceback.print_exc()
         finally:
-            if cap: cap.release()
-            if ffmpeg:
-                try: ffmpeg.stdin.close()
-                except: pass
-                ffmpeg.kill(); ffmpeg.wait()
+            cleanup_subthreads()
