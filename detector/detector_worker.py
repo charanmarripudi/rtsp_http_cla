@@ -344,9 +344,9 @@ class DetectorWorker:
                         pass
 
                 detected_this_model = []
-                # Predict at base confidence (0.01) as in 78891b7 to capture all moving, distant, and close objects
+                # Predict with low-latency confidence (0.10) to capture distant & small violations while keeping CPU execution ultra-fast (<30ms)
                 with INFERENCE_SEMAPHORE:
-                    results = model.predict(f, conf=0.01, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                    results = model.predict(f, conf=0.10, iou=m_iou, imgsz=m_imgsz, verbose=False)
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
@@ -378,9 +378,9 @@ class DetectorWorker:
                                     if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
                                         cls_conf = float(c_cfg.get("conf", m_conf))
 
-                            # Ensure active enabled classes detect simultaneously without requiring close-up proximity
+                            # Ensure active enabled classes detect simultaneously on all models and streams
                             if enabled_classes and any(match_class(cls, e) for e in enabled_classes):
-                                cls_conf = min(cls_conf, 0.20)
+                                cls_conf = min(cls_conf, 0.12)
 
                             # Validate Box using class-specific confidence
                             if not self._is_valid_box(conf_val, cls_conf, bw, bh, box_area, f_w, f_h, f_area):
@@ -490,7 +490,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 8
+                        'ttl': 25
                     })
                 else:
                     new_tracked.append({
@@ -499,7 +499,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 8
+                        'ttl': 25
                     })
 
             # Carry over active tracked boxes whose ttl > 1
