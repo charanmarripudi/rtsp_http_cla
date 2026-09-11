@@ -479,9 +479,12 @@ class DetectorWorker:
                                     if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
                                         cls_conf = float(c_cfg.get("conf", m_conf))
 
-                            # Respect configured user slider confidence thresholds strictly without forcing 0.12 override
-                            if not cls_conf or cls_conf < 0.15:
-                                cls_conf = 0.20
+                            # Detection threshold floor: 0.15 max for enabled violation classes so all seated/distant objects are detected reliably without missing
+                            if filter_classes:
+                                cls_conf = min(cls_conf, 0.15)
+                            elif not cls_conf or cls_conf < 0.05:
+                                cls_conf = 0.15
+
                             effective_conf = float(cls_conf)
 
                             # Extract crop slice to verify texture & eliminate bare floor hallucinations
@@ -609,21 +612,33 @@ class DetectorWorker:
 
                 if best_match_idx is not None:
                     matched_indices.add(best_match_idx)
-                    prev_box = self._tracked_boxes[best_match_idx]['box']
-                    # Smooth box movement (0.75 new + 0.25 prev) to eliminate jitter while staying responsive
+                    prev_track = self._tracked_boxes[best_match_idx]
+                    prev_box = prev_track['box']
+                    prev_conf = prev_track.get('conf', 0.5)
+
+                    # Check if confidence dropped severely on a static spot (indicates person walked away and only empty chair remains)
+                    is_conf_drop = (prev_conf >= 0.45 and conf1_val < 0.25)
+                    
+                    if is_conf_drop:
+                        # Person walked away! Do NOT renew TTL for empty chair artifact
+                        assigned_ttl = 1
+                    else:
+                        assigned_ttl = 2
+
+                    # Smooth box movement (0.80 new + 0.20 prev) to eliminate jitter while staying responsive
                     smooth_box = [
-                        0.75 * x1_1 + 0.25 * prev_box[0],
-                        0.75 * y1_1 + 0.25 * prev_box[1],
-                        0.75 * x2_1 + 0.25 * prev_box[2],
-                        0.75 * y2_1 + 0.25 * prev_box[3]
+                        0.80 * x1_1 + 0.20 * prev_box[0],
+                        0.80 * y1_1 + 0.20 * prev_box[1],
+                        0.80 * x2_1 + 0.20 * prev_box[2],
+                        0.80 * y2_1 + 0.20 * prev_box[3]
                     ]
                     new_tracked.append({
                         'box': smooth_box,
                         'label': l1_text,
                         'color': c1_color,
                         'cls': cls1_name,
-                        'conf': conf1_val,
-                        'ttl': 3
+                        'conf': max(conf1_val, prev_conf * 0.9 if not is_conf_drop else conf1_val),
+                        'ttl': assigned_ttl
                     })
                 else:
                     new_tracked.append({
@@ -632,10 +647,10 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 3
+                        'ttl': 2
                     })
 
-            # Carry over active tracked boxes whose ttl > 1 (3-frame temporal memory persistence)
+            # Carry over active tracked boxes whose ttl > 1 (temporal memory persistence)
             for t_idx, t_box in enumerate(getattr(self, '_tracked_boxes', [])):
                 if t_idx not in matched_indices:
                     new_ttl = t_box['ttl'] - 1
