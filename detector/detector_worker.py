@@ -451,8 +451,25 @@ class DetectorWorker:
                             if not cls_conf or cls_conf < 0.05:
                                 cls_conf = 0.15
 
-                            # Validate Box using class-specific confidence
-                            if not self._is_valid_box(conf_val, cls_conf, bw, bh, box_area, f_w, f_h, f_area):
+                            # Hysteresis: if this object's place is already tracked on screen, allow retention down to conf 0.08
+                            is_tracked_place = False
+                            for t_box in getattr(self, '_tracked_boxes', []):
+                                if match_class(t_box.get('cls'), cls):
+                                    tx1, ty1, tx2, ty2 = t_box['box']
+                                    t_area = max(0, tx2 - tx1) * max(0, ty2 - ty1)
+                                    ix1, iy1 = max(x1, tx1), max(y1, ty1)
+                                    ix2, iy2 = min(x2, tx2), min(y2, ty2)
+                                    if ix2 > ix1 and iy2 > iy1:
+                                        inter = (ix2 - ix1) * (iy2 - iy1)
+                                        union = box_area + t_area - inter
+                                        if inter / max(1.0, union) > 0.20:
+                                            is_tracked_place = True
+                                            break
+
+                            effective_conf = 0.08 if is_tracked_place else cls_conf
+
+                            # Validate Box using effective confidence threshold
+                            if not self._is_valid_box(conf_val, effective_conf, bw, bh, box_area, f_w, f_h, f_area):
                                 continue
 
                             # Apply ROI rectangle filter if configured
@@ -460,9 +477,9 @@ class DetectorWorker:
                                 try:
                                     fh, fw = f.shape[:2]
                                     rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                    ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                                    ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][0]) * fh)
                                     rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                    ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
+                                    ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][0]) * fh)
                                     cx = int((x1 + x2) / 2)
                                     cy = int((y1 + y2) / 2)
                                     inside = (rx1 <= cx <= rx2 and ry1 <= cy <= ry2)
@@ -549,10 +566,10 @@ class DetectorWorker:
                     matched_indices.add(best_match_idx)
                     prev_box = self._tracked_boxes[best_match_idx]['box']
                     smooth_box = [
-                        0.75 * x1_1 + 0.25 * prev_box[0],
-                        0.75 * y1_1 + 0.25 * prev_box[1],
-                        0.75 * x2_1 + 0.25 * prev_box[2],
-                        0.75 * y2_1 + 0.25 * prev_box[3]
+                        0.80 * x1_1 + 0.20 * prev_box[0],
+                        0.80 * y1_1 + 0.20 * prev_box[1],
+                        0.80 * x2_1 + 0.20 * prev_box[2],
+                        0.80 * y2_1 + 0.20 * prev_box[3]
                     ]
                     new_tracked.append({
                         'box': smooth_box,
@@ -560,7 +577,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 4
+                        'ttl': 15
                     })
                 else:
                     new_tracked.append({
@@ -569,7 +586,7 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 4
+                        'ttl': 15
                     })
 
             # Carry over active tracked boxes whose ttl > 1
@@ -867,9 +884,9 @@ class DetectorWorker:
                             except:
                                 pass
 
-                        # Draw latest bounding boxes (cleared automatically if older than 1.5s)
+                        # Draw latest bounding boxes (cleared automatically if older than 3.0s)
                         with self._box_lock:
-                            if hasattr(self, '_latest_boxes') and self._latest_boxes and (time.time() - getattr(self, '_latest_box_time', 0.0) < 1.5):
+                            if hasattr(self, '_latest_boxes') and self._latest_boxes and (time.time() - getattr(self, '_latest_box_time', 0.0) < 3.0):
                                 cur_boxes = list(self._latest_boxes)
                             else:
                                 cur_boxes = []
