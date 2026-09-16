@@ -65,14 +65,15 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, FileResponse
 import os, glob, subprocess, mimetypes, signal, json, socket, time, threading, sys
 
-# Import DetectorWorker to pre-load PyTorch/YOLO libraries at server boot time (takes ~25s once on boot)
-# so that camera detection starts instantly (in under 3 seconds) when clicking Start in the browser.
+# Import DetectorWorker to pre-load PyTorch/YOLO libraries and pre-warm models into RAM at server boot time
+# so that camera detection starts instantly (in under 1 second) when clicking Start in the browser.
 try:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, os.path.join(BASE_DIR, "detector"))
-    from detector_worker import DetectorWorker
+    from detector_worker import DetectorWorker, preload_all_models
+    threading.Thread(target=preload_all_models, daemon=True, name="ModelPreloader").start()
 except Exception as e:
-    print(f"[ERROR] Failed to pre-import DetectorWorker: {e}")
+    print(f"[ERROR] Failed to pre-import DetectorWorker or preload models: {e}")
 
 class ThreadProcWrapper:
     """Wrapper that mimics a subprocess.Popen object so that running worker threads
