@@ -556,11 +556,13 @@ class DetectorWorker:
                     if not suppress:
                         kept_items.append(item)
 
-            # ── TEMPORAL CENTROID & IOU MOTION TRACKING (PERSISTENT & DRIFT-FREE) ──
+            # ── TEMPORAL KALMAN VELOCITY & BYTETRACK MOTION TRACKER ──
             new_tracked = []
             matched_indices = set()
 
             import math
+
+            existing_tracks = getattr(self, '_tracked_boxes', [])
 
             for item in kept_items:
                 b1_xyxy, l1_text, c1_color, conf1_val, cls1_name = item
@@ -571,13 +573,13 @@ class DetectorWorker:
                 cx1 = (x1_1 + x2_1) / 2.0
                 cy1 = (y1_1 + y2_1) / 2.0
                 
-                # Dynamic matching distance tailored to object scale (tight radius to prevent jumping across adjacent desks)
-                max_match_dist = max(40.0, min(100.0, max(w1, h1) * 1.0))
+                # Dynamic matching distance tailored to object scale and velocity
+                max_match_dist = max(50.0, min(150.0, max(w1, h1) * 1.5))
 
                 best_match_idx = None
                 best_match_score = -1.0
 
-                for t_idx, t_box in enumerate(getattr(self, '_tracked_boxes', [])):
+                for t_idx, t_box in enumerate(existing_tracks):
                     if t_idx in matched_indices:
                         continue
                     if not match_class(t_box.get('cls'), cls1_name):
@@ -585,10 +587,14 @@ class DetectorWorker:
                     
                     x1_2, y1_2, x2_2, y2_2 = t_box['box']
                     area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
-                    cx2 = (x1_2 + x2_2) / 2.0
-                    cy2 = (y1_2 + y2_2) / 2.0
                     
-                    dist = math.hypot(cx1 - cx2, cy1 - cy2)
+                    # Retrieve velocity vector (vx, vy) to predict expected center
+                    vx = t_box.get('vx', 0.0)
+                    vy = t_box.get('vy', 0.0)
+                    cx2_pred = ((x1_2 + x2_2) / 2.0) + vx
+                    cy2_pred = ((y1_2 + y2_2) / 2.0) + vy
+                    
+                    dist = math.hypot(cx1 - cx2_pred, cy1 - cy2_pred)
 
                     ix1, iy1 = max(x1_1, x1_2), max(y1_1, y1_2)
                     ix2, iy2 = min(x2_1, x2_2), min(y2_1, y2_2)
@@ -598,7 +604,7 @@ class DetectorWorker:
                         union = area1 + area2 - inter
                         iou_val = inter / max(1.0, union)
                     
-                    # Match score: High priority on IoU, strict local radius for centroid
+                    # Match score: High priority on IoU, velocity-predicted centroid distance
                     if iou_val > 0.15:
                         score = 2.0 + iou_val
                     elif dist < max_match_dist:
@@ -612,32 +618,35 @@ class DetectorWorker:
 
                 if best_match_idx is not None:
                     matched_indices.add(best_match_idx)
-                    prev_track = self._tracked_boxes[best_match_idx]
+                    prev_track = existing_tracks[best_match_idx]
                     prev_box = prev_track['box']
                     prev_conf = prev_track.get('conf', 0.5)
 
-                    # Check if confidence dropped severely on a static spot (indicates person walked away and only empty chair remains)
-                    is_conf_drop = (prev_conf >= 0.45 and conf1_val < 0.25)
-                    
-                    if is_conf_drop:
-                        # Person walked away! Do NOT renew TTL for empty chair artifact
-                        assigned_ttl = 1
-                    else:
-                        assigned_ttl = 2
+                    # Update velocity vector (0.60 new + 0.40 momentum)
+                    cx_prev = (prev_box[0] + prev_box[2]) / 2.0
+                    cy_prev = (prev_box[1] + prev_box[3]) / 2.0
+                    new_vx = 0.60 * (cx1 - cx_prev) + 0.40 * prev_track.get('vx', 0.0)
+                    new_vy = 0.60 * (cy1 - cy_prev) + 0.40 * prev_track.get('vy', 0.0)
 
-                    # Smooth box movement (0.80 new + 0.20 prev) to eliminate jitter while staying responsive
+                    # Check if confidence dropped severely on a static spot
+                    is_conf_drop = (prev_conf >= 0.45 and conf1_val < 0.25)
+                    assigned_ttl = 1 if is_conf_drop else 2
+
+                    # Responsive coordinate smoothing (0.85 new + 0.15 prev)
                     smooth_box = [
-                        0.80 * x1_1 + 0.20 * prev_box[0],
-                        0.80 * y1_1 + 0.20 * prev_box[1],
-                        0.80 * x2_1 + 0.20 * prev_box[2],
-                        0.80 * y2_1 + 0.20 * prev_box[3]
+                        0.85 * x1_1 + 0.15 * prev_box[0],
+                        0.85 * y1_1 + 0.15 * prev_box[1],
+                        0.85 * x2_1 + 0.15 * prev_box[2],
+                        0.85 * y2_1 + 0.15 * prev_box[3]
                     ]
                     new_tracked.append({
                         'box': smooth_box,
                         'label': l1_text,
                         'color': c1_color,
                         'cls': cls1_name,
-                        'conf': max(conf1_val, prev_conf * 0.9 if not is_conf_drop else conf1_val),
+                        'conf': max(conf1_val, prev_conf * 0.95 if not is_conf_drop else conf1_val),
+                        'vx': new_vx,
+                        'vy': new_vy,
                         'ttl': assigned_ttl
                     })
                 else:
@@ -647,17 +656,32 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
+                        'vx': 0.0,
+                        'vy': 0.0,
                         'ttl': 2
                     })
 
-            # Carry over active tracked boxes whose ttl > 1 (temporal memory persistence)
-            for t_idx, t_box in enumerate(getattr(self, '_tracked_boxes', [])):
+            # Velocity Projection & Expiration for Unmatched Active Tracks
+            for t_idx, t_box in enumerate(existing_tracks):
                 if t_idx not in matched_indices:
-                    new_ttl = t_box['ttl'] - 1
-                    if new_ttl > 0:
-                        t_copy = dict(t_box)
-                        t_copy['ttl'] = new_ttl
-                        new_tracked.append(t_copy)
+                    vx = t_box.get('vx', 0.0)
+                    vy = t_box.get('vy', 0.0)
+                    speed = math.hypot(vx, vy)
+
+                    # Only project moving objects forward; static objects expire immediately (ttl=0) to prevent empty desk ghost boxes
+                    if speed > 3.0:
+                        new_ttl = t_box['ttl'] - 1
+                        if new_ttl > 0:
+                            proj_box = [
+                                t_box['box'][0] + vx,
+                                t_box['box'][1] + vy,
+                                t_box['box'][2] + vx,
+                                t_box['box'][3] + vy
+                            ]
+                            t_copy = dict(t_box)
+                            t_copy['box'] = proj_box
+                            t_copy['ttl'] = new_ttl
+                            new_tracked.append(t_copy)
 
             self._tracked_boxes = new_tracked
 
