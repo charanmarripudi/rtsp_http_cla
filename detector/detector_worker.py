@@ -252,6 +252,20 @@ def get_config_for_model(model_configs, m_name):
     return {}
 
 class DetectorWorker:
+    def _update_active_class_filters(self):
+        all_classes = []
+        if isinstance(self.model_configs, dict):
+            for k, v in self.model_configs.items():
+                if isinstance(v, dict) and "enabled_classes" in v and isinstance(v["enabled_classes"], list):
+                    for ec in v["enabled_classes"]:
+                        if ec not in all_classes:
+                            all_classes.append(ec)
+                elif k == "enabled_classes" and isinstance(v, list):
+                    for ec in v:
+                        if ec not in all_classes:
+                            all_classes.append(ec)
+        self._cached_filter_classes = all_classes
+
     @property
     def model_configs(self):
         return self._model_configs
@@ -259,17 +273,19 @@ class DetectorWorker:
     @model_configs.setter
     def model_configs(self, val):
         self._model_configs = val or {}
+        self._update_active_class_filters()
         new_roi = self._model_configs.get("roi_polygon")
         if new_roi != getattr(self, "roi_polygon", None):
             self.roi_polygon = new_roi
             if hasattr(self, "_box_lock"):
                 with self._box_lock:
                     self._latest_boxes = []
-        print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, roi_polygon={self.roi_polygon}", flush=True)
+        print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, active_classes={getattr(self, '_cached_filter_classes', [])}", flush=True)
 
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.20, iou=0.45, location="Camera", model_configs=None):
         self.roi_polygon = None
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
+        self._cached_filter_classes = []
         self.model_configs = model_configs or {}
         self.fps, self.width, self.height = 5.0, 1280, 720
         self._latest_raw_frame = None
@@ -303,7 +319,7 @@ class DetectorWorker:
             with self._box_lock:
                 self._latest_boxes = []
                 self._tracked_boxes = []
-        print(f"[WORKER-DYNAMIC-UPDATE] Camera {getattr(self, 'cam_id', '?')} dynamically updated models to {self.model_paths} in 0ms without restarting RTSP or FFmpeg", flush=True)
+        print(f"[WORKER-DYNAMIC-UPDATE] Camera {getattr(self, 'cam_id', '?')} dynamically updated models to {self.model_paths} in 0ms", flush=True)
 
     def stop(self):
         self._stop_event.set()
@@ -384,71 +400,24 @@ class DetectorWorker:
             f_h, f_w = f.shape[:2]
             f_area = f_w * f_h
 
-            # Collect union of all active enabled classes across all models for this camera
-            all_camera_enabled_classes = []
-            if isinstance(self.model_configs, dict):
-                for k, v in self.model_configs.items():
-                    if isinstance(v, dict) and "enabled_classes" in v and isinstance(v["enabled_classes"], list):
-                        for ec in v["enabled_classes"]:
-                            if ec not in all_camera_enabled_classes:
-                                all_camera_enabled_classes.append(ec)
-                    elif k == "enabled_classes" and isinstance(v, list):
-                        for ec in v:
-                            if ec not in all_camera_enabled_classes:
-                                all_camera_enabled_classes.append(ec)
-
-            if hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
-                try:
-                    cid = str(self.cam_id)
-                    if cid.isdigit() and int(cid) < len(self.streams_metadata) and isinstance(self.streams_metadata[int(cid)], dict):
-                        saved_mc = self.streams_metadata[int(cid)].get("model_configs") or {}
-                        if isinstance(saved_mc, dict):
-                            for k, v in saved_mc.items():
-                                if isinstance(v, dict) and "enabled_classes" in v and isinstance(v["enabled_classes"], list):
-                                    for ec in v["enabled_classes"]:
-                                        if ec not in all_camera_enabled_classes:
-                                            all_camera_enabled_classes.append(ec)
-                                elif k == "enabled_classes" and isinstance(v, list):
-                                    for ec in v:
-                                        if ec not in all_camera_enabled_classes:
-                                            all_camera_enabled_classes.append(ec)
-                except Exception:
-                    pass
+            filter_classes = getattr(self, "_cached_filter_classes", [])
 
             for midx, model in enumerate(self.models):
                 m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
                 m_name = os.path.basename(m_path)
-                m_clean = m_name.replace(".pt", "")
                 
                 m_conf = self.conf
                 m_iou = self.iou
-                enabled_classes = None
                 m_imgsz = 640
                 cfg = get_config_for_model(self.model_configs, m_name)
                 if cfg and isinstance(cfg, dict):
                     m_conf = float(cfg.get("conf", self.conf))
                     m_iou = float(cfg.get("iou", self.iou))
-                    enabled_classes = cfg.get("enabled_classes")
                     m_imgsz = int(cfg.get("imgsz", 640))
 
-                if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
-                    try:
-                        cid = str(self.cam_id)
-                        if cid.isdigit() and int(cid) < len(self.streams_metadata) and isinstance(self.streams_metadata[int(cid)], dict):
-                            saved_mc = self.streams_metadata[int(cid)].get("model_configs") or {}
-                            saved_cfg = get_config_for_model(saved_mc, m_name)
-                            if isinstance(saved_cfg, dict) and saved_cfg.get("enabled_classes"):
-                                enabled_classes = saved_cfg.get("enabled_classes")
-                    except Exception:
-                        pass
-
-                # Combine model-specific enabled_classes with camera-wide union so any assigned model detects all requested classes instantly
-                filter_classes = list(all_camera_enabled_classes) if all_camera_enabled_classes else (enabled_classes if enabled_classes else [])
-
                 detected_this_model = []
-                # Predict at conf 0.05 to capture all moving, distant, and close objects instantly
-                with INFERENCE_LOCK:
-                    results = model.predict(f, conf=0.05, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                pred_conf = min(0.15, m_conf) if m_conf else 0.15
+                results = model.predict(f, conf=pred_conf, iou=m_iou, imgsz=m_imgsz, verbose=False)
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
