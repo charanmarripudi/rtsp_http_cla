@@ -466,8 +466,9 @@ class DetectorWorker:
                             bh = max(0, y2 - y1)
                             box_area = bw * bh
 
-                            # Load class-specific conf thresholds dynamically
+                            # Load class-specific conf and iou thresholds dynamically from UI sliders
                             cls_conf = m_conf
+                            cls_iou = m_iou
                             if cfg and isinstance(cfg, dict):
                                 class_configs = cfg.get("class_configs")
                                 if class_configs and isinstance(class_configs, dict):
@@ -476,14 +477,11 @@ class DetectorWorker:
                                         if match_class(cls, k):
                                             c_cfg = val
                                             break
-                                    if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
-                                        cls_conf = float(c_cfg.get("conf", m_conf))
-
-                            # Detection threshold floor: 0.15 max for enabled violation classes so all seated/distant objects are detected reliably without missing
-                            if filter_classes:
-                                cls_conf = min(cls_conf, 0.15)
-                            elif not cls_conf or cls_conf < 0.05:
-                                cls_conf = 0.15
+                                    if c_cfg and isinstance(c_cfg, dict):
+                                        if "conf" in c_cfg:
+                                            cls_conf = float(c_cfg.get("conf", m_conf))
+                                        if "iou" in c_cfg:
+                                            cls_iou = float(c_cfg.get("iou", m_iou))
 
                             effective_conf = float(cls_conf)
 
@@ -514,24 +512,24 @@ class DetectorWorker:
 
                             label_text = f"{cls} {conf_val:.2f}"
                             color_val = get_dynamic_class_color(cls)
-                            raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls))
+                            raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls, cls_iou))
                 if detected_this_model:
                     m_name = os.path.basename(self.model_paths[midx])
                     print(f"[DEBUG] Camera {self.cam_id} {m_name}: raw_detected={len(detected_this_model)}, filter={enabled_classes}, kept={len(raw_boxes)} boxes", flush=True)
 
-            # Strict Non-Maximum Suppression (NMS) to guarantee single clean bounding boxes per object
+            # Strict Non-Maximum Suppression (NMS) using exact UI IoU slider values
             boxes_data = []
             kept_items = []
             if raw_boxes:
                 raw_boxes.sort(key=lambda x: x[3], reverse=True)
                 for item in raw_boxes:
-                    b1_xyxy, l1_text, c1_color, conf1_val, cls1_name = item
+                    b1_xyxy, l1_text, c1_color, conf1_val, cls1_name, cls1_iou = item
                     x1_1, y1_1, x2_1, y2_1 = b1_xyxy
                     area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
                     
                     suppress = False
                     for k_item in kept_items:
-                        b2_xyxy, l2_text, c2_color, conf2_val, cls2_name = k_item
+                        b2_xyxy, l2_text, c2_color, conf2_val, cls2_name, cls2_iou = k_item
                         x1_2, y1_2, x2_2, y2_2 = b2_xyxy
                         area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
                         
@@ -547,8 +545,9 @@ class DetectorWorker:
                             iou = inter / max(1.0, union)
                             
                             is_same_cls = match_class(cls1_name, cls2_name)
-                            # Strict IoU: 0.25 for same/equivalent class, 0.40 for cross-class overlap to eliminate duplicate cluttered boxes
-                            iou_thresh = 0.25 if is_same_cls else 0.40
+                            # Apply exact UI IoU threshold set by user on sliders
+                            user_iou = min(cls1_iou, cls2_iou) if (cls1_iou and cls2_iou) else 0.35
+                            iou_thresh = user_iou if is_same_cls else max(user_iou, 0.40)
                             if iou >= iou_thresh:
                                 suppress = True
                                 break
