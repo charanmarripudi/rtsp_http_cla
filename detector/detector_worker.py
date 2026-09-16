@@ -614,21 +614,31 @@ class DetectorWorker:
                     matched_indices.add(best_match_idx)
                     prev_track = self._tracked_boxes[best_match_idx]
                     prev_box = prev_track['box']
+                    prev_conf = prev_track.get('conf', 0.5)
 
-                    # Responsive box movement (0.85 new + 0.15 prev) for minimum latency tracking
+                    # Check if confidence dropped severely on a static spot (indicates person walked away and only empty chair remains)
+                    is_conf_drop = (prev_conf >= 0.45 and conf1_val < 0.25)
+                    
+                    if is_conf_drop:
+                        # Person walked away! Do NOT renew TTL for empty chair artifact
+                        assigned_ttl = 1
+                    else:
+                        assigned_ttl = 2
+
+                    # Smooth box movement (0.80 new + 0.20 prev) to eliminate jitter while staying responsive
                     smooth_box = [
-                        0.85 * x1_1 + 0.15 * prev_box[0],
-                        0.85 * y1_1 + 0.15 * prev_box[1],
-                        0.85 * x2_1 + 0.15 * prev_box[2],
-                        0.85 * y2_1 + 0.15 * prev_box[3]
+                        0.80 * x1_1 + 0.20 * prev_box[0],
+                        0.80 * y1_1 + 0.20 * prev_box[1],
+                        0.80 * x2_1 + 0.20 * prev_box[2],
+                        0.80 * y2_1 + 0.20 * prev_box[3]
                     ]
                     new_tracked.append({
                         'box': smooth_box,
                         'label': l1_text,
                         'color': c1_color,
                         'cls': cls1_name,
-                        'conf': conf1_val,
-                        'ttl': 1
+                        'conf': max(conf1_val, prev_conf * 0.9 if not is_conf_drop else conf1_val),
+                        'ttl': assigned_ttl
                     })
                 else:
                     new_tracked.append({
@@ -637,10 +647,18 @@ class DetectorWorker:
                         'color': c1_color,
                         'cls': cls1_name,
                         'conf': conf1_val,
-                        'ttl': 1
+                        'ttl': 2
                     })
 
-            # Real-time zero-stale-box policy: Unmatched boxes from previous frames are immediately expired
+            # Carry over active tracked boxes whose ttl > 1 (temporal memory persistence)
+            for t_idx, t_box in enumerate(getattr(self, '_tracked_boxes', [])):
+                if t_idx not in matched_indices:
+                    new_ttl = t_box['ttl'] - 1
+                    if new_ttl > 0:
+                        t_copy = dict(t_box)
+                        t_copy['ttl'] = new_ttl
+                        new_tracked.append(t_copy)
+
             self._tracked_boxes = new_tracked
 
             boxes_data = []
@@ -745,29 +763,28 @@ class DetectorWorker:
     def _inference_thread(self, inf_stop_evt):
         print(f"[LOG] Camera {self.cam_id} inference thread started", flush=True)
         while not self._stop_event.is_set() and not inf_stop_evt.is_set():
-            with self._frame_lock:
-                f = self._latest_raw_frame
-            if f is None:
-                time.sleep(0.01)
+            try:
+                f = self._frame_queue.get(timeout=0.2)
+            except:
                 continue
-            f_curr = f.copy()
             if inf_stop_evt.is_set() or self._stop_event.is_set():
                 break
-            t0 = time.time()
             try:
-                ann_frame, boxes = self._run_all_models(f_curr)
-                inf_time_ms = int((time.time() - t0) * 1000)
-                frame_age_ms = int((time.time() - getattr(self, '_last_frame_time', t0)) * 1000)
-                if inf_time_ms > 250:
-                    print(f"[REALTIME-DIAG] Camera {self.cam_id}: inference={inf_time_ms}ms, frame_age={frame_age_ms}ms, active_boxes={len(boxes)}", flush=True)
+                ann_frame, boxes = self._run_all_models(f)
             except Exception as e:
                 print(f"[INFERENCE-ERR] Camera {self.cam_id} inference error: {e}", flush=True)
-                ann_frame, boxes = f_curr, []
+                ann_frame, boxes = f, []
             with self._box_lock:
                 self._latest_boxes = boxes
                 self._latest_box_time = time.time()
                 self._latest_ann_frame = ann_frame
-            time.sleep(0.01)
+            if hasattr(self, '_result_queue'):
+                if self._result_queue.full():
+                    try:
+                        self._result_queue.get_nowait()
+                    except:
+                        pass
+                self._result_queue.put(ann_frame)
 
     def _capture_thread(self, cap, cap_stop_evt):
         while not self._stop_event.is_set() and not cap_stop_evt.is_set():
