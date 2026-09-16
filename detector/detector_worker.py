@@ -138,8 +138,7 @@ INFERENCE_LOCK = threading.Lock()
 def get_yolo_model(model_path):
     if model_path not in YOLO_CACHE:
         print(f"[CACHE] Loading model weights into memory: {model_path}", flush=True)
-        with INFERENCE_LOCK:
-            YOLO_CACHE[model_path] = YOLO(model_path)
+        YOLO_CACHE[model_path] = YOLO(model_path)
     return YOLO_CACHE[model_path]
 
 def get_alerts_base_url():
@@ -252,20 +251,6 @@ def get_config_for_model(model_configs, m_name):
     return {}
 
 class DetectorWorker:
-    def _update_active_class_filters(self):
-        all_classes = []
-        if isinstance(self.model_configs, dict):
-            for k, v in self.model_configs.items():
-                if isinstance(v, dict) and "enabled_classes" in v and isinstance(v["enabled_classes"], list):
-                    for ec in v["enabled_classes"]:
-                        if ec not in all_classes:
-                            all_classes.append(ec)
-                elif k == "enabled_classes" and isinstance(v, list):
-                    for ec in v:
-                        if ec not in all_classes:
-                            all_classes.append(ec)
-        self._cached_filter_classes = all_classes
-
     @property
     def model_configs(self):
         return self._model_configs
@@ -273,19 +258,17 @@ class DetectorWorker:
     @model_configs.setter
     def model_configs(self, val):
         self._model_configs = val or {}
-        self._update_active_class_filters()
         new_roi = self._model_configs.get("roi_polygon")
         if new_roi != getattr(self, "roi_polygon", None):
             self.roi_polygon = new_roi
             if hasattr(self, "_box_lock"):
                 with self._box_lock:
                     self._latest_boxes = []
-        print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, active_classes={getattr(self, '_cached_filter_classes', [])}", flush=True)
+        print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, roi_polygon={self.roi_polygon}", flush=True)
 
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.20, iou=0.45, location="Camera", model_configs=None):
         self.roi_polygon = None
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
-        self._cached_filter_classes = []
         self.model_configs = model_configs or {}
         self.fps, self.width, self.height = 5.0, 1280, 720
         self._latest_raw_frame = None
@@ -319,7 +302,7 @@ class DetectorWorker:
             with self._box_lock:
                 self._latest_boxes = []
                 self._tracked_boxes = []
-        print(f"[WORKER-DYNAMIC-UPDATE] Camera {getattr(self, 'cam_id', '?')} dynamically updated models to {self.model_paths} in 0ms", flush=True)
+        print(f"[WORKER-DYNAMIC-UPDATE] Camera {getattr(self, 'cam_id', '?')} dynamically updated models to {self.model_paths} in 0ms without restarting RTSP or FFmpeg", flush=True)
 
     def stop(self):
         self._stop_event.set()
@@ -400,24 +383,71 @@ class DetectorWorker:
             f_h, f_w = f.shape[:2]
             f_area = f_w * f_h
 
-            filter_classes = getattr(self, "_cached_filter_classes", [])
+            # Collect union of all active enabled classes across all models for this camera
+            all_camera_enabled_classes = []
+            if isinstance(self.model_configs, dict):
+                for k, v in self.model_configs.items():
+                    if isinstance(v, dict) and "enabled_classes" in v and isinstance(v["enabled_classes"], list):
+                        for ec in v["enabled_classes"]:
+                            if ec not in all_camera_enabled_classes:
+                                all_camera_enabled_classes.append(ec)
+                    elif k == "enabled_classes" and isinstance(v, list):
+                        for ec in v:
+                            if ec not in all_camera_enabled_classes:
+                                all_camera_enabled_classes.append(ec)
+
+            if hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
+                try:
+                    cid = str(self.cam_id)
+                    if cid.isdigit() and int(cid) < len(self.streams_metadata) and isinstance(self.streams_metadata[int(cid)], dict):
+                        saved_mc = self.streams_metadata[int(cid)].get("model_configs") or {}
+                        if isinstance(saved_mc, dict):
+                            for k, v in saved_mc.items():
+                                if isinstance(v, dict) and "enabled_classes" in v and isinstance(v["enabled_classes"], list):
+                                    for ec in v["enabled_classes"]:
+                                        if ec not in all_camera_enabled_classes:
+                                            all_camera_enabled_classes.append(ec)
+                                elif k == "enabled_classes" and isinstance(v, list):
+                                    for ec in v:
+                                        if ec not in all_camera_enabled_classes:
+                                            all_camera_enabled_classes.append(ec)
+                except Exception:
+                    pass
 
             for midx, model in enumerate(self.models):
                 m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
                 m_name = os.path.basename(m_path)
+                m_clean = m_name.replace(".pt", "")
                 
                 m_conf = self.conf
                 m_iou = self.iou
+                enabled_classes = None
                 m_imgsz = 640
                 cfg = get_config_for_model(self.model_configs, m_name)
                 if cfg and isinstance(cfg, dict):
                     m_conf = float(cfg.get("conf", self.conf))
                     m_iou = float(cfg.get("iou", self.iou))
+                    enabled_classes = cfg.get("enabled_classes")
                     m_imgsz = int(cfg.get("imgsz", 640))
 
+                if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
+                    try:
+                        cid = str(self.cam_id)
+                        if cid.isdigit() and int(cid) < len(self.streams_metadata) and isinstance(self.streams_metadata[int(cid)], dict):
+                            saved_mc = self.streams_metadata[int(cid)].get("model_configs") or {}
+                            saved_cfg = get_config_for_model(saved_mc, m_name)
+                            if isinstance(saved_cfg, dict) and saved_cfg.get("enabled_classes"):
+                                enabled_classes = saved_cfg.get("enabled_classes")
+                    except Exception:
+                        pass
+
+                # Combine model-specific enabled_classes with camera-wide union so any assigned model detects all requested classes instantly
+                filter_classes = list(all_camera_enabled_classes) if all_camera_enabled_classes else (enabled_classes if enabled_classes else [])
+
                 detected_this_model = []
-                pred_conf = min(0.15, m_conf) if m_conf else 0.15
-                results = model.predict(f, conf=pred_conf, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                # Predict at conf 0.05 to capture all moving, distant, and close objects instantly
+                with INFERENCE_LOCK:
+                    results = model.predict(f, conf=0.05, iou=m_iou, imgsz=m_imgsz, verbose=False)
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
@@ -436,9 +466,8 @@ class DetectorWorker:
                             bh = max(0, y2 - y1)
                             box_area = bw * bh
 
-                            # Load class-specific conf and iou thresholds dynamically from UI sliders
+                            # Load class-specific conf thresholds dynamically
                             cls_conf = m_conf
-                            cls_iou = m_iou
                             if cfg and isinstance(cfg, dict):
                                 class_configs = cfg.get("class_configs")
                                 if class_configs and isinstance(class_configs, dict):
@@ -447,11 +476,14 @@ class DetectorWorker:
                                         if match_class(cls, k):
                                             c_cfg = val
                                             break
-                                    if c_cfg and isinstance(c_cfg, dict):
-                                        if "conf" in c_cfg:
-                                            cls_conf = float(c_cfg.get("conf", m_conf))
-                                        if "iou" in c_cfg:
-                                            cls_iou = float(c_cfg.get("iou", m_iou))
+                                    if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
+                                        cls_conf = float(c_cfg.get("conf", m_conf))
+
+                            # Detection threshold floor: 0.15 max for enabled violation classes so all seated/distant objects are detected reliably without missing
+                            if filter_classes:
+                                cls_conf = min(cls_conf, 0.15)
+                            elif not cls_conf or cls_conf < 0.05:
+                                cls_conf = 0.15
 
                             effective_conf = float(cls_conf)
 
@@ -482,24 +514,24 @@ class DetectorWorker:
 
                             label_text = f"{cls} {conf_val:.2f}"
                             color_val = get_dynamic_class_color(cls)
-                            raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls, cls_iou))
+                            raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls))
                 if detected_this_model:
                     m_name = os.path.basename(self.model_paths[midx])
                     print(f"[DEBUG] Camera {self.cam_id} {m_name}: raw_detected={len(detected_this_model)}, filter={enabled_classes}, kept={len(raw_boxes)} boxes", flush=True)
 
-            # Strict Non-Maximum Suppression (NMS) using exact UI IoU slider values
+            # Strict Non-Maximum Suppression (NMS) to guarantee single clean bounding boxes per object
             boxes_data = []
             kept_items = []
             if raw_boxes:
                 raw_boxes.sort(key=lambda x: x[3], reverse=True)
                 for item in raw_boxes:
-                    b1_xyxy, l1_text, c1_color, conf1_val, cls1_name, cls1_iou = item
+                    b1_xyxy, l1_text, c1_color, conf1_val, cls1_name = item
                     x1_1, y1_1, x2_1, y2_1 = b1_xyxy
                     area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
                     
                     suppress = False
                     for k_item in kept_items:
-                        b2_xyxy, l2_text, c2_color, conf2_val, cls2_name, cls2_iou = k_item
+                        b2_xyxy, l2_text, c2_color, conf2_val, cls2_name = k_item
                         x1_2, y1_2, x2_2, y2_2 = b2_xyxy
                         area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
                         
@@ -515,9 +547,8 @@ class DetectorWorker:
                             iou = inter / max(1.0, union)
                             
                             is_same_cls = match_class(cls1_name, cls2_name)
-                            # Apply exact UI IoU threshold set by user on sliders
-                            user_iou = min(cls1_iou, cls2_iou) if (cls1_iou and cls2_iou) else 0.35
-                            iou_thresh = user_iou if is_same_cls else max(user_iou, 0.40)
+                            # Strict IoU: 0.25 for same/equivalent class, 0.40 for cross-class overlap to eliminate duplicate cluttered boxes
+                            iou_thresh = 0.25 if is_same_cls else 0.40
                             if iou >= iou_thresh:
                                 suppress = True
                                 break

@@ -65,7 +65,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, FileResponse
 import os, glob, subprocess, mimetypes, signal, json, socket, time, threading, sys
 
-# Import DetectorWorker safely at boot
+# Import DetectorWorker to pre-load PyTorch/YOLO libraries at server boot time (takes ~25s once on boot)
+# so that camera detection starts instantly (in under 3 seconds) when clicking Start in the browser.
 try:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, os.path.join(BASE_DIR, "detector"))
