@@ -135,36 +135,12 @@ def match_class(box_cls, enabled_cls):
 
 INFERENCE_LOCK = threading.Lock()
 
-import numpy as np
-
 def get_yolo_model(model_path):
     if model_path not in YOLO_CACHE:
         print(f"[CACHE] Loading model weights into memory: {model_path}", flush=True)
-        model = YOLO(model_path)
-        try:
-            dummy = np.zeros((320, 320, 3), dtype=np.uint8)
-            with INFERENCE_LOCK:
-                model.predict(dummy, conf=0.5, verbose=False)
-        except Exception:
-            pass
-        YOLO_CACHE[model_path] = model
+        with INFERENCE_LOCK:
+            YOLO_CACHE[model_path] = YOLO(model_path)
     return YOLO_CACHE[model_path]
-
-def preload_all_models(models_dir=None):
-    if models_dir is None:
-        models_dir = os.path.join(str(BASE_DIR), "models")
-    if not os.path.exists(models_dir):
-        return
-    import glob
-    pt_files = glob.glob(os.path.join(models_dir, "*.pt"))
-    print(f"[PRELOAD] Background model pre-warming started for {len(pt_files)} model files...", flush=True)
-    t0 = time.time()
-    for pt in pt_files:
-        try:
-            get_yolo_model(pt)
-        except Exception as e:
-            print(f"[PRELOAD-ERR] Failed to preload {pt}: {e}", flush=True)
-    print(f"[PRELOAD] All models pre-loaded into RAM in {int((time.time() - t0)*1000)}ms!", flush=True)
 
 def get_alerts_base_url():
     try:
