@@ -3286,7 +3286,7 @@ for _html in _HTML_FILES:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("server:app", host="0.0.0.0", port=8080, reload=False, log_level="warning", timeout_keep_alive=30, limit_concurrency=200, backlog=2048)
+    uvicorn.run(app, host="0.0.0.0", port=8080, reload=False, log_level="warning", timeout_keep_alive=30, limit_concurrency=200, backlog=2048)
 
 
 

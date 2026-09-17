@@ -8,7 +8,7 @@ os.environ["TORCH_NUM_THREADS"] = "1"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
 
-import cv2, subprocess, time, threading, queue, json
+import cv2, subprocess, time, threading, queue, json, math
 try:
     cv2.setNumThreads(1)
     cv2.ocl.setUseOpenCL(False)
@@ -137,8 +137,10 @@ INFERENCE_LOCK = threading.Lock()
 
 def get_yolo_model(model_path):
     if model_path not in YOLO_CACHE:
-        print(f"[CACHE] Loading model weights into memory: {model_path}", flush=True)
-        YOLO_CACHE[model_path] = YOLO(model_path)
+        with INFERENCE_LOCK:
+            if model_path not in YOLO_CACHE:
+                print(f"[CACHE] Loading model weights into memory: {model_path}", flush=True)
+                YOLO_CACHE[model_path] = YOLO(model_path)
     return YOLO_CACHE[model_path]
 
 def get_alerts_base_url():
@@ -844,7 +846,7 @@ class DetectorWorker:
                 continue
                 
             with self._frame_lock:
-                self._latest_raw_frame = f
+                self._latest_raw_frame = f.copy()
                 self._cap_ok = True
                 self._last_frame_time = time.time()
 
