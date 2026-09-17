@@ -432,13 +432,13 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                m_imgsz = 480
+                m_imgsz = 640
                 cfg = get_config_for_model(self.model_configs, m_name)
                 if cfg and isinstance(cfg, dict):
                     m_conf = float(cfg.get("conf", self.conf))
                     m_iou = float(cfg.get("iou", self.iou))
                     enabled_classes = cfg.get("enabled_classes")
-                    m_imgsz = int(cfg.get("imgsz", 480))
+                    m_imgsz = int(cfg.get("imgsz", 640))
 
                 if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
                     try:
@@ -451,7 +451,7 @@ class DetectorWorker:
                     except Exception:
                         pass
 
-                filter_classes = list(all_camera_enabled_classes) if all_camera_enabled_classes else (enabled_classes if enabled_classes else [])
+                filter_classes = enabled_classes if enabled_classes else (list(all_camera_enabled_classes) if all_camera_enabled_classes else [])
 
                 effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
 
@@ -486,13 +486,13 @@ class DetectorWorker:
                                             cls_thresh = float(val["conf"])
                                             break
 
-                            # Validate Box: min dimensions (12x12), conf >= cls_thresh
-                            if conf_val < cls_thresh or bw < 12 or bh < 12:
+                            # Validate Box: reject 0-pixel noise and extreme hall-sized 90% hallucinations
+                            if conf_val < cls_thresh or bw < 4 or bh < 4:
                                 continue
-                            if box_area > 0.85 * f_area or bh > 0.95 * f_h or bw > 0.95 * f_w:
+                            if box_area > 0.90 * f_area or bh > 0.98 * f_h or bw > 0.98 * f_w:
                                 continue
                             aspect = bh / max(1.0, bw)
-                            if aspect > 4.5 or aspect < 0.15:
+                            if aspect > 5.5 or aspect < 0.10:
                                 continue
 
                             # Apply ROI rectangle filter if configured
@@ -567,7 +567,6 @@ class DetectorWorker:
                 max_dist = max(60.0, max(w_d, h_d) * 1.2)
 
                 for t_idx, trk in enumerate(existing_tracks):
-                    # Requirement 5 & 10: NEVER change track class
                     if not match_class(trk['cls'], cls_det):
                         continue
                     
@@ -606,13 +605,13 @@ class DetectorWorker:
                 b_det, c_det, conf_det, cls_det = kept_items[d_idx]
                 trk = existing_tracks[t_idx]
                 
-                # Smooth box movement (0.90 new + 0.10 prev) for instant follow without jitter
+                # Instant responsive box movement (0.95 new + 0.05 prev)
                 p_box = trk['box']
                 smooth_box = [
-                    0.90 * b_det[0] + 0.10 * p_box[0],
-                    0.90 * b_det[1] + 0.10 * p_box[1],
-                    0.90 * b_det[2] + 0.10 * p_box[2],
-                    0.90 * b_det[3] + 0.10 * p_box[3]
+                    0.95 * b_det[0] + 0.05 * p_box[0],
+                    0.95 * b_det[1] + 0.05 * p_box[1],
+                    0.95 * b_det[2] + 0.05 * p_box[2],
+                    0.95 * b_det[3] + 0.05 * p_box[3]
                 ]
                 updated_tracks.append({
                     'track_id': trk['track_id'],
@@ -625,7 +624,7 @@ class DetectorWorker:
                     'last_seen': now
                 })
 
-            # New Tracks for unmatched detections
+            # New Tracks for unmatched detections (immediate detection on first appearance)
             for d_idx, (b_det, c_det, conf_det, cls_det) in enumerate(kept_items):
                 if d_idx not in matched_det_indices:
                     new_tid = self._get_next_track_id()
@@ -640,11 +639,11 @@ class DetectorWorker:
                         'last_seen': now
                     })
 
-            # Missed existing tracks handling: maintain track memory for up to 6 passes (~2s) for ID stability
+            # Missed tracks: short grace period of 2 passes to prevent flickering without lingering
             for t_idx, trk in enumerate(existing_tracks):
                 if t_idx not in matched_track_indices:
                     new_misses = trk.get('misses', 0) + 1
-                    if new_misses <= 6:
+                    if new_misses <= 2:
                         updated_tracks.append({
                             **trk,
                             'misses': new_misses
@@ -652,11 +651,11 @@ class DetectorWorker:
 
             self._tracked_objects = updated_tracks
 
-            # Build clean tracked box list for display (render active tracks within grace window of 3 missed passes)
+            # Build clean box list for display (no #track_id prefix, pure ClassName Conf format)
             render_boxes = []
             for trk in self._tracked_objects:
-                if trk.get('misses', 0) <= 3:
-                    label_str = f"#{trk['track_id']} {trk['cls']} {trk['conf']:.2f}"
+                if trk.get('misses', 0) <= 1:
+                    label_str = f"{trk['cls']} {trk['conf']:.2f}"
                     render_boxes.append({
                         'track_id': trk['track_id'],
                         'box': trk['box'],
