@@ -453,8 +453,7 @@ class DetectorWorker:
 
                 filter_classes = list(all_camera_enabled_classes) if all_camera_enabled_classes else (enabled_classes if enabled_classes else [])
 
-                # Minimum threshold floor to eliminate background chair/desk noise:
-                effective_conf = max(0.35, float(m_conf))
+                effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
 
                 detected_this_model = []
                 with INFERENCE_LOCK:
@@ -484,11 +483,11 @@ class DetectorWorker:
                                 if class_configs and isinstance(class_configs, dict):
                                     for k, val in class_configs.items():
                                         if match_class(cls, k) and isinstance(val, dict) and "conf" in val:
-                                            cls_thresh = max(0.35, float(val["conf"]))
+                                            cls_thresh = float(val["conf"])
                                             break
 
-                            # Validate Box: min dimensions (15x15), conf >= cls_thresh
-                            if conf_val < cls_thresh or bw < 15 or bh < 15:
+                            # Validate Box: min dimensions (12x12), conf >= cls_thresh
+                            if conf_val < cls_thresh or bw < 12 or bh < 12:
                                 continue
                             if box_area > 0.85 * f_area or bh > 0.95 * f_h or bw > 0.95 * f_w:
                                 continue
@@ -641,12 +640,11 @@ class DetectorWorker:
                         'last_seen': now
                     })
 
-            # Missed existing tracks handling: allow max 1 missed frame if hits >= 2 (prevents flicker, drops immediately on exit)
+            # Missed existing tracks handling: maintain track memory for up to 6 passes (~2s) for ID stability
             for t_idx, trk in enumerate(existing_tracks):
                 if t_idx not in matched_track_indices:
                     new_misses = trk.get('misses', 0) + 1
-                    # Requirement 7: Remove track after SHORT controlled timeout (1 missed pass)
-                    if new_misses <= 1 and trk.get('hits', 0) >= 2:
+                    if new_misses <= 6:
                         updated_tracks.append({
                             **trk,
                             'misses': new_misses
@@ -654,19 +652,20 @@ class DetectorWorker:
 
             self._tracked_objects = updated_tracks
 
-            # Build clean tracked box list for display
+            # Build clean tracked box list for display (render active tracks within grace window of 3 missed passes)
             render_boxes = []
             for trk in self._tracked_objects:
-                label_str = f"#{trk['track_id']} {trk['cls']} {trk['conf']:.2f}"
-                render_boxes.append({
-                    'track_id': trk['track_id'],
-                    'box': trk['box'],
-                    'label': label_str,
-                    'color': trk['color'],
-                    'cls': trk['cls'],
-                    'conf': trk['conf']
-                })
-                cur_cls.add(trk['cls'])
+                if trk.get('misses', 0) <= 3:
+                    label_str = f"#{trk['track_id']} {trk['cls']} {trk['conf']:.2f}"
+                    render_boxes.append({
+                        'track_id': trk['track_id'],
+                        'box': trk['box'],
+                        'label': label_str,
+                        'color': trk['color'],
+                        'cls': trk['cls'],
+                        'conf': trk['conf']
+                    })
+                    cur_cls.add(trk['cls'])
 
             with self._box_lock:
                 self._tracked_boxes = render_boxes
