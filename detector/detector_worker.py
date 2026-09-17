@@ -432,13 +432,13 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                m_imgsz = 640
+                m_imgsz = 1280
                 cfg = get_config_for_model(self.model_configs, m_name)
                 if cfg and isinstance(cfg, dict):
                     m_conf = float(cfg.get("conf", self.conf))
                     m_iou = float(cfg.get("iou", self.iou))
                     enabled_classes = cfg.get("enabled_classes")
-                    m_imgsz = int(cfg.get("imgsz", 640))
+                    m_imgsz = int(cfg.get("imgsz", 1280))
 
                 if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
                     try:
@@ -452,47 +452,49 @@ class DetectorWorker:
                         pass
 
                 filter_classes = enabled_classes if enabled_classes else (list(all_camera_enabled_classes) if all_camera_enabled_classes else [])
-
                 effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
 
-                detected_this_model = []
+                # Map enabled classes to model class IDs for hardware-level tensor filtering
+                target_class_ids = []
+                if hasattr(model, 'names') and isinstance(model.names, dict):
+                    if filter_classes:
+                        for cid, cname in model.names.items():
+                            if any(match_class(cname, e) for e in filter_classes):
+                                target_class_ids.append(int(cid))
+
+                predict_kwargs = {
+                    "source": f,
+                    "conf": effective_conf,
+                    "iou": m_iou,
+                    "imgsz": m_imgsz,
+                    "verbose": False
+                }
+                if filter_classes and target_class_ids:
+                    predict_kwargs["classes"] = target_class_ids
+
                 with INFERENCE_LOCK:
-                    results = model.predict(f, conf=effective_conf, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                    results = model.predict(**predict_kwargs)
+
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
                             cls = r.names[int(b.cls[0])]
                             conf_val = float(b.conf[0])
-                            detected_this_model.append((cls, conf_val))
 
-                            if filter_classes:
-                                matched = any(match_class(cls, e) for e in filter_classes)
-                                if not matched:
+                            if filter_classes and target_class_ids:
+                                if int(b.cls[0]) not in target_class_ids:
+                                    continue
+                            elif filter_classes:
+                                if not any(match_class(cls, e) for e in filter_classes):
                                     continue
 
                             box_xyxy = b.xyxy[0].cpu().numpy().tolist()
                             x1, y1, x2, y2 = box_xyxy
                             bw = max(0, x2 - x1)
                             bh = max(0, y2 - y1)
-                            box_area = bw * bh
 
-                            # Check class-specific conf if defined in config
-                            cls_thresh = effective_conf
-                            if cfg and isinstance(cfg, dict):
-                                class_configs = cfg.get("class_configs")
-                                if class_configs and isinstance(class_configs, dict):
-                                    for k, val in class_configs.items():
-                                        if match_class(cls, k) and isinstance(val, dict) and "conf" in val:
-                                            cls_thresh = float(val["conf"])
-                                            break
-
-                            # Validate Box: reject 0-pixel noise and extreme hall-sized 90% hallucinations
-                            if conf_val < cls_thresh or bw < 4 or bh < 4:
-                                continue
-                            if box_area > 0.90 * f_area or bh > 0.98 * f_h or bw > 0.98 * f_w:
-                                continue
-                            aspect = bh / max(1.0, bw)
-                            if aspect > 5.5 or aspect < 0.10:
+                            # Validate Box (reject single pixel artifacts)
+                            if bw < 4 or bh < 4:
                                 continue
 
                             # Apply ROI rectangle filter if configured
@@ -505,19 +507,15 @@ class DetectorWorker:
                                     ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
                                     cx = int((x1 + x2) / 2)
                                     cy = int((y1 + y2) / 2)
-                                    inside = (rx1 <= cx <= rx2 and ry1 <= cy <= ry2)
-                                    if not inside:
+                                    if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
                                         continue
                                 except Exception:
                                     pass
 
                             color_val = get_dynamic_class_color(cls)
                             raw_boxes.append((box_xyxy, color_val, conf_val, cls))
-                if detected_this_model:
-                    m_name = os.path.basename(self.model_paths[midx])
-                    print(f"[DEBUG] Camera {self.cam_id} {m_name}: raw_detected={len(detected_this_model)}, filter={filter_classes}, kept={len(raw_boxes)} boxes", flush=True)
 
-            # Strict Non-Maximum Suppression (NMS) to eliminate overlapping duplicate boxes
+            # Non-Maximum Suppression (NMS) across multi-model results
             kept_items = []
             if raw_boxes:
                 raw_boxes.sort(key=lambda x: x[2], reverse=True)
@@ -551,120 +549,18 @@ class DetectorWorker:
                     if not suppress:
                         kept_items.append(item)
 
-            # ── STABLE REAL-TIME CCTV TRACKER (STRICT CLASS BINDING + PERSISTENT TRACK ID) ──
-            existing_tracks = getattr(self, '_tracked_objects', [])
-            updated_tracks = []
-            matched_track_indices = set()
-            matched_det_indices = set()
-
-            # Build candidate score pairs
-            candidate_pairs = []
-            for d_idx, (b_det, c_det, conf_det, cls_det) in enumerate(kept_items):
-                x1_d, y1_d, x2_d, y2_d = b_det
-                w_d, h_d = max(1.0, x2_d - x1_d), max(1.0, y2_d - y1_d)
-                area_d = w_d * h_d
-                cx_d, cy_d = (x1_d + x2_d) / 2.0, (y1_d + y2_d) / 2.0
-                max_dist = max(60.0, max(w_d, h_d) * 1.2)
-
-                for t_idx, trk in enumerate(existing_tracks):
-                    if not match_class(trk['cls'], cls_det):
-                        continue
-                    
-                    x1_t, y1_t, x2_t, y2_t = trk['box']
-                    w_t, h_t = max(1.0, x2_t - x1_t), max(1.0, y2_t - y1_t)
-                    area_t = w_t * h_t
-                    cx_t, cy_t = (x1_t + x2_t) / 2.0, (y1_t + y2_t) / 2.0
-
-                    dist = math.hypot(cx_d - cx_t, cy_d - cy_t)
-                    
-                    ix1, iy1 = max(x1_d, x1_t), max(y1_d, y1_t)
-                    ix2, iy2 = min(x2_d, x2_t), min(y2_d, y2_t)
-                    iou_val = 0.0
-                    if ix2 > ix1 and iy2 > iy1:
-                        inter = (ix2 - ix1) * (iy2 - iy1)
-                        union = area_d + area_t - inter
-                        iou_val = inter / max(1.0, union)
-
-                    if iou_val >= 0.20:
-                        score = 2.0 + iou_val
-                    elif dist < max_dist:
-                        score = 1.0 - (dist / max_dist)
-                    else:
-                        continue
-                    
-                    candidate_pairs.append((score, d_idx, t_idx))
-
-            # Sort candidate pairs by score descending (greedy matching)
-            candidate_pairs.sort(key=lambda x: x[0], reverse=True)
-            for score, d_idx, t_idx in candidate_pairs:
-                if d_idx in matched_det_indices or t_idx in matched_track_indices:
-                    continue
-                matched_det_indices.add(d_idx)
-                matched_track_indices.add(t_idx)
-
-                b_det, c_det, conf_det, cls_det = kept_items[d_idx]
-                trk = existing_tracks[t_idx]
-                
-                # Instant responsive box movement (0.95 new + 0.05 prev)
-                p_box = trk['box']
-                smooth_box = [
-                    0.95 * b_det[0] + 0.05 * p_box[0],
-                    0.95 * b_det[1] + 0.05 * p_box[1],
-                    0.95 * b_det[2] + 0.05 * p_box[2],
-                    0.95 * b_det[3] + 0.05 * p_box[3]
-                ]
-                updated_tracks.append({
-                    'track_id': trk['track_id'],
-                    'cls': trk['cls'],
-                    'color': trk.get('color', c_det),
-                    'box': smooth_box,
-                    'conf': conf_det,
-                    'hits': trk.get('hits', 1) + 1,
-                    'misses': 0,
-                    'last_seen': now
-                })
-
-            # New Tracks for unmatched detections (immediate detection on first appearance)
-            for d_idx, (b_det, c_det, conf_det, cls_det) in enumerate(kept_items):
-                if d_idx not in matched_det_indices:
-                    new_tid = self._get_next_track_id()
-                    updated_tracks.append({
-                        'track_id': new_tid,
-                        'cls': cls_det,
-                        'color': c_det,
-                        'box': b_det,
-                        'conf': conf_det,
-                        'hits': 1,
-                        'misses': 0,
-                        'last_seen': now
-                    })
-
-            # Missed tracks: short grace period of 2 passes to prevent flickering without lingering
-            for t_idx, trk in enumerate(existing_tracks):
-                if t_idx not in matched_track_indices:
-                    new_misses = trk.get('misses', 0) + 1
-                    if new_misses <= 2:
-                        updated_tracks.append({
-                            **trk,
-                            'misses': new_misses
-                        })
-
-            self._tracked_objects = updated_tracks
-
-            # Build clean box list for display (no #track_id prefix, pure ClassName Conf format)
+            # Build direct live render boxes with clean ClassName Conf format
             render_boxes = []
-            for trk in self._tracked_objects:
-                if trk.get('misses', 0) <= 1:
-                    label_str = f"{trk['cls']} {trk['conf']:.2f}"
-                    render_boxes.append({
-                        'track_id': trk['track_id'],
-                        'box': trk['box'],
-                        'label': label_str,
-                        'color': trk['color'],
-                        'cls': trk['cls'],
-                        'conf': trk['conf']
-                    })
-                    cur_cls.add(trk['cls'])
+            for b_xyxy, color_val, conf_val, cls_name in kept_items:
+                label_str = f"{cls_name} {conf_val:.2f}"
+                render_boxes.append({
+                    'box': b_xyxy,
+                    'label': label_str,
+                    'color': color_val,
+                    'cls': cls_name,
+                    'conf': conf_val
+                })
+                cur_cls.add(cls_name)
 
             with self._box_lock:
                 self._tracked_boxes = render_boxes
