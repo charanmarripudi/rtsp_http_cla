@@ -277,6 +277,8 @@ class DetectorWorker:
         self._latest_boxes = []
         self._latest_box_time = 0.0
         self._tracked_boxes = []
+        self._tracked_objects = []
+        self._next_track_id_counter = 1
         self._frame_lock, self._box_lock = threading.Lock(), threading.Lock()
         self._stop_event = threading.Event()
         self._frame_queue, self._result_queue = queue.Queue(maxsize=1), queue.Queue(maxsize=1)
@@ -286,6 +288,11 @@ class DetectorWorker:
         self.model_paths = model_paths
         self.models = None
         self._db_conn = None
+
+    def _get_next_track_id(self):
+        tid = getattr(self, '_next_track_id_counter', 1)
+        self._next_track_id_counter = (tid % 9999) + 1
+        return tid
 
     def update_models(self, model_paths, model_configs=None, conf=None, iou=None, location=None):
         if model_paths is not None:
@@ -304,6 +311,7 @@ class DetectorWorker:
             with self._box_lock:
                 self._latest_boxes = []
                 self._tracked_boxes = []
+                self._tracked_objects = []
         print(f"[WORKER-DYNAMIC-UPDATE] Camera {getattr(self, 'cam_id', '?')} dynamically updated models to {self.model_paths} in 0ms without restarting RTSP or FFmpeg", flush=True)
 
     def stop(self):
@@ -424,13 +432,13 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                m_imgsz = 640
+                m_imgsz = 480
                 cfg = get_config_for_model(self.model_configs, m_name)
                 if cfg and isinstance(cfg, dict):
                     m_conf = float(cfg.get("conf", self.conf))
                     m_iou = float(cfg.get("iou", self.iou))
                     enabled_classes = cfg.get("enabled_classes")
-                    m_imgsz = int(cfg.get("imgsz", 640))
+                    m_imgsz = int(cfg.get("imgsz", 480))
 
                 if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
                     try:
@@ -443,13 +451,14 @@ class DetectorWorker:
                     except Exception:
                         pass
 
-                # Combine model-specific enabled_classes with camera-wide union so any assigned model detects all requested classes instantly
                 filter_classes = list(all_camera_enabled_classes) if all_camera_enabled_classes else (enabled_classes if enabled_classes else [])
 
+                # Minimum threshold floor to eliminate background chair/desk noise:
+                effective_conf = max(0.35, float(m_conf))
+
                 detected_this_model = []
-                # Predict at conf 0.05 to capture all moving, distant, and close objects instantly
                 with INFERENCE_LOCK:
-                    results = model.predict(f, conf=0.05, iou=m_iou, imgsz=m_imgsz, verbose=False)
+                    results = model.predict(f, conf=effective_conf, iou=m_iou, imgsz=m_imgsz, verbose=False)
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
@@ -468,34 +477,23 @@ class DetectorWorker:
                             bh = max(0, y2 - y1)
                             box_area = bw * bh
 
-                            # Load class-specific conf thresholds dynamically
-                            cls_conf = m_conf
+                            # Check class-specific conf if defined in config
+                            cls_thresh = effective_conf
                             if cfg and isinstance(cfg, dict):
                                 class_configs = cfg.get("class_configs")
                                 if class_configs and isinstance(class_configs, dict):
-                                    c_cfg = None
                                     for k, val in class_configs.items():
-                                        if match_class(cls, k):
-                                            c_cfg = val
+                                        if match_class(cls, k) and isinstance(val, dict) and "conf" in val:
+                                            cls_thresh = max(0.35, float(val["conf"]))
                                             break
-                                    if c_cfg and isinstance(c_cfg, dict) and "conf" in c_cfg:
-                                        cls_conf = float(c_cfg.get("conf", m_conf))
 
-                            # Detection threshold floor: 0.15 max for enabled violation classes so all seated/distant objects are detected reliably without missing
-                            if filter_classes:
-                                cls_conf = min(cls_conf, 0.15)
-                            elif not cls_conf or cls_conf < 0.05:
-                                cls_conf = 0.15
-
-                            effective_conf = float(cls_conf)
-
-                            # Extract crop slice to verify texture & eliminate bare floor hallucinations
-                            cy1, cy2 = max(0, int(y1)), min(f_h, int(y2))
-                            cx1, cx2 = max(0, int(x1)), min(f_w, int(x2))
-                            box_crop = f[cy1:cy2, cx1:cx2]
-
-                            # Validate Box using effective confidence threshold and texture variance
-                            if not self._is_valid_box(conf_val, effective_conf, bw, bh, box_area, f_w, f_h, f_area, crop_img=box_crop):
+                            # Validate Box: min dimensions (15x15), conf >= cls_thresh
+                            if conf_val < cls_thresh or bw < 15 or bh < 15:
+                                continue
+                            if box_area > 0.85 * f_area or bh > 0.95 * f_h or bw > 0.95 * f_w:
+                                continue
+                            aspect = bh / max(1.0, bw)
+                            if aspect > 4.5 or aspect < 0.15:
                                 continue
 
                             # Apply ROI rectangle filter if configured
@@ -503,9 +501,9 @@ class DetectorWorker:
                                 try:
                                     fh, fw = f.shape[:2]
                                     rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                    ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][0]) * fh)
+                                    ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
                                     rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                    ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][0]) * fh)
+                                    ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
                                     cx = int((x1 + x2) / 2)
                                     cy = int((y1 + y2) / 2)
                                     inside = (rx1 <= cx <= rx2 and ry1 <= cy <= ry2)
@@ -514,30 +512,27 @@ class DetectorWorker:
                                 except Exception:
                                     pass
 
-                            label_text = f"{cls} {conf_val:.2f}"
                             color_val = get_dynamic_class_color(cls)
-                            raw_boxes.append((box_xyxy, label_text, color_val, conf_val, cls))
+                            raw_boxes.append((box_xyxy, color_val, conf_val, cls))
                 if detected_this_model:
                     m_name = os.path.basename(self.model_paths[midx])
-                    print(f"[DEBUG] Camera {self.cam_id} {m_name}: raw_detected={len(detected_this_model)}, filter={enabled_classes}, kept={len(raw_boxes)} boxes", flush=True)
+                    print(f"[DEBUG] Camera {self.cam_id} {m_name}: raw_detected={len(detected_this_model)}, filter={filter_classes}, kept={len(raw_boxes)} boxes", flush=True)
 
-            # Strict Non-Maximum Suppression (NMS) to guarantee single clean bounding boxes per object
-            boxes_data = []
+            # Strict Non-Maximum Suppression (NMS) to eliminate overlapping duplicate boxes
             kept_items = []
             if raw_boxes:
-                raw_boxes.sort(key=lambda x: x[3], reverse=True)
+                raw_boxes.sort(key=lambda x: x[2], reverse=True)
                 for item in raw_boxes:
-                    b1_xyxy, l1_text, c1_color, conf1_val, cls1_name = item
+                    b1_xyxy, c1_color, conf1_val, cls1_name = item
                     x1_1, y1_1, x2_1, y2_1 = b1_xyxy
                     area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
                     
                     suppress = False
                     for k_item in kept_items:
-                        b2_xyxy, l2_text, c2_color, conf2_val, cls2_name = k_item
+                        b2_xyxy, c2_color, conf2_val, cls2_name = k_item
                         x1_2, y1_2, x2_2, y2_2 = b2_xyxy
                         area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
                         
-                        # Compute Intersection over Union (IoU)
                         ix1 = max(x1_1, x1_2)
                         iy1 = max(y1_1, y1_2)
                         ix2 = min(x2_1, x2_2)
@@ -549,8 +544,7 @@ class DetectorWorker:
                             iou = inter / max(1.0, union)
                             
                             is_same_cls = match_class(cls1_name, cls2_name)
-                            # Strict IoU: 0.25 for same/equivalent class, 0.40 for cross-class overlap to eliminate duplicate cluttered boxes
-                            iou_thresh = 0.25 if is_same_cls else 0.40
+                            iou_thresh = 0.40 if is_same_cls else 0.65
                             if iou >= iou_thresh:
                                 suppress = True
                                 break
@@ -558,141 +552,126 @@ class DetectorWorker:
                     if not suppress:
                         kept_items.append(item)
 
-            # ── TEMPORAL KALMAN VELOCITY & BYTETRACK MOTION TRACKER ──
-            new_tracked = []
-            matched_indices = set()
+            # ── STABLE REAL-TIME CCTV TRACKER (STRICT CLASS BINDING + PERSISTENT TRACK ID) ──
+            existing_tracks = getattr(self, '_tracked_objects', [])
+            updated_tracks = []
+            matched_track_indices = set()
+            matched_det_indices = set()
 
-            import math
+            # Build candidate score pairs
+            candidate_pairs = []
+            for d_idx, (b_det, c_det, conf_det, cls_det) in enumerate(kept_items):
+                x1_d, y1_d, x2_d, y2_d = b_det
+                w_d, h_d = max(1.0, x2_d - x1_d), max(1.0, y2_d - y1_d)
+                area_d = w_d * h_d
+                cx_d, cy_d = (x1_d + x2_d) / 2.0, (y1_d + y2_d) / 2.0
+                max_dist = max(60.0, max(w_d, h_d) * 1.2)
 
-            existing_tracks = getattr(self, '_tracked_boxes', [])
-
-            for item in kept_items:
-                b1_xyxy, l1_text, c1_color, conf1_val, cls1_name = item
-                x1_1, y1_1, x2_1, y2_1 = b1_xyxy
-                w1 = max(1.0, x2_1 - x1_1)
-                h1 = max(1.0, y2_1 - y1_1)
-                area1 = w1 * h1
-                cx1 = (x1_1 + x2_1) / 2.0
-                cy1 = (y1_1 + y2_1) / 2.0
-                
-                # Dynamic matching distance tailored to object scale and velocity
-                max_match_dist = max(50.0, min(150.0, max(w1, h1) * 1.5))
-
-                best_match_idx = None
-                best_match_score = -1.0
-
-                for t_idx, t_box in enumerate(existing_tracks):
-                    if t_idx in matched_indices:
-                        continue
-                    if not match_class(t_box.get('cls'), cls1_name):
+                for t_idx, trk in enumerate(existing_tracks):
+                    # Requirement 5 & 10: NEVER change track class
+                    if not match_class(trk['cls'], cls_det):
                         continue
                     
-                    x1_2, y1_2, x2_2, y2_2 = t_box['box']
-                    area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
-                    
-                    # Retrieve velocity vector (vx, vy) to predict expected center
-                    vx = t_box.get('vx', 0.0)
-                    vy = t_box.get('vy', 0.0)
-                    cx2_pred = ((x1_2 + x2_2) / 2.0) + vx
-                    cy2_pred = ((y1_2 + y2_2) / 2.0) + vy
-                    
-                    dist = math.hypot(cx1 - cx2_pred, cy1 - cy2_pred)
+                    x1_t, y1_t, x2_t, y2_t = trk['box']
+                    w_t, h_t = max(1.0, x2_t - x1_t), max(1.0, y2_t - y1_t)
+                    area_t = w_t * h_t
+                    cx_t, cy_t = (x1_t + x2_t) / 2.0, (y1_t + y2_t) / 2.0
 
-                    ix1, iy1 = max(x1_1, x1_2), max(y1_1, y1_2)
-                    ix2, iy2 = min(x2_1, x2_2), min(y2_1, y2_2)
+                    dist = math.hypot(cx_d - cx_t, cy_d - cy_t)
+                    
+                    ix1, iy1 = max(x1_d, x1_t), max(y1_d, y1_t)
+                    ix2, iy2 = min(x2_d, x2_t), min(y2_d, y2_t)
                     iou_val = 0.0
                     if ix2 > ix1 and iy2 > iy1:
                         inter = (ix2 - ix1) * (iy2 - iy1)
-                        union = area1 + area2 - inter
+                        union = area_d + area_t - inter
                         iou_val = inter / max(1.0, union)
-                    
-                    # Match score: High priority on IoU, velocity-predicted centroid distance
-                    if iou_val > 0.15:
+
+                    if iou_val >= 0.20:
                         score = 2.0 + iou_val
-                    elif dist < max_match_dist:
-                        score = 1.0 - (dist / max_match_dist)
+                    elif dist < max_dist:
+                        score = 1.0 - (dist / max_dist)
                     else:
-                        score = -1.0
+                        continue
+                    
+                    candidate_pairs.append((score, d_idx, t_idx))
 
-                    if score > best_match_score and score > 0.10:
-                        best_match_score = score
-                        best_match_idx = t_idx
+            # Sort candidate pairs by score descending (greedy matching)
+            candidate_pairs.sort(key=lambda x: x[0], reverse=True)
+            for score, d_idx, t_idx in candidate_pairs:
+                if d_idx in matched_det_indices or t_idx in matched_track_indices:
+                    continue
+                matched_det_indices.add(d_idx)
+                matched_track_indices.add(t_idx)
 
-                if best_match_idx is not None:
-                    matched_indices.add(best_match_idx)
-                    prev_track = existing_tracks[best_match_idx]
-                    prev_box = prev_track['box']
-                    prev_conf = prev_track.get('conf', 0.5)
+                b_det, c_det, conf_det, cls_det = kept_items[d_idx]
+                trk = existing_tracks[t_idx]
+                
+                # Smooth box movement (0.90 new + 0.10 prev) for instant follow without jitter
+                p_box = trk['box']
+                smooth_box = [
+                    0.90 * b_det[0] + 0.10 * p_box[0],
+                    0.90 * b_det[1] + 0.10 * p_box[1],
+                    0.90 * b_det[2] + 0.10 * p_box[2],
+                    0.90 * b_det[3] + 0.10 * p_box[3]
+                ]
+                updated_tracks.append({
+                    'track_id': trk['track_id'],
+                    'cls': trk['cls'],
+                    'color': trk.get('color', c_det),
+                    'box': smooth_box,
+                    'conf': conf_det,
+                    'hits': trk.get('hits', 1) + 1,
+                    'misses': 0,
+                    'last_seen': now
+                })
 
-                    # Update velocity vector (0.60 new + 0.40 momentum)
-                    cx_prev = (prev_box[0] + prev_box[2]) / 2.0
-                    cy_prev = (prev_box[1] + prev_box[3]) / 2.0
-                    new_vx = 0.60 * (cx1 - cx_prev) + 0.40 * prev_track.get('vx', 0.0)
-                    new_vy = 0.60 * (cy1 - cy_prev) + 0.40 * prev_track.get('vy', 0.0)
-
-                    # Check if confidence dropped severely on a static spot
-                    is_conf_drop = (prev_conf >= 0.45 and conf1_val < 0.25)
-                    assigned_ttl = 1 if is_conf_drop else 2
-
-                    # Responsive coordinate smoothing (0.85 new + 0.15 prev)
-                    smooth_box = [
-                        0.85 * x1_1 + 0.15 * prev_box[0],
-                        0.85 * y1_1 + 0.15 * prev_box[1],
-                        0.85 * x2_1 + 0.15 * prev_box[2],
-                        0.85 * y2_1 + 0.15 * prev_box[3]
-                    ]
-                    new_tracked.append({
-                        'box': smooth_box,
-                        'label': l1_text,
-                        'color': c1_color,
-                        'cls': cls1_name,
-                        'conf': max(conf1_val, prev_conf * 0.95 if not is_conf_drop else conf1_val),
-                        'vx': new_vx,
-                        'vy': new_vy,
-                        'ttl': assigned_ttl
-                    })
-                else:
-                    new_tracked.append({
-                        'box': b1_xyxy,
-                        'label': l1_text,
-                        'color': c1_color,
-                        'cls': cls1_name,
-                        'conf': conf1_val,
-                        'vx': 0.0,
-                        'vy': 0.0,
-                        'ttl': 2
+            # New Tracks for unmatched detections
+            for d_idx, (b_det, c_det, conf_det, cls_det) in enumerate(kept_items):
+                if d_idx not in matched_det_indices:
+                    new_tid = self._get_next_track_id()
+                    updated_tracks.append({
+                        'track_id': new_tid,
+                        'cls': cls_det,
+                        'color': c_det,
+                        'box': b_det,
+                        'conf': conf_det,
+                        'hits': 1,
+                        'misses': 0,
+                        'last_seen': now
                     })
 
-            # Velocity Projection & Expiration for Unmatched Active Tracks
-            for t_idx, t_box in enumerate(existing_tracks):
-                if t_idx not in matched_indices:
-                    vx = t_box.get('vx', 0.0)
-                    vy = t_box.get('vy', 0.0)
-                    speed = math.hypot(vx, vy)
+            # Missed existing tracks handling: allow max 1 missed frame if hits >= 2 (prevents flicker, drops immediately on exit)
+            for t_idx, trk in enumerate(existing_tracks):
+                if t_idx not in matched_track_indices:
+                    new_misses = trk.get('misses', 0) + 1
+                    # Requirement 7: Remove track after SHORT controlled timeout (1 missed pass)
+                    if new_misses <= 1 and trk.get('hits', 0) >= 2:
+                        updated_tracks.append({
+                            **trk,
+                            'misses': new_misses
+                        })
 
-                    # Only project moving objects forward; static objects expire immediately (ttl=0) to prevent empty desk ghost boxes
-                    if speed > 3.0:
-                        new_ttl = t_box['ttl'] - 1
-                        if new_ttl > 0:
-                            proj_box = [
-                                t_box['box'][0] + vx,
-                                t_box['box'][1] + vy,
-                                t_box['box'][2] + vx,
-                                t_box['box'][3] + vy
-                            ]
-                            t_copy = dict(t_box)
-                            t_copy['box'] = proj_box
-                            t_copy['ttl'] = new_ttl
-                            new_tracked.append(t_copy)
+            self._tracked_objects = updated_tracks
 
-            self._tracked_boxes = new_tracked
+            # Build clean tracked box list for display
+            render_boxes = []
+            for trk in self._tracked_objects:
+                label_str = f"#{trk['track_id']} {trk['cls']} {trk['conf']:.2f}"
+                render_boxes.append({
+                    'track_id': trk['track_id'],
+                    'box': trk['box'],
+                    'label': label_str,
+                    'color': trk['color'],
+                    'cls': trk['cls'],
+                    'conf': trk['conf']
+                })
+                cur_cls.add(trk['cls'])
 
-            boxes_data = []
-            for t_box in self._tracked_boxes:
-                boxes_data.append((t_box['box'], t_box['label'], t_box['color']))
-                cur_cls.add(t_box['cls'])
+            with self._box_lock:
+                self._tracked_boxes = render_boxes
 
-            # Render alert image snapshot with green ROI and identical color-coded boxes
+            # Render alert snapshot
             snap_img = f.copy()
             if self.roi_polygon and len(self.roi_polygon) == 2:
                 try:
@@ -705,13 +684,13 @@ class DetectorWorker:
                 except:
                     pass
 
-            for b_xyxy, label_text, c_color in boxes_data:
+            for t_box in render_boxes:
                 try:
-                    x1, y1, x2, y2 = [int(v) for v in b_xyxy]
-                    cv2.rectangle(snap_img, (x1, y1), (x2, y2), c_color, 2)
-                    t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
-                    cv2.rectangle(snap_img, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), c_color, -1)
-                    cv2.putText(snap_img, label_text, (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+                    x1, y1, x2, y2 = [int(v) for v in t_box['box']]
+                    cv2.rectangle(snap_img, (x1, y1), (x2, y2), t_box['color'], 2)
+                    t_size = cv2.getTextSize(t_box['label'], cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
+                    cv2.rectangle(snap_img, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), t_box['color'], -1)
+                    cv2.putText(snap_img, t_box['label'], (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
                 except:
                     pass
             res = snap_img
@@ -741,7 +720,7 @@ class DetectorWorker:
                     if c in self.alert_triggered:
                         self.alert_triggered.remove(c)
 
-            return res, boxes_data
+            return res, render_boxes
         except Exception as err:
             print(f"[ERROR] _run_all_models error: {err}", flush=True)
             return f, []
@@ -790,8 +769,16 @@ class DetectorWorker:
         print(f"[LOG] Camera {self.cam_id} inference thread started", flush=True)
         while not self._stop_event.is_set() and not inf_stop_evt.is_set():
             try:
-                f = self._frame_queue.get(timeout=0.2)
-            except:
+                # Always grab the ABSOLUTE LATEST live frame (drain any older queued frames)
+                f = None
+                while not self._frame_queue.empty():
+                    try:
+                        f = self._frame_queue.get_nowait()
+                    except Exception:
+                        break
+                if f is None:
+                    f = self._frame_queue.get(timeout=0.2)
+            except Exception:
                 continue
             if inf_stop_evt.is_set() or self._stop_event.is_set():
                 break
@@ -956,12 +943,16 @@ class DetectorWorker:
                         # Ultra-fast in-place resize to 720p HD
                         pf = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
                         
-                        # Send copy to inference thread if ready
-                        if not self._frame_queue.full():
+                        # Send latest live frame to inference thread (evict any older queued frame for 0-latency live edge)
+                        if self._frame_queue.full():
                             try:
-                                self._frame_queue.put_nowait(pf.copy())
-                            except:
+                                self._frame_queue.get_nowait()
+                            except Exception:
                                 pass
+                        try:
+                            self._frame_queue.put_nowait(pf.copy())
+                        except Exception:
+                            pass
 
                         # Draw ROI boundary if active
                         if self.roi_polygon and len(self.roi_polygon) == 2:
