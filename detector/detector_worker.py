@@ -451,7 +451,7 @@ class DetectorWorker:
                     except Exception:
                         pass
 
-                filter_classes = enabled_classes if enabled_classes else (list(all_camera_enabled_classes) if all_camera_enabled_classes else [])
+                filter_classes = list(all_camera_enabled_classes) if all_camera_enabled_classes else (enabled_classes if enabled_classes else [])
                 effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
 
                 # Map enabled classes to model class IDs for hardware-level tensor filtering
