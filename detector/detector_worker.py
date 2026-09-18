@@ -8,7 +8,12 @@ os.environ["TORCH_NUM_THREADS"] = "1"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
 
+# Enable Python faulthandler so SIGABRT/SIGSEGV produce a traceback in server.log
+import faulthandler
+faulthandler.enable()
+
 import cv2, subprocess, time, threading, queue, json, math
+import numpy as np
 try:
     cv2.setNumThreads(1)
     cv2.ocl.setUseOpenCL(False)
@@ -432,13 +437,13 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                m_imgsz = 1280
+                m_imgsz = 640  # Safe default for Raspberry Pi ARM64 (1280 causes OOM)
                 cfg = get_config_for_model(self.model_configs, m_name)
                 if cfg and isinstance(cfg, dict):
                     m_conf = float(cfg.get("conf", self.conf))
                     m_iou = float(cfg.get("iou", self.iou))
                     enabled_classes = cfg.get("enabled_classes")
-                    m_imgsz = int(cfg.get("imgsz", 1280))
+                    m_imgsz = int(cfg.get("imgsz", 640))
 
                 if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
                     try:
@@ -462,8 +467,13 @@ class DetectorWorker:
                             if any(match_class(cname, e) for e in filter_classes):
                                 target_class_ids.append(int(cid))
 
+                # CRITICAL: ensure frame is C-contiguous before passing to YOLO/PyTorch
+                # Non-contiguous numpy arrays (e.g. from cv2.resize slices) cause SIGABRT
+                # on ARM64 Raspberry Pi due to memory alignment violations in libtorch.
+                safe_f = np.ascontiguousarray(f) if not f.flags['C_CONTIGUOUS'] else f
+
                 predict_kwargs = {
-                    "source": f,
+                    "source": safe_f,
                     "conf": effective_conf,
                     "iou": m_iou,
                     "imgsz": m_imgsz,
@@ -472,8 +482,12 @@ class DetectorWorker:
                 if filter_classes and target_class_ids:
                     predict_kwargs["classes"] = target_class_ids
 
-                with INFERENCE_LOCK:
-                    results = model.predict(**predict_kwargs)
+                try:
+                    with INFERENCE_LOCK:
+                        results = model.predict(**predict_kwargs)
+                except Exception as pred_err:
+                    print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name} predict failed: {pred_err}", flush=True)
+                    continue
 
                 for r in results:
                     if r.boxes:
@@ -695,25 +709,24 @@ class DetectorWorker:
 
     def _capture_thread(self, cap, cap_stop_evt):
         while not self._stop_event.is_set() and not cap_stop_evt.is_set():
-            t_start = time.time()
             try:
                 if not cap.grab():
                     time.sleep(0.005)
                     continue
             except Exception:
                 break
-            
-            # Drain buffer: discard old frames queued in socket buffer to reach live edge
+
+            # Drain buffer: discard up to 3 stale frames to stay at live edge.
+            # Capped at 3 (was 30) to prevent CPU starvation on Raspberry Pi 4.
             grab_count = 0
-            while grab_count < 30 and (time.time() - t_start) < 0.005 and not cap_stop_evt.is_set():
-                t_start = time.time()
+            while grab_count < 3 and not cap_stop_evt.is_set():
                 try:
                     if not cap.grab():
                         break
                 except Exception:
                     break
                 grab_count += 1
-            
+
             if cap_stop_evt.is_set():
                 break
 
@@ -725,11 +738,14 @@ class DetectorWorker:
             if not ret or f is None:
                 time.sleep(0.005)
                 continue
-                
+
             with self._frame_lock:
                 self._latest_raw_frame = f.copy()
                 self._cap_ok = True
                 self._last_frame_time = time.time()
+
+            # Small yield to prevent 100% CPU spin on Raspberry Pi 4
+            time.sleep(0.001)
 
     def run(self):
         ffmpeg, cap, inf_t, cap_t = None, None, None, None
