@@ -488,7 +488,7 @@ class DetectorWorker:
             m_conf = self.conf
             m_iou = self.iou
             enabled_classes = None
-            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "800"))
+            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz = default_imgsz
             cfg = get_config_for_model(self.model_configs, m_name)
             if cfg and isinstance(cfg, dict):
@@ -766,8 +766,8 @@ class DetectorWorker:
         if not getattr(self, '_first_box_logged', False) and display_boxes:
             self._first_box_logged = True
             now_t = time.time()
-            t_start = getattr(self, '_start_time', now_t)
-            t_active = getattr(self, '_models_active_time', t_start)
+            t_start = getattr(self, '_start_time', None) or now_t
+            t_active = getattr(self, '_models_active_time', None) or t_start
             delay_from_start_ms = int((now_t - t_start) * 1000)
             delay_from_active_ms = int((now_t - t_active) * 1000)
             detected_labels = [b['label'] for b in display_boxes]
