@@ -289,6 +289,9 @@ class DetectorWorker:
         self.model_paths = model_paths
         self.models = None
         self._db_conn = None
+        self._start_time = time.time()
+        self._first_box_logged = False
+        print(f"[TIMER-START] Camera {self.cam_id} Start request initialized at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
 
     def _get_next_track_id(self):
         tid = getattr(self, '_next_track_id_counter', 1)
@@ -433,13 +436,13 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                m_imgsz = 1280
+                m_imgsz = 640
                 cfg = get_config_for_model(self.model_configs, m_name)
                 if cfg and isinstance(cfg, dict):
                     m_conf = float(cfg.get("conf", self.conf))
                     m_iou = float(cfg.get("iou", self.iou))
                     enabled_classes = cfg.get("enabled_classes")
-                    m_imgsz = int(cfg.get("imgsz", 1280))
+                    m_imgsz = int(cfg.get("imgsz", 640))
 
                 if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
                     try:
@@ -480,8 +483,15 @@ class DetectorWorker:
                     predict_kwargs["classes"] = target_class_ids
 
                 try:
+                    t_m_start = time.time()
                     with INFERENCE_LOCK:
-                        results = model.predict(**predict_kwargs)
+                        if 'torch' in globals() and hasattr(torch, 'inference_mode'):
+                            with torch.inference_mode():
+                                results = model.predict(**predict_kwargs)
+                        else:
+                            results = model.predict(**predict_kwargs)
+                    t_m_dur = int((time.time() - t_m_start) * 1000)
+                    print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) took {t_m_dur}ms at {datetime.now().strftime('%H:%M:%S.%f')[:-3]}", flush=True)
                 except Exception as pred_err:
                     print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name}: {pred_err}", flush=True)
                     continue
@@ -503,6 +513,8 @@ class DetectorWorker:
                             x1, y1, x2, y2 = box_xyxy
                             bw = max(0, x2 - x1)
                             bh = max(0, y2 - y1)
+                            cx = (x1 + x2) / 2.0
+                            cy = (y1 + y2) / 2.0
 
                             # Validate Box (reject single pixel artifacts)
                             if bw < 4 or bh < 4:
@@ -516,8 +528,6 @@ class DetectorWorker:
                                     ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
                                     rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
                                     ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                                    cx = int((x1 + x2) / 2)
-                                    cy = int((y1 + y2) / 2)
                                     if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
                                         continue
                                 except Exception:
@@ -575,6 +585,17 @@ class DetectorWorker:
 
             with self._box_lock:
                 self._tracked_boxes = render_boxes
+
+            # Precision calculation and print for first detection box appear time
+            if not getattr(self, '_first_box_logged', False) and render_boxes:
+                self._first_box_logged = True
+                delay_ms = int((time.time() - getattr(self, '_start_time', time.time())) * 1000)
+                print(f"\n==================================================================", flush=True)
+                print(f"[TIMER-FIRST-BBOX] Camera {self.cam_id} FIRST BOUNDING BOX DETECTED & RENDERED!", flush=True)
+                print(f" -> Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
+                print(f" -> Total Delay from Clicking 'Start' to First Box: {delay_ms}ms ({delay_ms/1000.0:.2f}s)", flush=True)
+                print(f" -> Detected {len(render_boxes)} boxes: {[b['label'] for b in render_boxes]}", flush=True)
+                print(f"==================================================================\n", flush=True)
 
             # Render alert snapshot
             snap_img = f.copy()
