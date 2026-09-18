@@ -788,10 +788,11 @@ class DetectorWorker:
         try:
             if self.models is None:
                 paths = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
-                print(f"[WORKER-TIMER] Camera {self.cam_id} background model loading started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
                 t_load_start = time.time()
                 self.models = [get_yolo_model(mp) for mp in paths]
-                print(f"[WORKER-TIMER] Camera {self.cam_id} models loaded in {int((time.time() - t_load_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: {paths}", flush=True)
+                load_ms = int((time.time() - t_load_start) * 1000)
+                from_start_ms = int((time.time() - getattr(self, '_start_time', time.time())) * 1000)
+                print(f"[TIMER-MODELS-ACTIVE] Camera {self.cam_id} models loaded & ACTIVE at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} (Load time: {load_ms}ms, Elapsed from Start: {from_start_ms}ms)", flush=True)
 
             while not self._stop_event.is_set():
                 cleanup_subthreads()

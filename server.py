@@ -1696,7 +1696,7 @@ def start_detection(d: dict):
     mods = active_mods
     model_configs = clean_model_configs
 
-    print(f"\n[START_DETECTION] Camera {cid}: Starting detection thread for RTSP={rtsp}", flush=True)
+    print(f"\n[TIMER-START] Camera {cid}: Click 'Start' received at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} (RTSP={rtsp})", flush=True)
     print(f"[START_DETECTION] Camera {cid}: Active assigned models = {mods}", flush=True)
     for m in mods:
         m_cls = model_configs.get(m, {}).get("enabled_classes") if isinstance(model_configs.get(m), dict) else None
