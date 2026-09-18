@@ -885,28 +885,30 @@ async def startup_event():
     t = threading.Thread(target=monitor_raw_streams_loop, daemon=True)
     t.start()
     
-    # Pre-load all available models in the background to ensure instant start (0ms load latency)
+    # Pre-load all available model weights in the background (weights only, NO warmup inference).
+    # WARNING: Running model.predict() for warmup at server startup on ARM64 Pi 4 causes
+    # SIGSEGV inside torch's conv2d (_conv_forward) because the JIT engine conflicts with
+    # the FastAPI/uvicorn event loop initialization. Weights-only loading is safe.
     def preload_all_models():
         try:
-            print("[STARTUP] Initializing background model preloading & PyTorch JIT warmup...")
-            from detector.detector_worker import get_yolo_model
-            import numpy as np
-            dummy_img = np.zeros((640, 640, 3), dtype=np.uint8)
+            print("[STARTUP] Initializing background model weight preloading...")
+            from detector.detector_worker import get_yolo_model, INFERENCE_LOCK
             model_dir = os.path.join(BASE_DIR, "models")
             if os.path.exists(model_dir):
-                pts = [f for f in os.listdir(model_dir) if f.endswith(".pt")]
+                pts = sorted([f for f in os.listdir(model_dir) if f.endswith(".pt")])
                 for m in pts:
                     p = os.path.join(model_dir, m)
-                    print(f"[STARTUP] Background pre-loading & warming up model weights: {m}")
-                    m_obj = get_yolo_model(p)
-                    if m_obj:
-                        try:
-                            m_obj.predict(dummy_img, verbose=False, imgsz=640)
-                        except Exception:
-                            pass
-                print("[STARTUP] All safety models successfully cached & warmed up in memory!")
+                    try:
+                        print(f"[STARTUP] Loading model weights: {m}", flush=True)
+                        with INFERENCE_LOCK:
+                            get_yolo_model(p)
+                        # Small pause between models to avoid OOM on Pi 4 (4GB RAM)
+                        time.sleep(0.5)
+                    except Exception as me:
+                        print(f"[STARTUP] Warning - could not load {m}: {me}", flush=True)
+                print("[STARTUP] All model weights loaded into memory cache.", flush=True)
         except Exception as e:
-            print(f"[STARTUP] Error pre-loading models: {e}")
+            print(f"[STARTUP] Error in model preloading: {e}", flush=True)
 
     threading.Thread(target=preload_all_models, daemon=True).start()
 
