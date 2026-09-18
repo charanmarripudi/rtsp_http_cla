@@ -17,7 +17,7 @@ except Exception:
 
 import torch
 try:
-    torch.set_num_threads(1)
+    torch.set_num_threads(2)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
 except Exception:

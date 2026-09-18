@@ -38,10 +38,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Optimize PyTorch CPU threading to 1 thread (mandatory on ARM64 Linux to prevent OpenMP SIGSEGV)
+# Optimize PyTorch CPU threading to 2 threads (balanced with centralized InferenceScheduler)
 try:
     import torch
-    torch.set_num_threads(1)
+    torch.set_num_threads(2)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
 except Exception:
