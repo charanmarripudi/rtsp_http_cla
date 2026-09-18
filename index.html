@@ -1363,24 +1363,60 @@
             </div>
           </div>
 
-          <!-- Start Action Button -->
-          <div style="margin-top: auto; padding-top: 8px;">
-            <button id="vlab-start-btn" onclick="vlabStartDetectionJob()" class="btn-primary" style="width: 100%; padding: 12px; font-size: 0.88rem; font-weight: 700; background: var(--accent); color: #000; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s;">
-              <span>🚀</span> Run AI Video Detection
+          <!-- Action Buttons: Live Stream vs Batch Export -->
+          <div style="margin-top: auto; padding-top: 8px; display: flex; flex-direction: column; gap: 8px;">
+            <button id="vlab-live-btn" onclick="vlabStartLiveStream()" class="btn-primary" style="width: 100%; padding: 12px; font-size: 0.88rem; font-weight: 700; background: var(--accent); color: #000; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; box-shadow: 0 0 15px rgba(0,229,160,0.3);">
+              <span>⚡</span> Start Live AI Stream (Instant Real-Time)
+            </button>
+            <button id="vlab-batch-btn" onclick="vlabStartDetectionJob()" class="btn-secondary" style="width: 100%; padding: 8px; font-size: 0.75rem; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
+              <span>📦</span> Export Full MP4 Video (Offline Batch Render)
             </button>
           </div>
         </div>
 
       </div>
 
-      <!-- Processing Progress Section (Shown while running) -->
+      <!-- Live Stream Player Section (Instant Real-Time MJPEG) -->
+      <div id="vlab-live-card" class="widget-card" style="display: none; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 20px; flex-direction: column; gap: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);">
+        <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 1.5s infinite;"></span>
+            <h3 style="font-size: 0.95rem; font-weight: 700; color: var(--accent);">📺 Live AI Video Detection Stream</h3>
+            <span id="vlab-live-badge" style="font-size: 0.70rem; background: rgba(0,229,160,0.15); color: var(--accent); padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(0,229,160,0.3); font-family: var(--mono);">LIVE FEED</span>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button onclick="vlabStartLiveStream()" class="btn-secondary" style="padding: 5px 12px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
+              <span>🔄</span> Restart
+            </button>
+            <button onclick="vlabStopLiveStream()" class="btn-secondary" style="color: var(--danger); border-color: rgba(255, 65, 85, 0.4); padding: 5px 12px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
+              <span>⏹️</span> Stop Stream
+            </button>
+          </div>
+        </div>
+
+        <!-- Live MJPEG Stream Player -->
+        <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;">
+          <img id="vlab-live-player" src="" alt="Live AI Detection Stream" style="width: 100%; height: 100%; object-fit: contain; display: block;">
+          <div id="vlab-live-placeholder" style="display: none; color: var(--muted); font-size: 0.8rem; text-align: center;">
+            Stream stopped. Click "Start Live AI Stream" to resume.
+          </div>
+        </div>
+
+        <!-- Real-Time Info Banner -->
+        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; font-size: 0.72rem; color: var(--muted);">
+          <div>💡 <strong>Interactive Tuning:</strong> Adjust sliders or toggle classes above to update detections instantaneously!</div>
+          <div id="vlab-live-status-txt" style="font-family: var(--mono); color: var(--accent);">Active</div>
+        </div>
+      </div>
+
+      <!-- Processing Progress Section (Shown while offline batch running) -->
       <div id="vlab-progress-card" class="widget-card" style="display: none; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 20px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <div style="display: flex; align-items: center; gap: 10px;">
             <div class="spin" style="width: 16px; height: 16px; border-width: 2px;"></div>
-            <strong style="color: var(--accent); font-size: 0.85rem;">Processing Video with YOLO...</strong>
+            <strong style="color: var(--accent); font-size: 0.85rem;">Processing Video with YOLO (Offline Render)...</strong>
           </div>
-          <button id="vlab-cancel-btn" class="btn-secondary" style="color: var(--danger); border-color: rgba(255, 65, 85, 0.4); padding: 4px 12px; font-size: 0.72rem;">Cancel Job</button>
+          <button id="vlab-cancel-btn" onclick="vlabCancelJob()" class="btn-secondary" style="color: var(--danger); border-color: rgba(255, 65, 85, 0.4); padding: 4px 12px; font-size: 0.72rem;">Cancel Job</button>
         </div>
 
         <!-- Progress Bar -->
@@ -2880,6 +2916,8 @@
     window.vlabActiveJobId = null;
     window.vlabPollInterval = null;
     window.vlabSelectedImgsz = 640;
+    window.vlabLiveStreamingActive = false;
+    window.vlabLiveParamDebounceTimer = null;
 
     window.vlabSetImgsz = function(sz, btnEl) {
       window.vlabSelectedImgsz = parseInt(sz) || 640;
@@ -2894,6 +2932,9 @@
         btnEl.style.background = "var(--accent-dim)";
         btnEl.style.borderColor = "var(--accent)";
         btnEl.style.color = "var(--accent)";
+      }
+      if (window.vlabLiveStreamingActive) {
+        window.vlabPushLiveParams();
       }
     };
 
@@ -2948,8 +2989,11 @@
             const cb = document.createElement("input");
             cb.type = "checkbox";
             cb.value = c;
-            cb.checked = true; // Enabled by default
+            cb.checked = true;
             cb.style.accentColor = "var(--accent)";
+            cb.onchange = () => {
+              if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();
+            };
             
             const span = document.createElement("span");
             span.textContent = c;
@@ -2958,6 +3002,7 @@
             label.appendChild(span);
             container.appendChild(label);
           });
+          if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();
         })
         .catch(e => {
           container.innerHTML = '<span style="font-size: 0.70rem; color: var(--danger);">Failed to load classes</span>';
@@ -3034,6 +3079,162 @@
       });
     };
 
+    // ==========================================
+    // ⚡ INSTANT LIVE VIDEO DETECTION STREAMING
+    // ==========================================
+    window.vlabStartLiveStream = function() {
+      if (!window.vlabUploadedFilename) {
+        alert("Please select and upload a video file first.");
+        return;
+      }
+
+      const modelSelect = document.getElementById("vlab-model-select");
+      const confSlider = document.getElementById("vlab-conf-slider");
+      const iouSlider = document.getElementById("vlab-iou-slider");
+      
+      const modelName = modelSelect ? modelSelect.value : "";
+      if (!modelName) {
+        alert("Please select a YOLO model.");
+        return;
+      }
+
+      const enabledClasses = [];
+      document.querySelectorAll("#vlab-classes-container input[type='checkbox']:checked").forEach(cb => {
+        enabledClasses.push(cb.value);
+      });
+
+      const payload = {
+        raw_filename: window.vlabUploadedFilename,
+        model_name: modelName,
+        conf: parseFloat(confSlider.value) || 0.35,
+        iou: parseFloat(iouSlider.value) || 0.45,
+        imgsz: window.vlabSelectedImgsz || 640,
+        enabled_classes: enabledClasses
+      };
+
+      const liveCard = document.getElementById("vlab-live-card");
+      const livePlayer = document.getElementById("vlab-live-player");
+      const livePlaceholder = document.getElementById("vlab-live-placeholder");
+      const liveStatusTxt = document.getElementById("vlab-live-status-txt");
+      const progressCard = document.getElementById("vlab-progress-card");
+      const resultsCard = document.getElementById("vlab-results-card");
+
+      if (progressCard) progressCard.style.display = "none";
+      if (resultsCard) resultsCard.style.display = "none";
+      if (liveCard) liveCard.style.display = "flex";
+      if (livePlaceholder) livePlaceholder.style.display = "none";
+      if (livePlayer) livePlayer.style.display = "block";
+      if (liveStatusTxt) liveStatusTxt.textContent = "Connecting to Live YOLO Stream...";
+
+      fetch("/api/video-test/live-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.status === "ok") {
+          window.vlabLiveStreamingActive = true;
+          if (livePlayer) {
+            livePlayer.src = `/api/video-test/live-stream?t=${Date.now()}`;
+          }
+          if (liveStatusTxt) {
+            liveStatusTxt.textContent = `Streaming Active • ${modelName} (${payload.imgsz}px, Conf ${payload.conf})`;
+          }
+        } else {
+          alert("Failed to start Live Video Stream: " + (res.message || "Unknown error"));
+          if (liveStatusTxt) liveStatusTxt.textContent = "Failed to start stream";
+        }
+      })
+      .catch(err => {
+        console.error("[VideoLab] Live stream start error:", err);
+        alert("Live stream network error: " + err.message);
+      });
+    };
+
+    window.vlabStopLiveStream = function() {
+      window.vlabLiveStreamingActive = false;
+      const livePlayer = document.getElementById("vlab-live-player");
+      const livePlaceholder = document.getElementById("vlab-live-placeholder");
+      const liveStatusTxt = document.getElementById("vlab-live-status-txt");
+
+      if (livePlayer) {
+        livePlayer.src = "";
+        livePlayer.style.display = "none";
+      }
+      if (livePlaceholder) livePlaceholder.style.display = "block";
+      if (liveStatusTxt) liveStatusTxt.textContent = "Stream Stopped";
+
+      fetch("/api/video-test/live-stop", { method: "POST" })
+        .catch(e => console.warn("[VideoLab] Live stop error:", e));
+    };
+
+    window.vlabPushLiveParams = function() {
+      if (!window.vlabLiveStreamingActive) return;
+
+      if (window.vlabLiveParamDebounceTimer) {
+        clearTimeout(window.vlabLiveParamDebounceTimer);
+      }
+
+      window.vlabLiveParamDebounceTimer = setTimeout(() => {
+        const modelSelect = document.getElementById("vlab-model-select");
+        const confSlider = document.getElementById("vlab-conf-slider");
+        const iouSlider = document.getElementById("vlab-iou-slider");
+        
+        const enabledClasses = [];
+        document.querySelectorAll("#vlab-classes-container input[type='checkbox']:checked").forEach(cb => {
+          enabledClasses.push(cb.value);
+        });
+
+        const payload = {
+          conf: parseFloat(confSlider ? confSlider.value : 0.35),
+          iou: parseFloat(iouSlider ? iouSlider.value : 0.45),
+          imgsz: window.vlabSelectedImgsz || 640,
+          enabled_classes: enabledClasses,
+          model_name: modelSelect ? modelSelect.value : null
+        };
+
+        fetch("/api/video-test/live-params", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        })
+        .then(r => r.json())
+        .then(res => {
+          const liveStatusTxt = document.getElementById("vlab-live-status-txt");
+          if (liveStatusTxt && res.status === "ok") {
+            liveStatusTxt.textContent = `Updated: Conf ${payload.conf.toFixed(2)}, IoU ${payload.iou.toFixed(2)}, ${payload.imgsz}px (${enabledClasses.length} classes)`;
+          }
+        })
+        .catch(e => console.warn("[VideoLab] Live param sync error:", e));
+      }, 50);
+    };
+
+    // Attach dynamic live input listeners to sliders
+    document.addEventListener("DOMContentLoaded", () => {
+      const confSlider = document.getElementById("vlab-conf-slider");
+      const iouSlider = document.getElementById("vlab-iou-slider");
+      
+      if (confSlider) {
+        confSlider.addEventListener("input", () => {
+          const valEl = document.getElementById("vlab-conf-val");
+          if (valEl) valEl.innerText = parseFloat(confSlider.value).toFixed(2);
+          if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();
+        });
+      }
+
+      if (iouSlider) {
+        iouSlider.addEventListener("input", () => {
+          const valEl = document.getElementById("vlab-iou-val");
+          if (valEl) valEl.innerText = parseFloat(iouSlider.value).toFixed(2);
+          if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();
+        });
+      }
+    });
+
+    // ==========================================
+    // 📦 OFFLINE BATCH RENDER & MP4 EXPORT
+    // ==========================================
     window.vlabStartDetectionJob = function() {
       if (!window.vlabUploadedFilename) {
         alert("Please select and upload a video file first.");
@@ -3066,14 +3267,16 @@
         frame_skip: parseInt(frameSkipSelect.value) || 1
       };
 
-      const startBtn = document.getElementById("vlab-start-btn");
+      const startBtn = document.getElementById("vlab-batch-btn");
       if (startBtn) {
         startBtn.disabled = true;
         startBtn.style.opacity = "0.5";
       }
 
+      const liveCard = document.getElementById("vlab-live-card");
       const progressCard = document.getElementById("vlab-progress-card");
       const resultsCard = document.getElementById("vlab-results-card");
+      if (liveCard) liveCard.style.display = "none";
       if (progressCard) progressCard.style.display = "block";
       if (resultsCard) resultsCard.style.display = "none";
 

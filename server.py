@@ -62,7 +62,7 @@ class DeviceHeartbeat(BaseModel):
 DEVICE_STATUS = {}
 
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response, FileResponse, JSONResponse
+from fastapi.responses import Response, FileResponse, JSONResponse, StreamingResponse
 import os, glob, subprocess, mimetypes, signal, json, socket, time, threading, sys, uuid
 
 # Import DetectorWorker to pre-load PyTorch/YOLO libraries at server boot time (takes ~25s once on boot)
@@ -77,12 +77,14 @@ except Exception as e:
 try:
     from video_tester import (
         create_job, get_job, delete_job, start_video_test,
+        get_or_create_live_streamer, get_live_streamer, stop_live_streamer,
         RAW_DIR, RESULTS_DIR, JOBS
     )
 except Exception as e:
     try:
         from detector.video_tester import (
             create_job, get_job, delete_job, start_video_test,
+            get_or_create_live_streamer, get_live_streamer, stop_live_streamer,
             RAW_DIR, RESULTS_DIR, JOBS
         )
     except Exception as e2:
@@ -1296,6 +1298,88 @@ def get_video_test_raw(job_id: str):
 def delete_video_test_job(job_id: str):
     success = delete_job(job_id)
     return {"status": "ok" if success else "not_found"}
+
+# ---------------------------------------------------------
+# REAL-TIME LIVE VIDEO DETECTION STREAMING ENDPOINTS
+# ---------------------------------------------------------
+class LiveStreamStartRequest(BaseModel):
+    raw_filename: str
+    model_name: str
+    conf: Optional[float] = 0.35
+    iou: Optional[float] = 0.45
+    imgsz: Optional[int] = 640
+    enabled_classes: Optional[list] = None
+    session_id: Optional[str] = "default"
+
+class LiveStreamParamsRequest(BaseModel):
+    session_id: Optional[str] = "default"
+    conf: Optional[float] = None
+    iou: Optional[float] = None
+    imgsz: Optional[int] = None
+    enabled_classes: Optional[list] = None
+    model_name: Optional[str] = None
+
+@app.post("/api/video-test/live-start")
+def start_live_video_stream(req: LiveStreamStartRequest):
+    try:
+        session_id = req.session_id or "default"
+        streamer = get_or_create_live_streamer(
+            session_id=session_id,
+            raw_filename=req.raw_filename,
+            model_name=req.model_name,
+            conf=req.conf or 0.35,
+            iou=req.iou or 0.45,
+            imgsz=req.imgsz or 640,
+            enabled_classes=req.enabled_classes or []
+        )
+        return {
+            "status": "ok",
+            "session_id": session_id,
+            "stream_url": f"/api/video-test/live-stream?session_id={session_id}&t={int(time.time()*1000)}"
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
+@app.get("/api/video-test/live-stream")
+def get_live_video_stream(session_id: str = Query(default="default")):
+    streamer = get_live_streamer(session_id)
+    if not streamer or not streamer.running:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Live stream session not found or stopped"})
+
+    def _frame_generator():
+        while streamer.running:
+            frame_bytes = streamer.get_jpeg_frame()
+            if frame_bytes:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            time.sleep(0.04)
+
+    return StreamingResponse(
+        _frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+    )
+
+@app.post("/api/video-test/live-params")
+def update_live_video_params(req: LiveStreamParamsRequest):
+    session_id = req.session_id or "default"
+    streamer = get_live_streamer(session_id)
+    if not streamer:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Live stream session not found"})
+    streamer.update_params(
+        conf=req.conf,
+        iou=req.iou,
+        imgsz=req.imgsz,
+        enabled_classes=req.enabled_classes,
+        model_name=req.model_name
+    )
+    return {"status": "ok", "updated": True}
+
+@app.post("/api/video-test/live-stop")
+def stop_live_video_stream(session_id: str = Query(default="default")):
+    success = stop_live_streamer(session_id)
+    return {"status": "ok" if success else "not_found"}
+
 
 
 @app.get("/api/streams")

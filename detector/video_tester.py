@@ -1,7 +1,7 @@
 """
 video_tester.py — Edge AI Video Testing Engine for RTSP & Edge Server.
-Processes uploaded video files with any YOLO model, renders bounding boxes,
-and generates web-compatible H.264 MP4 detection videos with real-time statistics.
+Supports both Instant Live Stream Mode (real-time MJPEG detection playback with live slider tuning)
+and Offline Web-Compatible H.264 MP4 export.
 """
 
 import os
@@ -98,7 +98,275 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 
+# In-memory Live Streamers Store
+LIVE_STREAMERS = {}
+LIVE_STREAMERS_LOCK = threading.Lock()
 
+
+# =========================================================================
+# 🔴 INSTANT LIVE VIDEO DETECTION STREAMER (REAL-TIME MJPEG)
+# =========================================================================
+class LiveVideoTestStreamer:
+    def __init__(self, session_id: str, raw_filename: str, model_name: str, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None):
+        self.session_id = session_id
+        self.raw_filename = raw_filename
+        self.raw_path = str(RAW_DIR / raw_filename)
+        self.model_name = model_name
+        self.model_path = str(BASE_DIR / "models" / model_name) if not os.path.isabs(model_name) else model_name
+        self.conf = float(conf)
+        self.iou = float(iou)
+        self.imgsz = int(imgsz)
+        self.enabled_classes = enabled_classes or []
+        
+        self.running = False
+        self.paused = False
+        self.loop = True
+        self.thread = None
+        
+        self.current_frame = None
+        self.current_jpeg_bytes = None
+        self.latest_detections = []
+        self.active_classes_count = {}
+        self.fps = 25.0
+        self.processed_fps = 0.0
+        self.lock = threading.Lock()
+        self.model = None
+
+    def start(self):
+        if self.running:
+            return
+        self.running = True
+        self.thread = threading.Thread(target=self._run_loop, daemon=True, name=f"LiveStreamer-{self.session_id}")
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+
+    def update_params(self, conf=None, iou=None, imgsz=None, enabled_classes=None, model_name=None):
+        with self.lock:
+            if conf is not None:
+                self.conf = float(conf)
+            if iou is not None:
+                self.iou = float(iou)
+            if imgsz is not None:
+                self.imgsz = int(imgsz)
+            if enabled_classes is not None:
+                self.enabled_classes = enabled_classes
+            if model_name is not None and model_name != self.model_name:
+                self.model_name = model_name
+                self.model_path = str(BASE_DIR / "models" / model_name) if not os.path.isabs(model_name) else model_name
+                try:
+                    self.model = get_yolo_model(self.model_path)
+                except Exception as e:
+                    logger.error(f"Error loading new model {model_name}: {e}")
+
+    def get_jpeg_frame(self):
+        with self.lock:
+            return self.current_jpeg_bytes
+
+    def _run_loop(self):
+        try:
+            self.model = get_yolo_model(self.model_path)
+        except Exception as e:
+            logger.error(f"Failed to load model on live start: {e}")
+
+        cap = cv2.VideoCapture(self.raw_path)
+        if not cap.isOpened():
+            logger.error(f"Cannot open video for streaming: {self.raw_path}")
+            self.running = False
+            return
+
+        native_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        self.fps = native_fps
+        frame_interval = 1.0 / max(10.0, min(30.0, native_fps))
+
+        latest_infer_frame = None
+
+        def _async_infer():
+            while self.running:
+                if latest_infer_frame is None:
+                    time.sleep(0.01)
+                    continue
+                with self.lock:
+                    f_copy = latest_infer_frame.copy()
+                    c_conf = self.conf
+                    c_iou = self.iou
+                    c_imgsz = self.imgsz
+                    c_model = self.model
+                    c_classes = list(self.enabled_classes)
+
+                if c_model is None:
+                    time.sleep(0.05)
+                    continue
+
+                try:
+                    predict_kwargs = {
+                        "source": f_copy,
+                        "imgsz": c_imgsz,
+                        "conf": c_conf,
+                        "iou": c_iou,
+                        "verbose": False
+                    }
+                    t0 = time.time()
+                    results = c_model.predict(**predict_kwargs)
+                    dt = time.time() - t0
+
+                    dets = []
+                    counts = {}
+                    if results and len(results) > 0:
+                        r = results[0]
+                        if r.boxes is not None and len(r.boxes) > 0:
+                            for b in r.boxes:
+                                cls_id = int(b.cls[0].item())
+                                conf_val = float(b.conf[0].item())
+                                cls_name = c_model.names.get(cls_id, str(cls_id)) if hasattr(c_model, 'names') else str(cls_id)
+                                
+                                if c_classes:
+                                    if not any(match_class(cls_name, fc) for fc in c_classes):
+                                        continue
+                                        
+                                xyxy = b.xyxy[0].cpu().numpy()
+                                color = get_dynamic_class_color(cls_name)
+                                dets.append({
+                                    "box": xyxy,
+                                    "label": cls_name,
+                                    "conf": conf_val,
+                                    "color": color
+                                })
+                                counts[cls_name] = counts.get(cls_name, 0) + 1
+
+                    with self.lock:
+                        self.latest_detections = dets
+                        self.active_classes_count = counts
+                        self.processed_fps = 1.0 / dt if dt > 0 else 0.0
+
+                except Exception as e:
+                    logger.error(f"Live infer error: {e}")
+                    time.sleep(0.1)
+
+                time.sleep(0.01)
+
+        infer_thread = threading.Thread(target=_async_infer, daemon=True, name=f"LiveInfer-{self.session_id}")
+        infer_thread.start()
+
+        fps_calc_t0 = time.time()
+        fps_frame_count = 0
+        actual_fps = self.fps
+
+        while self.running:
+            if self.paused:
+                time.sleep(0.05)
+                continue
+
+            t_start = time.time()
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                if self.loop:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = cap.read()
+                    if not ret or frame is None:
+                        time.sleep(0.1)
+                        continue
+                else:
+                    break
+
+            latest_infer_frame = frame
+
+            # Render overlay
+            with self.lock:
+                dets = list(self.latest_detections)
+                c_conf = self.conf
+                c_iou = self.iou
+                c_imgsz = self.imgsz
+                m_name = self.model_name
+                p_fps = self.processed_fps
+
+            h, w = frame.shape[:2]
+            
+            # Draw boxes
+            for det in dets:
+                x1, y1, x2, y2 = map(int, det["box"])
+                color = det["color"]
+                label = det["label"]
+                conf = det["conf"]
+                
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                tag_text = f"{label} {conf:.2f}"
+                (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
+                tag_y = max(y1, th + 8)
+                cv2.rectangle(frame, (x1, tag_y - th - 6), (x1 + tw + 8, tag_y + 2), (18, 20, 24), -1)
+                cv2.rectangle(frame, (x1, tag_y - th - 6), (x1 + tw + 8, tag_y + 2), color, 1)
+                cv2.putText(frame, tag_text, (x1 + 4, tag_y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA)
+
+            # Top HUD bar
+            hud_h = 32
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, 0), (w, hud_h), (12, 14, 18), -1)
+            cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+            cv2.line(frame, (0, hud_h), (w, hud_h), (40, 48, 60), 1)
+            
+            left_hud = f"LIVE AI: {m_name} | imgsz={c_imgsz} | conf={c_conf:.2f}"
+            right_hud = f"Stream: {actual_fps:.1f} FPS | AI: {p_fps:.1f} FPS | Dets: {len(dets)}"
+            
+            cv2.putText(frame, left_hud, (12, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 229, 160), 1, cv2.LINE_AA)
+            (rtw, _), _ = cv2.getTextSize(right_hud, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
+            cv2.putText(frame, right_hud, (w - rtw - 12, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (230, 235, 240), 1, cv2.LINE_AA)
+
+            # Encode to JPEG
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
+            ret, jpeg = cv2.imencode('.jpg', frame, encode_param)
+            if ret:
+                with self.lock:
+                    self.current_jpeg_bytes = jpeg.tobytes()
+
+            fps_frame_count += 1
+            if time.time() - fps_calc_t0 >= 1.0:
+                actual_fps = fps_frame_count / (time.time() - fps_calc_t0)
+                fps_frame_count = 0
+                fps_calc_t0 = time.time()
+
+            # Maintain natural video speed
+            elapsed = time.time() - t_start
+            sleep_t = frame_interval - elapsed
+            if sleep_t > 0:
+                time.sleep(sleep_t)
+
+        cap.release()
+        self.running = False
+
+
+def get_or_create_live_streamer(session_id: str, raw_filename: str, model_name: str, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None):
+    with LIVE_STREAMERS_LOCK:
+        if session_id in LIVE_STREAMERS:
+            s = LIVE_STREAMERS[session_id]
+            if s.raw_filename == raw_filename and s.running:
+                s.update_params(conf=conf, iou=iou, imgsz=imgsz, enabled_classes=enabled_classes, model_name=model_name)
+                return s
+            else:
+                s.stop()
+        streamer = LiveVideoTestStreamer(session_id, raw_filename, model_name, conf, iou, imgsz, enabled_classes)
+        LIVE_STREAMERS[session_id] = streamer
+        streamer.start()
+        return streamer
+
+
+def get_live_streamer(session_id: str):
+    with LIVE_STREAMERS_LOCK:
+        return LIVE_STREAMERS.get(session_id)
+
+
+def stop_live_streamer(session_id: str):
+    with LIVE_STREAMERS_LOCK:
+        s = LIVE_STREAMERS.pop(session_id, None)
+        if s:
+            s.stop()
+            return True
+    return False
+
+
+# =========================================================================
+# 📁 BATCH JOB ENGINE (EXPORT H.264 MP4)
+# =========================================================================
 class VideoTestJob:
     def __init__(self, job_id, raw_filename, model_name, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None, frame_skip=1):
         self.job_id = job_id
@@ -115,8 +383,8 @@ class VideoTestJob:
         self.enabled_classes = enabled_classes or []
         self.frame_skip = max(1, int(frame_skip))
         
-        self.status = "queued"  # queued, processing, completed, failed, cancelled
-        self.progress = 0.0      # 0 to 100
+        self.status = "queued"
+        self.progress = 0.0
         self.current_frame = 0
         self.total_frames = 0
         self.video_fps = 25.0
@@ -202,12 +470,8 @@ def delete_job(job_id: str):
 
 
 def _draw_detection_overlay(frame, detections, job: VideoTestJob, frame_idx: int, total_frames: int):
-    """
-    Renders high-contrast bounding boxes, pill background tags, and top HUD banner on frame.
-    """
     h, w = frame.shape[:2]
     
-    # Draw Bounding Boxes
     for det in detections:
         box = det["box"]
         label = det["label"]
@@ -220,35 +484,24 @@ def _draw_detection_overlay(frame, detections, job: VideoTestJob, frame_idx: int
         x2 = max(0, min(w - 1, x2))
         y2 = max(0, min(h - 1, y2))
         
-        # Draw bounding rectangle
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        
-        # Draw pill tag with label & confidence
         tag_text = f"{label} {conf:.2f}"
-        font_scale = 0.52
-        font_thickness = 1
-        (tw, th), baseline = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
-        
+        (tw, th), baseline = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
         tag_y = max(y1, th + 8)
-        # Background pill
         cv2.rectangle(frame, (x1, tag_y - th - 6), (x1 + tw + 8, tag_y + 2), (18, 20, 24), -1)
         cv2.rectangle(frame, (x1, tag_y - th - 6), (x1 + tw + 8, tag_y + 2), color, 1)
-        # Text
-        cv2.putText(frame, tag_text, (x1 + 4, tag_y - 2), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), font_thickness, cv2.LINE_AA)
+        cv2.putText(frame, tag_text, (x1 + 4, tag_y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA)
 
-    # Top HUD Bar
     hud_h = 32
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, 0), (w, hud_h), (12, 14, 18), -1)
     cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
     cv2.line(frame, (0, hud_h), (w, hud_h), (40, 48, 60), 1)
     
-    # HUD text
     left_hud = f"AI LAB: {job.model_name} | imgsz={job.imgsz} | conf={job.conf:.2f}"
     right_hud = f"Frame {frame_idx}/{total_frames} | Dets: {len(detections)}"
     
     cv2.putText(frame, left_hud, (12, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 229, 160), 1, cv2.LINE_AA)
-    
     (rtw, _), _ = cv2.getTextSize(right_hud, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
     cv2.putText(frame, right_hud, (w - rtw - 12, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (230, 235, 240), 1, cv2.LINE_AA)
     
@@ -256,10 +509,6 @@ def _draw_detection_overlay(frame, detections, job: VideoTestJob, frame_idx: int
 
 
 def _process_video_worker(job: VideoTestJob):
-    """
-    Background worker thread that processes the video file using YOLO.
-    Uses FFmpeg pipe to write web-standard H.264 MP4 video.
-    """
     job.status = "processing"
     job.start_time = time.time()
     
@@ -270,7 +519,6 @@ def _process_video_worker(job: VideoTestJob):
             raise FileNotFoundError(f"YOLO model not found at: {job.model_path}")
             
         model = get_yolo_model(job.model_path)
-        
         cap = cv2.VideoCapture(job.raw_path)
         if not cap.isOpened():
             raise RuntimeError(f"Unable to open uploaded video file: {job.raw_path}")
@@ -286,7 +534,6 @@ def _process_video_worker(job: VideoTestJob):
         job.video_height = height
         job.duration_sec = total_frames / video_fps if video_fps > 0 else 0.0
         
-        # Filter class ID mapping
         filter_classes = [c.strip() for c in job.enabled_classes if c.strip()]
         target_class_ids = []
         if hasattr(model, 'names') and isinstance(model.names, dict):
@@ -297,11 +544,9 @@ def _process_video_worker(job: VideoTestJob):
                             target_class_ids.append(cid)
                             break
         
-        # Setup OpenCV VideoWriter for intermediate output
         fourcc = cv2.VideoWriter_fourcc(*'MJPG')
         out_writer = cv2.VideoWriter(temp_avi_path, fourcc, video_fps, (width, height))
         if not out_writer.isOpened():
-            # Fallback to XVID
             fourcc = cv2.VideoWriter_fourcc(*'XVID')
             out_writer = cv2.VideoWriter(temp_avi_path, fourcc, video_fps, (width, height))
             
@@ -318,14 +563,10 @@ def _process_video_worker(job: VideoTestJob):
                 break
                 
             frame_idx += 1
-            
-            # Check frame skipping for faster processing
             run_detection = ((frame_idx - 1) % job.frame_skip == 0)
-            
             current_frame_detections = []
             
             if run_detection:
-                # Run YOLO Predict
                 predict_kwargs = {
                     "source": frame,
                     "imgsz": job.imgsz,
@@ -346,7 +587,6 @@ def _process_video_worker(job: VideoTestJob):
                             conf_val = float(b.conf[0].item())
                             cls_name = model.names.get(cls_id, str(cls_id)) if hasattr(model, 'names') else str(cls_id)
                             
-                            # Additional class match filtering
                             if filter_classes:
                                 matched = any(match_class(cls_name, fc) for fc in filter_classes)
                                 if not matched:
@@ -362,7 +602,6 @@ def _process_video_worker(job: VideoTestJob):
                                 "color": color
                             })
                             
-                            # Increment stats
                             job.detections_total += 1
                             job.class_counts[cls_name] = job.class_counts.get(cls_name, 0) + 1
                             
@@ -370,11 +609,9 @@ def _process_video_worker(job: VideoTestJob):
             else:
                 current_frame_detections = last_detections
                 
-            # Render overlay
             annotated_frame = _draw_detection_overlay(frame, current_frame_detections, job, frame_idx, total_frames)
             out_writer.write(annotated_frame)
             
-            # Update Progress & Metrics
             job.current_frame = frame_idx
             if total_frames > 0:
                 job.progress = (frame_idx / total_frames) * 100.0
@@ -394,7 +631,6 @@ def _process_video_worker(job: VideoTestJob):
                 os.remove(temp_avi_path)
             return
 
-        # Convert intermediate AVI to Web-Standard FastStart H.264 MP4 with FFmpeg
         logger.info(f"[VideoTester] Remuxing job {job.job_id} to H.264 MP4 via FFmpeg...")
         ffmpeg_cmd = [
             "ffmpeg", "-y",
@@ -413,8 +649,7 @@ def _process_video_worker(job: VideoTestJob):
             shutil.copyfile(temp_avi_path, job.result_path)
             
         if os.path.exists(temp_avi_path):
-            try:
-                os.remove(temp_avi_path)
+            try: os.remove(temp_avi_path)
             except: pass
             
         job.progress = 100.0
