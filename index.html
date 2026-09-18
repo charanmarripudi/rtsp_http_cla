@@ -3038,12 +3038,13 @@
       uploadStatus.textContent = "Uploading to server...";
       uploadStatus.style.color = "var(--accent)";
       
-      const formData = new FormData();
-      formData.append("file", file);
-      
-      fetch("/api/video-test/upload", {
+      fetch(`/api/video-test/upload?filename=${encodeURIComponent(file.name)}`, {
         method: "POST",
-        body: formData
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-Filename": encodeURIComponent(file.name)
+        },
+        body: file
       })
       .then(r => r.json())
       .then(res => {

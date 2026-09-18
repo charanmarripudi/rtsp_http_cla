@@ -29,7 +29,7 @@ except ImportError:
     YOLO = None
 
 try:
-    from detector.detector_worker import (
+    from detector_worker import (
         get_yolo_model,
         get_dynamic_class_color,
         match_class,
@@ -37,12 +37,21 @@ try:
         extract_negation_and_core
     )
 except ImportError:
-    # Fallback definitions if detector_worker cannot be imported directly
-    YOLO_CACHE = {}
-    def get_yolo_model(model_path):
-        if model_path not in YOLO_CACHE:
-            YOLO_CACHE[model_path] = YOLO(model_path)
-        return YOLO_CACHE[model_path]
+    try:
+        from detector.detector_worker import (
+            get_yolo_model,
+            get_dynamic_class_color,
+            match_class,
+            clean_str,
+            extract_negation_and_core
+        )
+    except ImportError:
+        YOLO_CACHE = {}
+        def get_yolo_model(model_path):
+            if model_path not in YOLO_CACHE:
+                from ultralytics import YOLO
+                YOLO_CACHE[model_path] = YOLO(model_path)
+            return YOLO_CACHE[model_path]
 
     DYNAMIC_CLASS_COLOR_MAP = {
         "no-hardhat": (0, 50, 255),

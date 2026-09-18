@@ -23,7 +23,7 @@ try:
 except Exception:
     pass
 
-from fastapi import FastAPI, Body, Query, Request, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, Body, Query, Request, HTTPException
 from typing import Optional, Tuple, Any
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -1190,26 +1190,51 @@ class VideoProcessRequest(BaseModel):
     frame_skip: Optional[int] = 1
 
 @app.post("/api/video-test/upload")
-async def upload_test_video(file: UploadFile = File(...)):
+async def upload_test_video(request: Request, filename: Optional[str] = Query(default=None)):
     try:
-        if not file.filename:
-            return JSONResponse(status_code=400, content={"status": "error", "message": "No filename provided"})
+        content_type = request.headers.get("content-type", "")
+        file_bytes = None
+        orig_filename = filename
         
-        ext = os.path.splitext(file.filename)[1].lower()
+        if "multipart/form-data" in content_type:
+            try:
+                form = await request.form()
+                uploaded = form.get("file")
+                if uploaded and hasattr(uploaded, "filename"):
+                    orig_filename = uploaded.filename
+                    file_bytes = await uploaded.read()
+            except Exception as e_form:
+                print(f"[WARN] Multipart parse fallback: {e_form}")
+                
+        if file_bytes is None:
+            file_bytes = await request.body()
+            
+        if not file_bytes:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "No video data received in request"})
+            
+        if not orig_filename:
+            raw_h = request.headers.get("X-Filename")
+            orig_filename = str(raw_h) if raw_h else "test_video.mp4"
+            
+        ext = os.path.splitext(orig_filename)[1].lower()
         if not ext:
             ext = ".mp4"
         safe_name = f"upload_{int(time.time())}_{str(uuid.uuid4())[:6]}{ext}"
-        save_path = os.path.join(str(RAW_DIR), safe_name)
+        
+        # Ensure RAW_DIR exists
+        raw_storage = str(RAW_DIR) if 'RAW_DIR' in globals() else os.path.join(BASE_DIR, "test_videos", "raw")
+        os.makedirs(raw_storage, exist_ok=True)
+        
+        save_path = os.path.join(raw_storage, safe_name)
         
         with open(save_path, "wb") as f:
-            while chunk := await file.read(1024 * 1024):
-                f.write(chunk)
+            f.write(file_bytes)
                 
         file_size = os.path.getsize(save_path)
         return {
             "status": "ok",
             "raw_filename": safe_name,
-            "original_filename": file.filename,
+            "original_filename": orig_filename,
             "file_size": file_size,
         }
     except Exception as e:
