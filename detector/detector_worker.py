@@ -286,7 +286,13 @@ class DetectorWorker:
         self._last_frame_time, self._cap_ok = time.time(), True
         self.alert_timers, self.alert_triggered = {}, set()
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
-        self.model_paths = model_paths
+        if isinstance(model_paths, list):
+            seen = []
+            for p in model_paths:
+                if p not in seen: seen.append(p)
+            self.model_paths = seen
+        else:
+            self.model_paths = model_paths
         self.models = None
         self._db_conn = None
         self._start_time = time.time()
@@ -301,8 +307,11 @@ class DetectorWorker:
     def update_models(self, model_paths, model_configs=None, conf=None, iou=None, location=None):
         if model_paths is not None:
             paths = model_paths if isinstance(model_paths, list) else [model_paths]
-            self.model_paths = paths
-            self.models = [get_yolo_model(mp) for mp in paths]
+            seen = []
+            for p in paths:
+                if p not in seen: seen.append(p)
+            self.model_paths = seen
+            self.models = [get_yolo_model(mp) for mp in seen]
         if model_configs is not None:
             self.model_configs = model_configs
         if conf is not None:
