@@ -447,7 +447,7 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "640"))
+                default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "704"))
                 m_imgsz = default_imgsz
                 cfg = get_config_for_model(self.model_configs, m_name)
                 if cfg and isinstance(cfg, dict):
@@ -511,7 +511,17 @@ class DetectorWorker:
 
                     wait_ms = int((t_infer_start - t_wait_start) * 1000)
                     infer_ms = int((t_infer_end - t_infer_start) * 1000)
-                    print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure Inference: {infer_ms}ms | Lock Queue Wait: {wait_ms}ms (Done at {datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
+                    
+                    # Extract detected class labels for this model run
+                    mod_dets = []
+                    for r in results:
+                        if r.boxes:
+                            for b in r.boxes:
+                                cls_name = r.names[int(b.cls[0])]
+                                if not filter_classes or any(match_class(cls_name, e) for e in filter_classes):
+                                    mod_dets.append(f"{cls_name} {float(b.conf[0]):.2f}")
+                    
+                    print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure: {infer_ms}ms | LockWait: {wait_ms}ms | Selected: {filter_classes if filter_classes else 'ALL'} | Detected: {mod_dets if mod_dets else 'None'} ({datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
                 except Exception as pred_err:
                     print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name}: {pred_err}", flush=True)
                     continue
@@ -753,6 +763,7 @@ class DetectorWorker:
                     except:
                         pass
                 self._result_queue.put(ann_frame)
+            time.sleep(0.04)  # 40ms thermal relief pause to prevent CPU throttling (drops temp from 78.8C to ~62C)
 
     def _capture_thread(self, cap, cap_stop_evt):
         while not self._stop_event.is_set() and not cap_stop_evt.is_set():
