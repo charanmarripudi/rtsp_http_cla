@@ -599,6 +599,10 @@ class DetectorWorker:
             with self._box_lock:
                 self._tracked_boxes = render_boxes
 
+            if render_boxes:
+                det_summary = ", ".join([f"{b['cls']} (conf: {b['conf']:.2f})" for b in render_boxes])
+                print(f"[STREAM-DETECTIONS] Camera {self.cam_id}: {len(render_boxes)} box(es) detected -> [{det_summary}]", flush=True)
+
             # Precision calculation and print for first detection box appear time
             if not getattr(self, '_first_box_logged', False) and render_boxes:
                 self._first_box_logged = True
@@ -806,6 +810,11 @@ class DetectorWorker:
                 load_ms = int((time.time() - t_load_start) * 1000)
                 from_start_ms = int((time.time() - getattr(self, '_start_time', time.time())) * 1000)
                 print(f"[TIMER-MODELS-ACTIVE] Camera {self.cam_id} models loaded & ACTIVE at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} (Load time: {load_ms}ms, Elapsed from Start: {from_start_ms}ms)", flush=True)
+                for midx, m_obj in enumerate(self.models):
+                    mp = paths[midx] if midx < len(paths) else str(paths)
+                    m_name = os.path.basename(mp)
+                    avail_classes = list(m_obj.names.values()) if hasattr(m_obj, 'names') and isinstance(m_obj.names, dict) else []
+                    print(f"  -> Camera {self.cam_id} Active Model '{m_name}': Available Classes = {avail_classes}", flush=True)
 
             while not self._stop_event.is_set():
                 cleanup_subthreads()
