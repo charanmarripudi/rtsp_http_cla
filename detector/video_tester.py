@@ -255,32 +255,35 @@ class LiveVideoTestStreamer:
             # Draw exact bounding boxes on this frame
             for det in dets:
                 x1, y1, x2, y2 = map(int, det["box"])
+                x1 = max(0, min(w - 1, x1))
+                y1 = max(0, min(h - 1, y1))
+                x2 = max(0, min(w - 1, x2))
+                y2 = max(0, min(h - 1, y2))
+                
                 color = det["color"]
                 label = det["label"]
                 conf = det["conf"]
 
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                 tag_text = f"{label} {conf:.2f}"
-                (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
-                tag_y = max(y1, th + 8)
-                cv2.rectangle(frame, (x1, tag_y - th - 6), (x1 + tw + 8, tag_y + 2), (18, 20, 24), -1)
-                cv2.rectangle(frame, (x1, tag_y - th - 6), (x1 + tw + 8, tag_y + 2), color, 1)
-                cv2.putText(frame, tag_text, (x1 + 4, tag_y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA)
-
-            # Top HUD bar
-            hud_h = 32
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (0, 0), (w, hud_h), (12, 14, 18), -1)
-            cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
-            cv2.line(frame, (0, hud_h), (w, hud_h), (40, 48, 60), 1)
+                (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
+                
+                # Position label tag: above box if space permits, else inside top of box
+                if y1 - th - 6 > 0:
+                    bg_y1 = y1 - th - 6
+                    bg_y2 = y1
+                    text_y = y1 - 4
+                else:
+                    bg_y1 = y1
+                    bg_y2 = min(h - 1, y1 + th + 6)
+                    text_y = y1 + th + 2
+                    
+                bg_x2 = min(w - 1, x1 + tw + 6)
+                cv2.rectangle(frame, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
+                cv2.rectangle(frame, (x1, bg_y1), (bg_x2, bg_y2), color, 1)
+                cv2.putText(frame, tag_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
 
             p_fps = 1.0 / dt_infer if dt_infer > 0 else 0.0
-            left_hud = f"LIVE AI: {m_name} | imgsz={c_imgsz} | conf={c_conf:.2f}"
-            right_hud = f"Frame #{frame_idx} | {dt_infer*1000:.0f}ms ({p_fps:.1f} FPS) | Dets: {len(dets)}"
-
-            cv2.putText(frame, left_hud, (12, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 229, 160), 1, cv2.LINE_AA)
-            (rtw, _), _ = cv2.getTextSize(right_hud, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
-            cv2.putText(frame, right_hud, (w - rtw - 12, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (230, 235, 240), 1, cv2.LINE_AA)
 
             # Encode to JPEG and publish to stream
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
@@ -464,24 +467,21 @@ def _draw_detection_overlay(frame, detections, job: VideoTestJob, frame_idx: int
         
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
         tag_text = f"{label} {conf:.2f}"
-        (tw, th), baseline = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
-        tag_y = max(y1, th + 8)
-        cv2.rectangle(frame, (x1, tag_y - th - 6), (x1 + tw + 8, tag_y + 2), (18, 20, 24), -1)
-        cv2.rectangle(frame, (x1, tag_y - th - 6), (x1 + tw + 8, tag_y + 2), color, 1)
-        cv2.putText(frame, tag_text, (x1 + 4, tag_y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA)
-
-    hud_h = 32
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (w, hud_h), (12, 14, 18), -1)
-    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
-    cv2.line(frame, (0, hud_h), (w, hud_h), (40, 48, 60), 1)
-    
-    left_hud = f"AI LAB: {job.model_name} | imgsz={job.imgsz} | conf={job.conf:.2f}"
-    right_hud = f"Frame {frame_idx}/{total_frames} | Dets: {len(detections)}"
-    
-    cv2.putText(frame, left_hud, (12, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 229, 160), 1, cv2.LINE_AA)
-    (rtw, _), _ = cv2.getTextSize(right_hud, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
-    cv2.putText(frame, right_hud, (w - rtw - 12, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (230, 235, 240), 1, cv2.LINE_AA)
+        (tw, th), baseline = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
+        
+        if y1 - th - 6 > 0:
+            bg_y1 = y1 - th - 6
+            bg_y2 = y1
+            text_y = y1 - 4
+        else:
+            bg_y1 = y1
+            bg_y2 = min(h - 1, y1 + th + 6)
+            text_y = y1 + th + 2
+            
+        bg_x2 = min(w - 1, x1 + tw + 6)
+        cv2.rectangle(frame, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
+        cv2.rectangle(frame, (x1, bg_y1), (bg_x2, bg_y2), color, 1)
+        cv2.putText(frame, tag_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
     
     return frame
 
