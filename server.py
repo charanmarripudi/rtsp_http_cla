@@ -13,21 +13,6 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffe
 import faulthandler
 faulthandler.enable()
 
-import cv2
-try:
-    cv2.setNumThreads(1)
-    cv2.ocl.setUseOpenCL(False)
-except Exception:
-    pass
-
-import torch
-try:
-    torch.set_num_threads(1)
-    if hasattr(torch, "set_num_interop_threads"):
-        torch.set_num_interop_threads(1)
-except Exception:
-    pass
-
 from fastapi import FastAPI, Body, Query, Request
 from typing import Optional, Tuple, Any
 from pydantic import BaseModel
