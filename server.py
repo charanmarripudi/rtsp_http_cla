@@ -1310,6 +1310,7 @@ class LiveStreamStartRequest(BaseModel):
     imgsz: Optional[int] = 640
     enabled_classes: Optional[list] = None
     session_id: Optional[str] = "default"
+    frame_step: Optional[int] = 1
 
 class LiveStreamParamsRequest(BaseModel):
     session_id: Optional[str] = "default"
@@ -1318,6 +1319,7 @@ class LiveStreamParamsRequest(BaseModel):
     imgsz: Optional[int] = None
     enabled_classes: Optional[list] = None
     model_name: Optional[str] = None
+    frame_step: Optional[int] = None
 
 @app.post("/api/video-test/live-start")
 def start_live_video_stream(req: LiveStreamStartRequest):
@@ -1330,7 +1332,8 @@ def start_live_video_stream(req: LiveStreamStartRequest):
             conf=req.conf or 0.35,
             iou=req.iou or 0.45,
             imgsz=req.imgsz or 640,
-            enabled_classes=req.enabled_classes or []
+            enabled_classes=req.enabled_classes or [],
+            frame_step=req.frame_step or 1
         )
         return {
             "status": "ok",
@@ -1347,12 +1350,14 @@ def get_live_video_stream(session_id: str = Query(default="default")):
         return JSONResponse(status_code=404, content={"status": "error", "message": "Live stream session not found or stopped"})
 
     def _frame_generator():
+        last_sent_bytes = None
         while streamer.running:
             frame_bytes = streamer.get_jpeg_frame()
-            if frame_bytes:
+            if frame_bytes and frame_bytes is not last_sent_bytes:
+                last_sent_bytes = frame_bytes
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            time.sleep(0.04)
+            time.sleep(0.01)
 
     return StreamingResponse(
         _frame_generator(),
@@ -1371,7 +1376,8 @@ def update_live_video_params(req: LiveStreamParamsRequest):
         iou=req.iou,
         imgsz=req.imgsz,
         enabled_classes=req.enabled_classes,
-        model_name=req.model_name
+        model_name=req.model_name,
+        frame_step=req.frame_step
     )
     return {"status": "ok", "updated": True}
 

@@ -1346,19 +1346,20 @@
             <div>
               <label style="font-size: 0.70rem; color: var(--muted); display: block; margin-bottom: 6px;">IMAGE RESOLUTION (imgsz):</label>
               <div style="display: flex; gap: 4px;" id="vlab-imgsz-buttons">
-                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="416" onclick="vlabSetImgsz(416, this)" style="flex: 1; padding: 6px 4px; font-size: 0.70rem;">416</button>
-                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="480" onclick="vlabSetImgsz(480, this)" style="flex: 1; padding: 6px 4px; font-size: 0.70rem;">480</button>
-                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="512" onclick="vlabSetImgsz(512, this)" style="flex: 1; padding: 6px 4px; font-size: 0.70rem;">512</button>
-                <button type="button" class="btn-secondary vlab-imgsz-btn active" data-sz="640" onclick="vlabSetImgsz(640, this)" style="flex: 1; padding: 6px 4px; font-size: 0.70rem; background: var(--accent-dim); border-color: var(--accent); color: var(--accent);">640</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="320" onclick="vlabSetImgsz(320, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;" title="Ultra Fast (~300ms)">320</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="416" onclick="vlabSetImgsz(416, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;" title="Fast (~600ms)">416</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="480" onclick="vlabSetImgsz(480, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;">480</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="512" onclick="vlabSetImgsz(512, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;">512</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn active" data-sz="640" onclick="vlabSetImgsz(640, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem; background: var(--accent-dim); border-color: var(--accent); color: var(--accent);" title="High Accuracy (~1.5s)">640</button>
               </div>
             </div>
 
             <div>
               <label style="font-size: 0.70rem; color: var(--muted); display: block; margin-bottom: 6px;">SPEED / FRAME PROCESSING:</label>
-              <select id="vlab-frameskip-select" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; font-size: 0.75rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono);">
-                <option value="1">1:1 Full Accuracy (Every Frame)</option>
-                <option value="2">2× Fast Preview (Every 2nd Frame)</option>
-                <option value="3">3× Ultra Preview (Every 3rd Frame)</option>
+              <select id="vlab-frameskip-select" onchange="if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; font-size: 0.75rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono);">
+                <option value="1">1:1 Exact Sync (Every Frame)</option>
+                <option value="2">2× Fast Step (Every 2nd Frame)</option>
+                <option value="4">4× Fast Step (Every 4th Frame)</option>
               </select>
             </div>
           </div>
@@ -3103,13 +3104,15 @@
         enabledClasses.push(cb.value);
       });
 
+      const frameSkipSelect = document.getElementById("vlab-frameskip-select");
       const payload = {
         raw_filename: window.vlabUploadedFilename,
         model_name: modelName,
         conf: parseFloat(confSlider.value) || 0.35,
         iou: parseFloat(iouSlider.value) || 0.45,
         imgsz: window.vlabSelectedImgsz || 640,
-        enabled_classes: enabledClasses
+        enabled_classes: enabledClasses,
+        frame_step: parseInt(frameSkipSelect ? frameSkipSelect.value : 1) || 1
       };
 
       const liveCard = document.getElementById("vlab-live-card");
@@ -3180,6 +3183,7 @@
         const modelSelect = document.getElementById("vlab-model-select");
         const confSlider = document.getElementById("vlab-conf-slider");
         const iouSlider = document.getElementById("vlab-iou-slider");
+        const frameSkipSelect = document.getElementById("vlab-frameskip-select");
         
         const enabledClasses = [];
         document.querySelectorAll("#vlab-classes-container input[type='checkbox']:checked").forEach(cb => {
@@ -3191,7 +3195,8 @@
           iou: parseFloat(iouSlider ? iouSlider.value : 0.45),
           imgsz: window.vlabSelectedImgsz || 640,
           enabled_classes: enabledClasses,
-          model_name: modelSelect ? modelSelect.value : null
+          model_name: modelSelect ? modelSelect.value : null,
+          frame_step: parseInt(frameSkipSelect ? frameSkipSelect.value : 1) || 1
         };
 
         fetch("/api/video-test/live-params", {
@@ -3203,7 +3208,7 @@
         .then(res => {
           const liveStatusTxt = document.getElementById("vlab-live-status-txt");
           if (liveStatusTxt && res.status === "ok") {
-            liveStatusTxt.textContent = `Updated: Conf ${payload.conf.toFixed(2)}, IoU ${payload.iou.toFixed(2)}, ${payload.imgsz}px (${enabledClasses.length} classes)`;
+            liveStatusTxt.textContent = `Updated: Conf ${payload.conf.toFixed(2)}, IoU ${payload.iou.toFixed(2)}, ${payload.imgsz}px, Step ${payload.frame_step}× (${enabledClasses.length} classes)`;
           }
         })
         .catch(e => console.warn("[VideoLab] Live param sync error:", e));
