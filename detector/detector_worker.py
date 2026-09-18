@@ -296,6 +296,7 @@ class DetectorWorker:
         self.models = None
         self._db_conn = None
         self._start_time = time.time()
+        self._models_active_time = None
         self._first_box_logged = False
         print(f"[TIMER-START] Camera {self.cam_id} Start request initialized at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
 
@@ -312,6 +313,7 @@ class DetectorWorker:
                 if p not in seen: seen.append(p)
             self.model_paths = seen
             self.models = [get_yolo_model(mp) for mp in seen]
+            self._models_active_time = time.time()
         if model_configs is not None:
             self.model_configs = model_configs
         if conf is not None:
@@ -445,13 +447,18 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                m_imgsz = 640
+                default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "640"))
+                m_imgsz = default_imgsz
                 cfg = get_config_for_model(self.model_configs, m_name)
                 if cfg and isinstance(cfg, dict):
                     m_conf = float(cfg.get("conf", self.conf))
                     m_iou = float(cfg.get("iou", self.iou))
                     enabled_classes = cfg.get("enabled_classes")
-                    m_imgsz = int(cfg.get("imgsz", 640))
+                    m_imgsz = int(cfg.get("imgsz", default_imgsz))
+
+                # Normalize imgsz to a multiple of 32 for YOLO (e.g. 640, 704, 736, 800)
+                if m_imgsz % 32 != 0:
+                    m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
 
                 if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
                     try:
@@ -599,19 +606,24 @@ class DetectorWorker:
             with self._box_lock:
                 self._tracked_boxes = render_boxes
 
-            if render_boxes:
-                det_summary = ", ".join([f"{b['cls']} (conf: {b['conf']:.2f})" for b in render_boxes])
-                print(f"[STREAM-DETECTIONS] Camera {self.cam_id}: {len(render_boxes)} box(es) detected -> [{det_summary}]", flush=True)
-
             # Precision calculation and print for first detection box appear time
             if not getattr(self, '_first_box_logged', False) and render_boxes:
                 self._first_box_logged = True
-                delay_ms = int((time.time() - getattr(self, '_start_time', time.time())) * 1000)
+                now_t = time.time()
+                t_start = getattr(self, '_start_time', now_t)
+                t_active = getattr(self, '_models_active_time', t_start)
+                delay_from_start_ms = int((now_t - t_start) * 1000)
+                delay_from_active_ms = int((now_t - t_active) * 1000)
+                detected_labels = [b['label'] for b in render_boxes]
+                selected_classes_str = ", ".join(all_camera_enabled_classes) if all_camera_enabled_classes else "ALL (unfiltered)"
+                detected_classes_str = ", ".join(detected_labels)
                 print(f"\n==================================================================", flush=True)
-                print(f"[TIMER-FIRST-BBOX] Camera {self.cam_id} FIRST BOUNDING BOX DETECTED & RENDERED!", flush=True)
+                print(f"[STREAM-TIMING] Camera {self.cam_id} FIRST BOUNDING BOX DETECTED & RENDERED!", flush=True)
                 print(f" -> Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
-                print(f" -> Total Delay from Clicking 'Start' to First Box: {delay_ms}ms ({delay_ms/1000.0:.2f}s)", flush=True)
-                print(f" -> Detected {len(render_boxes)} boxes: {[b['label'] for b in render_boxes]}", flush=True)
+                print(f" -> Stream Selected Classes : [{selected_classes_str}]", flush=True)
+                print(f" -> Stream Detected Classes : [{detected_classes_str}]", flush=True)
+                print(f" -> Delay from Click 'Start': {delay_from_start_ms}ms ({delay_from_start_ms/1000.0:.2f}s)", flush=True)
+                print(f" -> Delay from Model Active : {delay_from_active_ms}ms ({delay_from_active_ms/1000.0:.2f}s)", flush=True)
                 print(f"==================================================================\n", flush=True)
 
             # Render alert snapshot
@@ -810,11 +822,6 @@ class DetectorWorker:
                 load_ms = int((time.time() - t_load_start) * 1000)
                 from_start_ms = int((time.time() - getattr(self, '_start_time', time.time())) * 1000)
                 print(f"[TIMER-MODELS-ACTIVE] Camera {self.cam_id} models loaded & ACTIVE at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} (Load time: {load_ms}ms, Elapsed from Start: {from_start_ms}ms)", flush=True)
-                for midx, m_obj in enumerate(self.models):
-                    mp = paths[midx] if midx < len(paths) else str(paths)
-                    m_name = os.path.basename(mp)
-                    avail_classes = list(m_obj.names.values()) if hasattr(m_obj, 'names') and isinstance(m_obj.names, dict) else []
-                    print(f"  -> Camera {self.cam_id} Active Model '{m_name}': Available Classes = {avail_classes}", flush=True)
 
             while not self._stop_event.is_set():
                 cleanup_subthreads()
