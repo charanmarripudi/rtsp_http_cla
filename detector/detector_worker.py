@@ -330,7 +330,7 @@ class DetectorWorker:
         self.roi_polygon = None
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
-        self.fps, self.width, self.height = 15.0, 1280, 720
+        self.fps, self.width, self.height = 12.0, 854, 480
         self._latest_raw_frame = None
         self._latest_boxes = []
         self._latest_box_time = 0.0
@@ -414,18 +414,18 @@ class DetectorWorker:
             "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
             "-r", str(int(self.fps)), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
-            "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2",
+            "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "baseline", "-level:v", "3.1",
-            "-b:v", "500k", "-maxrate", "700k", "-bufsize", "1M",
-            "-g", str(max(1, int(self.fps))), 
-            "-keyint_min", str(max(1, int(self.fps))), "-sc_threshold", "0",
+            "-b:v", "350k", "-maxrate", "450k", "-bufsize", "800k",
+            "-g", str(max(1, int(self.fps) * 2)), 
+            "-keyint_min", str(max(1, int(self.fps) * 2)), "-sc_threshold", "0",
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "4",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 500k (max 700k)", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 350k (max 450k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL, bufsize=10*1024*1024)
 
     def _letterbox(self, f):
