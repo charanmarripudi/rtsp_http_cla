@@ -484,12 +484,7 @@ class DetectorWorker:
                         if not target_class_ids:
                             continue
 
-                # CRITICAL: ascontiguousarray prevents SIGABRT on ARM64 — non-contiguous
-                # numpy arrays passed to libtorch cause memory alignment violations.
-                safe_f = np.ascontiguousarray(f) if not f.flags['C_CONTIGUOUS'] else f
-
                 predict_kwargs = {
-                    "source": safe_f,
                     "conf": effective_conf,
                     "iou": m_iou,
                     "imgsz": m_imgsz,
@@ -502,6 +497,15 @@ class DetectorWorker:
                     t_wait_start = time.time()
                     with INFERENCE_LOCK:
                         t_infer_start = time.time()
+                        # CRITICAL: Grab the absolute latest live frame RIGHT NOW to eliminate queue wait staleness
+                        with self._frame_lock:
+                            if self._latest_raw_frame is not None:
+                                current_live_f = cv2.resize(self._latest_raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                            else:
+                                current_live_f = f
+                        safe_f = np.ascontiguousarray(current_live_f) if not current_live_f.flags['C_CONTIGUOUS'] else current_live_f
+                        predict_kwargs["source"] = safe_f
+
                         if 'torch' in globals() and hasattr(torch, 'inference_mode'):
                             with torch.inference_mode():
                                 results = model.predict(**predict_kwargs)
