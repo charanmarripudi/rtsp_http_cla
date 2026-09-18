@@ -1,10 +1,10 @@
 import os
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["TORCH_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
+os.environ["NUMEXPR_NUM_THREADS"] = "2"
+os.environ["TORCH_NUM_THREADS"] = "2"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
 
@@ -38,10 +38,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Optimize PyTorch CPU threading to prevent CPU starvation on Raspberry Pi
+# Optimize PyTorch CPU threading to 2 threads (balanced speed & stability on Pi 4)
 try:
     import torch
-    torch.set_num_threads(1)
+    torch.set_num_threads(2)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
 except Exception:
@@ -483,15 +483,19 @@ class DetectorWorker:
                     predict_kwargs["classes"] = target_class_ids
 
                 try:
-                    t_m_start = time.time()
+                    t_wait_start = time.time()
                     with INFERENCE_LOCK:
+                        t_infer_start = time.time()
                         if 'torch' in globals() and hasattr(torch, 'inference_mode'):
                             with torch.inference_mode():
                                 results = model.predict(**predict_kwargs)
                         else:
                             results = model.predict(**predict_kwargs)
-                    t_m_dur = int((time.time() - t_m_start) * 1000)
-                    print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) took {t_m_dur}ms at {datetime.now().strftime('%H:%M:%S.%f')[:-3]}", flush=True)
+                        t_infer_end = time.time()
+
+                    wait_ms = int((t_infer_start - t_wait_start) * 1000)
+                    infer_ms = int((t_infer_end - t_infer_start) * 1000)
+                    print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure Inference: {infer_ms}ms | Lock Queue Wait: {wait_ms}ms (Done at {datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
                 except Exception as pred_err:
                     print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name}: {pred_err}", flush=True)
                     continue
