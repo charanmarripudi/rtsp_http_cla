@@ -433,13 +433,13 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                m_imgsz = 640  # 640 is safe for Pi 4 (1280 can OOM with multi-camera)
+                m_imgsz = 1280
                 cfg = get_config_for_model(self.model_configs, m_name)
                 if cfg and isinstance(cfg, dict):
                     m_conf = float(cfg.get("conf", self.conf))
                     m_iou = float(cfg.get("iou", self.iou))
                     enabled_classes = cfg.get("enabled_classes")
-                    m_imgsz = int(cfg.get("imgsz", 640))
+                    m_imgsz = int(cfg.get("imgsz", 1280))
 
                 if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
                     try:
@@ -452,7 +452,7 @@ class DetectorWorker:
                     except Exception:
                         pass
 
-                filter_classes = enabled_classes if enabled_classes else (list(all_camera_enabled_classes) if all_camera_enabled_classes else [])
+                filter_classes = list(all_camera_enabled_classes) if all_camera_enabled_classes else (enabled_classes if enabled_classes else [])
                 effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
 
                 # Map enabled classes to model class IDs for hardware-level tensor filtering
@@ -462,6 +462,8 @@ class DetectorWorker:
                         for cid, cname in model.names.items():
                             if any(match_class(cname, e) for e in filter_classes):
                                 target_class_ids.append(int(cid))
+                        if not target_class_ids:
+                            continue
 
                 # CRITICAL: ascontiguousarray prevents SIGABRT on ARM64 — non-contiguous
                 # numpy arrays passed to libtorch cause memory alignment violations.
@@ -712,10 +714,10 @@ class DetectorWorker:
             except Exception:
                 break
             
-            # Drain buffer: cap at 3 frames to avoid CPU starvation on Pi 4.
-            # (was 30 frames — caused 100% CPU competing with inference+FFmpeg)
+            # Drain buffer: discard old frames queued in socket buffer to reach live edge
             grab_count = 0
-            while grab_count < 3 and not cap_stop_evt.is_set():
+            while grab_count < 30 and (time.time() - t_start) < 0.005 and not cap_stop_evt.is_set():
+                t_start = time.time()
                 try:
                     if not cap.grab():
                         break
@@ -739,9 +741,6 @@ class DetectorWorker:
                 self._latest_raw_frame = f.copy()
                 self._cap_ok = True
                 self._last_frame_time = time.time()
-
-            # Small yield so inference + FFmpeg threads get CPU time on Pi 4
-            time.sleep(0.001)
 
 
     def run(self):
