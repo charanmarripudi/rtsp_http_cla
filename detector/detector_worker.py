@@ -253,6 +253,63 @@ def get_config_for_model(model_configs, m_name):
         return model_configs
     return {}
 
+class InferenceScheduler:
+    """
+    Centralized, Fair Multi-Camera Inference Scheduler.
+    Executes AI inference in strict round-robin sequence across all active cameras.
+    Guarantees exactly ONE PyTorch inference runs on the Pi CPU at any time,
+    eliminating lock contention and thread starvation.
+    """
+    def __init__(self):
+        self._workers = {}
+        self._lock = threading.Lock()
+        self._thread = None
+        self._stop_event = threading.Event()
+
+    def register_worker(self, worker):
+        with self._lock:
+            self._workers[worker.cam_id] = worker
+            print(f"[SCHEDULER] Registered Camera {worker.cam_id} into Central Inference Scheduler (Total Active: {len(self._workers)})", flush=True)
+        self.ensure_running()
+
+    def unregister_worker(self, worker):
+        with self._lock:
+            self._workers.pop(worker.cam_id, None)
+            print(f"[SCHEDULER] Unregistered Camera {worker.cam_id} from Central Inference Scheduler (Remaining Active: {len(self._workers)})", flush=True)
+
+    def ensure_running(self):
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._stop_event.clear()
+                self._thread = threading.Thread(target=self._run_loop, daemon=True, name="CentralInferenceScheduler")
+                self._thread.start()
+
+    def _run_loop(self):
+        print("[SCHEDULER] Centralized Multi-Camera Inference Scheduler active", flush=True)
+        while not self._stop_event.is_set():
+            with self._lock:
+                active_workers = list(self._workers.values())
+
+            if not active_workers:
+                time.sleep(0.05)
+                continue
+
+            for worker in active_workers:
+                if self._stop_event.is_set():
+                    break
+                if worker._stop_event.is_set():
+                    continue
+                try:
+                    worker.run_single_inference_cycle()
+                except Exception as e:
+                    print(f"[SCHEDULER-ERR] Camera {worker.cam_id} inference error: {e}", flush=True)
+
+                # Thermal relief pacing pause (30ms) between camera turns
+                time.sleep(0.03)
+
+GLOBAL_INFERENCE_SCHEDULER = InferenceScheduler()
+
+
 class DetectorWorker:
     @property
     def model_configs(self):
@@ -273,7 +330,7 @@ class DetectorWorker:
         self.roi_polygon = None
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
-        self.fps, self.width, self.height = 5.0, 1280, 720
+        self.fps, self.width, self.height = 15.0, 1280, 720
         self._latest_raw_frame = None
         self._latest_boxes = []
         self._latest_box_time = 0.0
@@ -331,6 +388,7 @@ class DetectorWorker:
 
     def stop(self):
         self._stop_event.set()
+        GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)
 
     def _get_db_conn(self):
         if not PSYCOPG2_AVAILABLE: return None
@@ -355,7 +413,7 @@ class DetectorWorker:
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
-            "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
+            "-r", str(int(self.fps)), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2",
             "-profile:v", "baseline", "-level:v", "3.1",
             "-b:v", "500k", "-maxrate", "700k", "-bufsize", "1M",
@@ -377,446 +435,388 @@ class DetectorWorker:
         res = cv2.resize(f, (nw, nh))
         return cv2.copyMakeBorder(res, (self.height-nh)//2, (self.height-nh+1)//2, (self.width-nw)//2, (self.width-nw+1)//2, cv2.BORDER_CONSTANT, value=[0,0,0])
 
-    def _is_valid_box(self, conf_val, m_conf, bw, bh, box_area, f_w, f_h, f_area, crop_img=None):
+    def _is_valid_box(self, conf_val, m_conf, bw, bh, box_area, f_w, f_h, f_area):
         if conf_val < m_conf:
             return False
         # Absolute Minimum Size Bounds (Rejects single-pixel noise only)
         if bw < 3 or bh < 3 or box_area < 10:
             return False
-        # Maximum Size Bounds (Rejects 80% full-screen hallucinations)
+        # Maximum Size Bounds (Rejects 85% full-screen hallucinations)
         if box_area > 0.85 * f_area or bh > 0.95 * f_h or bw > 0.95 * f_w:
             return False
-        # Aspect Ratio Filter: Rejects thin vertical stripes (doors, window frames) & flat horizontal stripes (table edges)
+        # Aspect Ratio Filter: Rejects thin vertical stripes (> 4.5) & flat horizontal stripes (< 0.12)
         aspect = bh / max(1.0, bw)
-        if aspect > 4.2 or aspect < 0.15:
+        if aspect > 4.5 or aspect < 0.12:
             return False
-        # Reject empty floor / desk / wall hallucinations using Laplacian texture variance
-        if crop_img is not None and crop_img.size > 0:
-            try:
-                gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
-                lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-                if lap_var < 80.0:
-                    return False
-            except Exception:
-                pass
         return True
 
-    def _run_all_models(self, f):
-        try:
-            cur_cls, now = set(), time.time()
-            raw_boxes = []
-            f_h, f_w = f.shape[:2]
-            f_area = f_w * f_h
+    def run_single_inference_cycle(self):
+        """
+        Executed by the Centralized InferenceScheduler.
+        1. Captures the latest live frame ONCE (Same-Frame Multi-Model Snapshot).
+        2. Evaluates all assigned models on that identical frame snapshot.
+        3. Fuses detections with per-model filtering and validation.
+        4. Updates the Time-Aware Multi-Object Tracker.
+        """
+        if self._stop_event.is_set():
+            return
 
-            # Collect union of all active enabled classes across all models for this camera
-            all_camera_enabled_classes = []
-            if isinstance(self.model_configs, dict):
-                for k, v in self.model_configs.items():
-                    if isinstance(v, dict) and "enabled_classes" in v and isinstance(v["enabled_classes"], list):
-                        for ec in v["enabled_classes"]:
-                            if ec not in all_camera_enabled_classes:
-                                all_camera_enabled_classes.append(ec)
-                    elif k == "enabled_classes" and isinstance(v, list):
-                        for ec in v:
-                            if ec not in all_camera_enabled_classes:
-                                all_camera_enabled_classes.append(ec)
+        with self._frame_lock:
+            f = self._latest_raw_frame
 
-            if hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
-                try:
-                    cid = str(self.cam_id)
-                    if cid.isdigit() and int(cid) < len(self.streams_metadata) and isinstance(self.streams_metadata[int(cid)], dict):
-                        saved_mc = self.streams_metadata[int(cid)].get("model_configs") or {}
-                        if isinstance(saved_mc, dict):
-                            for k, v in saved_mc.items():
-                                if isinstance(v, dict) and "enabled_classes" in v and isinstance(v["enabled_classes"], list):
-                                    for ec in v["enabled_classes"]:
-                                        if ec not in all_camera_enabled_classes:
-                                            all_camera_enabled_classes.append(ec)
-                                elif k == "enabled_classes" and isinstance(v, list):
-                                    for ec in v:
-                                        if ec not in all_camera_enabled_classes:
-                                            all_camera_enabled_classes.append(ec)
-                except Exception:
-                    pass
+        if f is None:
+            return
 
-            for midx, model in enumerate(self.models):
-                m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
-                m_name = os.path.basename(m_path)
-                m_clean = m_name.replace(".pt", "")
-                
-                m_conf = self.conf
-                m_iou = self.iou
-                enabled_classes = None
-                default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "800"))
-                m_imgsz = default_imgsz
-                cfg = get_config_for_model(self.model_configs, m_name)
-                if cfg and isinstance(cfg, dict):
-                    m_conf = float(cfg.get("conf", self.conf))
-                    m_iou = float(cfg.get("iou", self.iou))
-                    enabled_classes = cfg.get("enabled_classes")
-                    m_imgsz = int(cfg.get("imgsz", default_imgsz))
+        # Snapshot the exact live frame once for all models
+        frame_snapshot = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+        safe_f = np.ascontiguousarray(frame_snapshot) if not frame_snapshot.flags['C_CONTIGUOUS'] else frame_snapshot
+        f_h, f_w = safe_f.shape[:2]
+        f_area = f_w * f_h
 
-                # Normalize imgsz to a multiple of 32 for YOLO (e.g. 640, 704, 736, 800)
-                if m_imgsz % 32 != 0:
-                    m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
+        cur_cls, now = set(), time.time()
+        raw_boxes = []
 
-                if enabled_classes is None and hasattr(self, "streams_metadata") and isinstance(self.streams_metadata, list):
-                    try:
-                        cid = str(self.cam_id)
-                        if cid.isdigit() and int(cid) < len(self.streams_metadata) and isinstance(self.streams_metadata[int(cid)], dict):
-                            saved_mc = self.streams_metadata[int(cid)].get("model_configs") or {}
-                            saved_cfg = get_config_for_model(saved_mc, m_name)
-                            if isinstance(saved_cfg, dict) and saved_cfg.get("enabled_classes"):
-                                enabled_classes = saved_cfg.get("enabled_classes")
-                    except Exception:
-                        pass
+        if not self.models:
+            paths = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+            self.models = [get_yolo_model(mp) for mp in paths]
+            self._models_active_time = time.time()
 
-                filter_classes = list(all_camera_enabled_classes) if all_camera_enabled_classes else (enabled_classes if enabled_classes else [])
-                effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
+        for midx, model in enumerate(self.models):
+            m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
+            m_name = os.path.basename(m_path)
 
-                # Map enabled classes to model class IDs for hardware-level tensor filtering
-                target_class_ids = []
-                if hasattr(model, 'names') and isinstance(model.names, dict):
-                    if filter_classes:
-                        for cid, cname in model.names.items():
-                            if any(match_class(cname, e) for e in filter_classes):
-                                target_class_ids.append(int(cid))
-                        if not target_class_ids:
-                            continue
+            m_conf = self.conf
+            m_iou = self.iou
+            enabled_classes = None
+            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "800"))
+            m_imgsz = default_imgsz
+            cfg = get_config_for_model(self.model_configs, m_name)
+            if cfg and isinstance(cfg, dict):
+                m_conf = float(cfg.get("conf", self.conf))
+                m_iou = float(cfg.get("iou", self.iou))
+                enabled_classes = cfg.get("enabled_classes")
+                m_imgsz = int(cfg.get("imgsz", default_imgsz))
 
-                predict_kwargs = {
-                    "conf": effective_conf,
-                    "iou": m_iou,
-                    "imgsz": m_imgsz,
-                    "verbose": False
-                }
-                if filter_classes and target_class_ids:
-                    predict_kwargs["classes"] = target_class_ids
+            if m_imgsz % 32 != 0:
+                m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
 
-                try:
-                    t_wait_start = time.time()
-                    with INFERENCE_LOCK:
-                        t_infer_start = time.time()
-                        # CRITICAL: Grab the absolute latest live frame RIGHT NOW to eliminate queue wait staleness
-                        with self._frame_lock:
-                            if self._latest_raw_frame is not None:
-                                current_live_f = cv2.resize(self._latest_raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
-                            else:
-                                current_live_f = f
-                        safe_f = np.ascontiguousarray(current_live_f) if not current_live_f.flags['C_CONTIGUOUS'] else current_live_f
-                        predict_kwargs["source"] = safe_f
+            filter_classes = enabled_classes if (enabled_classes is not None) else []
+            effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
 
-                        if 'torch' in globals() and hasattr(torch, 'inference_mode'):
-                            with torch.inference_mode():
-                                results = model.predict(**predict_kwargs)
-                        else:
-                            results = model.predict(**predict_kwargs)
-                        t_infer_end = time.time()
+            # Map model-specific enabled classes to model class IDs for tensor pruning
+            target_class_ids = []
+            if hasattr(model, 'names') and isinstance(model.names, dict):
+                if filter_classes:
+                    for cid, cname in model.names.items():
+                        if any(match_class(cname, e) for e in filter_classes):
+                            target_class_ids.append(int(cid))
+                    if not target_class_ids:
+                        continue
 
-                    wait_ms = int((t_infer_start - t_wait_start) * 1000)
-                    infer_ms = int((t_infer_end - t_infer_start) * 1000)
-                    
-                    # Extract detected class labels for this model run
-                    mod_dets = []
-                    for r in results:
-                        if r.boxes:
-                            for b in r.boxes:
-                                cls_name = r.names[int(b.cls[0])]
-                                if not filter_classes or any(match_class(cls_name, e) for e in filter_classes):
-                                    mod_dets.append(f"{cls_name} {float(b.conf[0]):.2f}")
-                    
-                    print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure: {infer_ms}ms | LockWait: {wait_ms}ms | Selected: {filter_classes if filter_classes else 'ALL'} | Detected: {mod_dets if mod_dets else 'None'} ({datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
-                except Exception as pred_err:
-                    print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name}: {pred_err}", flush=True)
-                    continue
+            predict_kwargs = {
+                "source": safe_f,
+                "conf": effective_conf,
+                "iou": m_iou,
+                "imgsz": m_imgsz,
+                "verbose": False
+            }
+            if filter_classes and target_class_ids:
+                predict_kwargs["classes"] = target_class_ids
 
+            try:
+                t_infer_start = time.time()
+                if 'torch' in globals() and hasattr(torch, 'inference_mode'):
+                    with torch.inference_mode():
+                        results = model.predict(**predict_kwargs)
+                else:
+                    results = model.predict(**predict_kwargs)
+                infer_ms = int((time.time() - t_infer_start) * 1000)
+
+                mod_dets = []
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
-                            cls = r.names[int(b.cls[0])]
-                            conf_val = float(b.conf[0])
+                            cls_name = r.names[int(b.cls[0])]
+                            if not filter_classes or any(match_class(cls_name, e) for e in filter_classes):
+                                mod_dets.append(f"{cls_name} {float(b.conf[0]):.2f}")
 
-                            if filter_classes and target_class_ids:
-                                if int(b.cls[0]) not in target_class_ids:
-                                    continue
-                            elif filter_classes:
-                                if not any(match_class(cls, e) for e in filter_classes):
-                                    continue
+                print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure: {infer_ms}ms | Selected: {filter_classes if filter_classes else 'ALL'} | Detected: {mod_dets if mod_dets else 'None'} ({datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
+            except Exception as pred_err:
+                print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name}: {pred_err}", flush=True)
+                continue
 
-                            box_xyxy = b.xyxy[0].cpu().numpy().tolist()
-                            x1, y1, x2, y2 = box_xyxy
-                            bw = max(0, x2 - x1)
-                            bh = max(0, y2 - y1)
-                            cx = (x1 + x2) / 2.0
-                            cy = (y1 + y2) / 2.0
+            for r in results:
+                if r.boxes:
+                    for b in r.boxes:
+                        cls = r.names[int(b.cls[0])]
+                        conf_val = float(b.conf[0])
 
-                            # Validate Box (reject single pixel artifacts)
-                            if bw < 4 or bh < 4:
+                        if filter_classes and target_class_ids:
+                            if int(b.cls[0]) not in target_class_ids:
+                                continue
+                        elif filter_classes:
+                            if not any(match_class(cls, e) for e in filter_classes):
                                 continue
 
-                            # Apply ROI rectangle filter if configured
-                            if self.roi_polygon and len(self.roi_polygon) == 2:
-                                try:
-                                    fh, fw = f.shape[:2]
-                                    rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                    ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                                    rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                                    ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                                    if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
-                                        continue
-                                except Exception:
-                                    pass
+                        box_xyxy = b.xyxy[0].cpu().numpy().tolist()
+                        x1, y1, x2, y2 = box_xyxy
+                        bw = max(0, x2 - x1)
+                        bh = max(0, y2 - y1)
+                        box_area = bw * bh
+                        cx = (x1 + x2) / 2.0
+                        cy = (y1 + y2) / 2.0
 
-                            color_val = get_dynamic_class_color(cls)
-                            raw_boxes.append((box_xyxy, color_val, conf_val, cls))
+                        # Apply Box Validation Pipeline
+                        if not self._is_valid_box(conf_val, effective_conf, bw, bh, box_area, f_w, f_h, f_area):
+                            continue
 
-            # Non-Maximum Suppression (NMS) across multi-model results
-            kept_items = []
-            if raw_boxes:
-                raw_boxes.sort(key=lambda x: x[2], reverse=True)
-                for item in raw_boxes:
-                    b1_xyxy, c1_color, conf1_val, cls1_name = item
-                    x1_1, y1_1, x2_1, y2_1 = b1_xyxy
-                    area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
-                    
-                    suppress = False
-                    for k_item in kept_items:
-                        b2_xyxy, c2_color, conf2_val, cls2_name = k_item
-                        x1_2, y1_2, x2_2, y2_2 = b2_xyxy
-                        area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
-                        
-                        ix1 = max(x1_1, x1_2)
-                        iy1 = max(y1_1, y1_2)
-                        ix2 = min(x2_1, x2_2)
-                        iy2 = min(y2_1, y2_2)
-                        
-                        if ix2 > ix1 and iy2 > iy1:
-                            inter = (ix2 - ix1) * (iy2 - iy1)
-                            union = area1 + area2 - inter
-                            iou = inter / max(1.0, union)
-                            
-                            is_same_cls = match_class(cls1_name, cls2_name)
-                            iou_thresh = 0.40 if is_same_cls else 0.65
-                            if iou >= iou_thresh:
-                                suppress = True
-                                break
-                                
-                    if not suppress:
-                        kept_items.append(item)
+                        # Apply ROI rectangle filter if configured
+                        if self.roi_polygon and len(self.roi_polygon) == 2:
+                            try:
+                                rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                                ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                                rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                                ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                                if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
+                                    continue
+                            except Exception:
+                                pass
 
-            # Build direct live render boxes with clean ClassName Conf format
-            render_boxes = []
-            for b_xyxy, color_val, conf_val, cls_name in kept_items:
-                label_str = f"{cls_name} {conf_val:.2f}"
-                render_boxes.append({
-                    'box': b_xyxy,
-                    'label': label_str,
-                    'color': color_val,
-                    'cls': cls_name,
-                    'conf': conf_val
-                })
-                cur_cls.add(cls_name)
+                        color_val = get_dynamic_class_color(cls)
+                        raw_boxes.append((box_xyxy, color_val, conf_val, cls))
 
-            # =========================================================================
-            # UNIVERSAL LIGHTWEIGHT MULTI-OBJECT TRACKING & HYSTERESIS MEMORY
-            # 1. Matches incoming detections with existing active tracks (IoU + Distance).
-            # 2. Smooths stationary detections (alpha=0.25) to eliminate jitter/wobble.
-            # 3. Responsive snapping (alpha=0.90) for moving/walking objects.
-            # 4. Track Persistence: Holds missed detections for up to 2 inference cycles (~10-12s)
-            #    so 10+ seated people stay continuously bounded without flickering on/off.
-            # 5. Drops dead tracks if unobserved for > 12s.
-            # =========================================================================
-            with self._box_lock:
-                prev_tracks = list(getattr(self, '_tracked_objects', []))
+        # Multi-Model NMS
+        kept_items = []
+        if raw_boxes:
+            raw_boxes.sort(key=lambda x: x[2], reverse=True)
+            for item in raw_boxes:
+                b1_xyxy, c1_color, conf1_val, cls1_name = item
+                x1_1, y1_1, x2_1, y2_1 = b1_xyxy
+                area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
 
-            updated_tracks = []
-            used_det_indices = set()
-            used_track_indices = set()
+                suppress = False
+                for k_item in kept_items:
+                    b2_xyxy, c2_color, conf2_val, cls2_name = k_item
+                    x1_2, y1_2, x2_2, y2_2 = b2_xyxy
+                    area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
 
-            # Step A: Match new detections to existing tracks greedily by score
-            matches = []
-            for didx, new_b in enumerate(render_boxes):
-                nx1, ny1, nx2, ny2 = new_b['box']
-                ncx, ncy = (nx1 + nx2) / 2.0, (ny1 + ny2) / 2.0
-                n_cls = new_b['cls']
-                n_area = max(1.0, (nx2 - nx1) * (ny2 - ny1))
+                    ix1 = max(x1_1, x1_2)
+                    iy1 = max(y1_1, y1_2)
+                    ix2 = min(x2_1, x2_2)
+                    iy2 = min(y2_1, y2_2)
 
-                for tidx, trk in enumerate(prev_tracks):
-                    if match_class(trk.get('cls', ''), n_cls):
-                        tx1, ty1, tx2, ty2 = trk['box']
-                        tcx, tcy = (tx1 + tx2) / 2.0, (ty1 + ty2) / 2.0
-                        t_area = max(1.0, (tx2 - tx1) * (ty2 - ty1))
+                    if ix2 > ix1 and iy2 > iy1:
+                        inter = (ix2 - ix1) * (iy2 - iy1)
+                        union = area1 + area2 - inter
+                        iou = inter / max(1.0, union)
 
-                        # Calculate IoU
-                        ix1, iy1 = max(nx1, tx1), max(ny1, ty1)
-                        ix2, iy2 = min(nx2, tx2), min(ny2, ty2)
-                        if ix2 > ix1 and iy2 > iy1:
-                            inter = (ix2 - ix1) * (iy2 - iy1)
-                            union = n_area + t_area - inter
-                            iou = inter / max(1.0, union)
-                        else:
-                            iou = 0.0
+                        is_same_cls = match_class(cls1_name, cls2_name)
+                        iou_thresh = 0.40 if is_same_cls else 0.65
+                        if iou >= iou_thresh:
+                            suppress = True
+                            break
 
-                        dist = math.hypot(ncx - tcx, ncy - tcy)
-                        area_ratio = n_area / t_area
+                if not suppress:
+                    kept_items.append(item)
 
-                        # Valid match conditions:
-                        # 1. Direct IoU overlap >= 0.20
-                        # 2. Proximity match: center distance < 75px and similar size
-                        if iou >= 0.20 or (dist < 75.0 and 0.40 <= area_ratio <= 2.5):
-                            score = iou * 1.5 + max(0.0, 1.0 - (dist / 100.0))
-                            matches.append((score, didx, tidx, iou, dist))
+        render_boxes = []
+        for b_xyxy, color_val, conf_val, cls_name in kept_items:
+            render_boxes.append({
+                'box': b_xyxy,
+                'label': f"{cls_name} {conf_val:.2f}",
+                'color': color_val,
+                'cls': cls_name,
+                'conf': conf_val
+            })
+            cur_cls.add(cls_name)
 
-            # Sort matches by highest affinity score
-            matches.sort(key=lambda x: x[0], reverse=True)
+        # =========================================================================
+        # TIME-AWARE VELOCITY TRACKER & DISPLAY SEPARATION
+        # 1. Matches incoming detections using IoU + Spatial Distance.
+        # 2. Tracks velocity vectors (vx, vy) for responsive movement tracking.
+        # 3. Time-based track retention (expires after 6.0s timeout).
+        # =========================================================================
+        with self._box_lock:
+            prev_tracks = list(getattr(self, '_tracked_objects', []))
 
-            for score, didx, tidx, iou, dist in matches:
-                if didx in used_det_indices or tidx in used_track_indices:
-                    continue
-                used_det_indices.add(didx)
-                used_track_indices.add(tidx)
+        updated_tracks = []
+        used_det_indices = set()
+        used_track_indices = set()
 
-                new_b = render_boxes[didx]
-                trk = prev_tracks[tidx]
+        matches = []
+        for didx, new_b in enumerate(render_boxes):
+            nx1, ny1, nx2, ny2 = new_b['box']
+            ncx, ncy = (nx1 + nx2) / 2.0, (ny1 + ny2) / 2.0
+            n_cls = new_b['cls']
+            n_area = max(1.0, (nx2 - nx1) * (ny2 - ny1))
 
-                nx1, ny1, nx2, ny2 = new_b['box']
-                tx1, ty1, tx2, ty2 = trk['box']
-
-                # Motion-adaptive smoothing:
-                # Stationary (< 15px): smooth heavily (alpha=0.25) to eliminate jitter
-                # Moving / Walking (>= 15px): fast tracking (alpha=0.90) to follow body directly
-                alpha = 0.25 if dist < 15.0 else 0.90
-                sx1 = tx1 * (1.0 - alpha) + nx1 * alpha
-                sy1 = ty1 * (1.0 - alpha) + ny1 * alpha
-                sx2 = tx2 * (1.0 - alpha) + nx2 * alpha
-                sy2 = ty2 * (1.0 - alpha) + ny2 * alpha
-
-                trk['box'] = [sx1, sy1, sx2, sy2]
-                trk['conf'] = new_b['conf']
-                trk['cls'] = new_b['cls']
-                trk['color'] = new_b['color']
-                trk['label'] = f"{new_b['cls']} {new_b['conf']:.2f}"
-                trk['missed'] = 0
-                trk['hits'] = trk.get('hits', 1) + 1
-                trk['last_seen'] = now
-                updated_tracks.append(trk)
-
-            # Step B: Register new detections that didn't match any existing track
-            for didx, new_b in enumerate(render_boxes):
-                if didx not in used_det_indices:
-                    new_track = {
-                        'id': self._get_next_track_id(),
-                        'box': list(new_b['box']),
-                        'cls': new_b['cls'],
-                        'color': new_b['color'],
-                        'conf': new_b['conf'],
-                        'label': f"{new_b['cls']} {new_b['conf']:.2f}",
-                        'hits': 1,
-                        'missed': 0,
-                        'last_seen': now
-                    }
-                    updated_tracks.append(new_track)
-
-            # Step C: Hysteresis Memory — Hold unmatched existing tracks for up to 2 cycles (~10-12s)
             for tidx, trk in enumerate(prev_tracks):
-                if tidx not in used_track_indices:
+                if match_class(trk.get('cls', ''), n_cls):
+                    tx1, ty1, tx2, ty2 = trk['box']
+                    # Apply constant velocity prediction for tracking over time
+                    dt = max(0.0, now - trk.get('last_seen', now))
+                    vx, vy = trk.get('vx', 0.0), trk.get('vy', 0.0)
+                    px1 = tx1 + vx * dt
+                    py1 = ty1 + vy * dt
+                    px2 = tx2 + vx * dt
+                    py2 = ty2 + vy * dt
+                    pcx, pcy = (px1 + px2) / 2.0, (py1 + py2) / 2.0
+                    t_area = max(1.0, (px2 - px1) * (py2 - py1))
+
+                    ix1, iy1 = max(nx1, px1), max(ny1, py1)
+                    ix2, iy2 = min(nx2, px2), min(ny2, py2)
+                    if ix2 > ix1 and iy2 > iy1:
+                        inter = (ix2 - ix1) * (iy2 - iy1)
+                        union = n_area + t_area - inter
+                        iou = inter / max(1.0, union)
+                    else:
+                        iou = 0.0
+
+                    dist = math.hypot(ncx - pcx, ncy - pcy)
+                    area_ratio = n_area / t_area
+
+                    if iou >= 0.25 or (dist < 60.0 and 0.45 <= area_ratio <= 2.2):
+                        score = iou * 2.0 + max(0.0, 1.0 - (dist / 80.0))
+                        matches.append((score, didx, tidx, iou, dist))
+
+        matches.sort(key=lambda x: x[0], reverse=True)
+
+        for score, didx, tidx, iou, dist in matches:
+            if didx in used_det_indices or tidx in used_track_indices:
+                continue
+            used_det_indices.add(didx)
+            used_track_indices.add(tidx)
+
+            new_b = render_boxes[didx]
+            trk = prev_tracks[tidx]
+
+            nx1, ny1, nx2, ny2 = new_b['box']
+            tx1, ty1, tx2, ty2 = trk['box']
+            dt = max(0.1, now - trk.get('last_seen', now))
+            ncx, ncy = (nx1 + nx2) / 2.0, (ny1 + ny2) / 2.0
+            tcx, tcy = (tx1 + tx2) / 2.0, (ty1 + ty2) / 2.0
+
+            # Calculate velocity
+            curr_vx = (ncx - tcx) / dt if dist >= 15.0 else 0.0
+            curr_vy = (ncy - tcy) / dt if dist >= 15.0 else 0.0
+            trk['vx'] = trk.get('vx', 0.0) * 0.3 + curr_vx * 0.7
+            trk['vy'] = trk.get('vy', 0.0) * 0.3 + curr_vy * 0.7
+
+            alpha = 0.25 if dist < 15.0 else 0.90
+            sx1 = tx1 * (1.0 - alpha) + nx1 * alpha
+            sy1 = ty1 * (1.0 - alpha) + ny1 * alpha
+            sx2 = tx2 * (1.0 - alpha) + nx2 * alpha
+            sy2 = ty2 * (1.0 - alpha) + ny2 * alpha
+
+            trk['box'] = [sx1, sy1, sx2, sy2]
+            trk['conf'] = new_b['conf']
+            trk['cls'] = new_b['cls']
+            trk['color'] = new_b['color']
+            trk['label'] = f"{new_b['cls']} {new_b['conf']:.2f}"
+            trk['missed'] = 0
+            trk['hits'] = trk.get('hits', 1) + 1
+            trk['last_seen'] = now
+            updated_tracks.append(trk)
+
+        for didx, new_b in enumerate(render_boxes):
+            if didx not in used_det_indices:
+                new_track = {
+                    'id': self._get_next_track_id(),
+                    'box': list(new_b['box']),
+                    'cls': new_b['cls'],
+                    'color': new_b['color'],
+                    'conf': new_b['conf'],
+                    'label': f"{new_b['cls']} {new_b['conf']:.2f}",
+                    'vx': 0.0,
+                    'vy': 0.0,
+                    'hits': 1,
+                    'missed': 0,
+                    'first_seen': now,
+                    'last_seen': now
+                }
+                updated_tracks.append(new_track)
+
+        # Time-based track retention (Grace timeout = 6.0 seconds)
+        for tidx, trk in enumerate(prev_tracks):
+            if tidx not in used_track_indices:
+                time_since_seen = now - trk.get('last_seen', now)
+                if time_since_seen <= 6.0:
                     trk['missed'] = trk.get('missed', 0) + 1
-                    time_since_seen = now - trk.get('last_seen', now)
-                    if trk['missed'] <= 2 and time_since_seen <= 12.0:
-                        decayed_conf = max(0.20, trk['conf'] * 0.95)
-                        trk['label'] = f"{trk['cls']} {decayed_conf:.2f}"
-                        updated_tracks.append(trk)
-                        cur_cls.add(trk['cls'])
+                    decayed_conf = max(0.20, trk['conf'] * 0.95)
+                    trk['label'] = f"{trk['cls']} {decayed_conf:.2f}"
+                    updated_tracks.append(trk)
+                    cur_cls.add(trk['cls'])
 
-            # Export active tracks to live 15 FPS display buffer
-            display_boxes = []
-            for trk in updated_tracks:
-                display_boxes.append({
-                    'box': trk['box'],
-                    'label': trk['label'],
-                    'color': trk['color'],
-                    'cls': trk['cls'],
-                    'conf': trk['conf'],
-                    'track_id': trk['id']
-                })
+        display_boxes = []
+        for trk in updated_tracks:
+            display_boxes.append({
+                'box': trk['box'],
+                'label': trk['label'],
+                'color': trk['color'],
+                'cls': trk['cls'],
+                'conf': trk['conf'],
+                'track_id': trk['id']
+            })
 
-            with self._box_lock:
-                self._tracked_objects = updated_tracks
-                self._tracked_boxes = display_boxes
+        with self._box_lock:
+            self._tracked_objects = updated_tracks
+            self._tracked_boxes = display_boxes
 
-            # Precision calculation and print for first detection box appear time
-            if not getattr(self, '_first_box_logged', False) and display_boxes:
-                self._first_box_logged = True
-                now_t = time.time()
-                t_start = getattr(self, '_start_time', now_t)
-                t_active = getattr(self, '_models_active_time', t_start)
-                delay_from_start_ms = int((now_t - t_start) * 1000)
-                delay_from_active_ms = int((now_t - t_active) * 1000)
-                detected_labels = [b['label'] for b in display_boxes]
-                selected_classes_str = ", ".join(all_camera_enabled_classes) if all_camera_enabled_classes else "ALL (unfiltered)"
-                detected_classes_str = ", ".join(detected_labels)
-                print(f"\n==================================================================", flush=True)
-                print(f"[STREAM-TIMING] Camera {self.cam_id} FIRST BOUNDING BOX DETECTED & RENDERED!", flush=True)
-                print(f" -> Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
-                print(f" -> Stream Selected Classes : [{selected_classes_str}]", flush=True)
-                print(f" -> Stream Detected Classes : [{detected_classes_str}]", flush=True)
-                print(f" -> Delay from Click 'Start': {delay_from_start_ms}ms ({delay_from_start_ms/1000.0:.2f}s)", flush=True)
-                print(f" -> Delay from Model Active : {delay_from_active_ms}ms ({delay_from_active_ms/1000.0:.2f}s)", flush=True)
-                print(f"==================================================================\n", flush=True)
+        # Precision calculation and print for first detection box appear time
+        if not getattr(self, '_first_box_logged', False) and display_boxes:
+            self._first_box_logged = True
+            now_t = time.time()
+            t_start = getattr(self, '_start_time', now_t)
+            t_active = getattr(self, '_models_active_time', t_start)
+            delay_from_start_ms = int((now_t - t_start) * 1000)
+            delay_from_active_ms = int((now_t - t_active) * 1000)
+            detected_labels = [b['label'] for b in display_boxes]
+            all_classes_str = ", ".join(list(cur_cls)) if cur_cls else "ALL"
+            detected_classes_str = ", ".join(detected_labels)
+            print(f"\n==================================================================", flush=True)
+            print(f"[STREAM-TIMING] Camera {self.cam_id} FIRST BOUNDING BOX DETECTED & RENDERED!", flush=True)
+            print(f" -> Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
+            print(f" -> Stream Active Classes   : [{all_classes_str}]", flush=True)
+            print(f" -> Stream Detected Classes : [{detected_classes_str}]", flush=True)
+            print(f" -> Delay from Click 'Start': {delay_from_start_ms}ms ({delay_from_start_ms/1000.0:.2f}s)", flush=True)
+            print(f" -> Delay from Model Active : {delay_from_active_ms}ms ({delay_from_active_ms/1000.0:.2f}s)", flush=True)
+            print(f"==================================================================\n", flush=True)
 
-            # Render alert snapshot
-            snap_img = f.copy()
-            if self.roi_polygon and len(self.roi_polygon) == 2:
-                try:
-                    fh, fw = snap_img.shape[:2]
-                    rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                    ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                    rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * fw)
-                    ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * fh)
-                    cv2.rectangle(snap_img, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
-                except:
-                    pass
+        # Snapshot for Alerts
+        snap_img = frame_snapshot.copy()
+        for t_box in display_boxes:
+            try:
+                x1, y1, x2, y2 = [int(v) for v in t_box['box']]
+                cv2.rectangle(snap_img, (x1, y1), (x2, y2), t_box['color'], 2)
+                t_size = cv2.getTextSize(t_box['label'], cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
+                cv2.rectangle(snap_img, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), t_box['color'], -1)
+                cv2.putText(snap_img, t_box['label'], (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+            except:
+                pass
 
-            for t_box in display_boxes:
-                try:
-                    x1, y1, x2, y2 = [int(v) for v in t_box['box']]
-                    cv2.rectangle(snap_img, (x1, y1), (x2, y2), t_box['color'], 2)
-                    t_size = cv2.getTextSize(t_box['label'], cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
-                    cv2.rectangle(snap_img, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), t_box['color'], -1)
-                    cv2.putText(snap_img, t_box['label'], (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
-                except:
-                    pass
-            res = snap_img
+        # Persistent Alert Processing: 3.0s continuous trigger + 30.0s repeat interval
+        for c in cur_cls:
+            if c not in self.alert_timers:
+                self.alert_timers[c] = {'start': now, 'last_seen': now, 'last_alert': 0.0}
+            else:
+                self.alert_timers[c]['last_seen'] = now
 
-            # Persistent alert timing: 3.0s initial trigger + 30.0s repeat interval for ongoing violations
-            for c in cur_cls:
-                if c not in self.alert_timers:
-                    self.alert_timers[c] = {'start': now, 'last_seen': now, 'last_alert': 0.0}
-                else:
-                    self.alert_timers[c]['last_seen'] = now
+            duration = now - self.alert_timers[c]['start']
+            last_alert_time = self.alert_timers[c].get('last_alert', 0.0)
 
-                duration = now - self.alert_timers[c]['start']
-                last_alert_time = self.alert_timers[c].get('last_alert', 0.0)
+            if duration >= 3.0:
+                if last_alert_time == 0.0 or (now - last_alert_time) >= 30.0:
+                    self.alert_timers[c]['last_alert'] = now
+                    self.alert_triggered.add(c)
+                    print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, is_repeat={(last_alert_time > 0)}", flush=True)
+                    self._save_alert(c, snap_img)
 
-                # Initial trigger after 3.0s continuous detection, or repeat every 30s for continuous violations
-                if duration >= 3.0:
-                    if last_alert_time == 0.0 or (now - last_alert_time) >= 30.0:
-                        self.alert_timers[c]['last_alert'] = now
-                        self.alert_triggered.add(c)
-                        print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, is_repeat={(last_alert_time > 0)}", flush=True)
-                        self._save_alert(c, res)
-
-            # Cleanup expired classes (absent for > 1.5s)
-            for c in list(self.alert_timers.keys()):
-                if now - self.alert_timers[c]['last_seen'] > 1.5:
-                    del self.alert_timers[c]
-                    if c in self.alert_triggered:
-                        self.alert_triggered.remove(c)
-
-            return res, render_boxes
-        except Exception as err:
-            print(f"[ERROR] _run_all_models error: {err}", flush=True)
-            return f, []
+        # Cleanup expired alert classes (absent for > 2.0s)
+        for c in list(self.alert_timers.keys()):
+            if now - self.alert_timers[c]['last_seen'] > 2.0:
+                del self.alert_timers[c]
+                if c in self.alert_triggered:
+                    self.alert_triggered.remove(c)
 
     def _save_alert(self, class_name, frame):
         try:
@@ -858,41 +858,6 @@ class DetectorWorker:
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
         return frame
 
-    def _inference_thread(self, inf_stop_evt):
-        print(f"[LOG] Camera {self.cam_id} inference thread started", flush=True)
-        while not self._stop_event.is_set() and not inf_stop_evt.is_set():
-            try:
-                # Always grab the ABSOLUTE LATEST live frame (drain any older queued frames)
-                f = None
-                while not self._frame_queue.empty():
-                    try:
-                        f = self._frame_queue.get_nowait()
-                    except Exception:
-                        break
-                if f is None:
-                    f = self._frame_queue.get(timeout=0.2)
-            except Exception:
-                continue
-            if inf_stop_evt.is_set() or self._stop_event.is_set():
-                break
-            try:
-                ann_frame, boxes = self._run_all_models(f)
-            except Exception as e:
-                print(f"[INFERENCE-ERR] Camera {self.cam_id} inference error: {e}", flush=True)
-                ann_frame, boxes = f, []
-            with self._box_lock:
-                self._latest_boxes = boxes
-                self._latest_box_time = time.time()
-                self._latest_ann_frame = ann_frame
-            if hasattr(self, '_result_queue'):
-                if self._result_queue.full():
-                    try:
-                        self._result_queue.get_nowait()
-                    except:
-                        pass
-                self._result_queue.put(ann_frame)
-            time.sleep(0.04)  # 40ms thermal relief pause to prevent CPU throttling (drops temp from 78.8C to ~62C)
-
     def _capture_thread(self, cap, cap_stop_evt):
         while not self._stop_event.is_set() and not cap_stop_evt.is_set():
             t_start = time.time()
@@ -933,15 +898,14 @@ class DetectorWorker:
 
 
     def run(self):
-        ffmpeg, cap, inf_t, cap_t = None, None, None, None
-        cap_stop_evt, inf_stop_evt = None, None
+        ffmpeg, cap, cap_t = None, None, None
+        cap_stop_evt = None
 
         def cleanup_subthreads():
-            nonlocal cap, cap_t, cap_stop_evt, inf_t, inf_stop_evt, ffmpeg
+            nonlocal cap, cap_t, cap_stop_evt, ffmpeg
             if cap_stop_evt: cap_stop_evt.set()
-            if inf_stop_evt: inf_stop_evt.set()
             if cap_t and cap_t.is_alive(): cap_t.join(timeout=1.0)
-            if inf_t and inf_t.is_alive(): inf_t.join(timeout=1.0)
+            GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)
             if cap:
                 try: cap.release()
                 except Exception: pass
@@ -968,8 +932,6 @@ class DetectorWorker:
                 if self._stop_event.is_set():
                     break
 
-                self._frame_queue = queue.Queue(maxsize=1)
-                self._result_queue = queue.Queue(maxsize=1)
                 self._latest_raw_frame = None
                 self._cap_ok = True
 
@@ -1011,9 +973,7 @@ class DetectorWorker:
                     
                     print(f"[WORKER-TIMER] Camera {self.cam_id} first raw frame received in {int((time.time() - t_frame_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
                     
-                    inf_stop_evt = threading.Event()
-                    inf_t = threading.Thread(target=self._inference_thread, args=(inf_stop_evt,), daemon=True)
-                    inf_t.start()
+                    GLOBAL_INFERENCE_SCHEDULER.register_worker(self)
                     
                     f_int = 1.0 / self.fps
                     next_frame_time = time.time()
@@ -1038,17 +998,6 @@ class DetectorWorker:
                         
                         # Ultra-fast in-place resize to 720p HD
                         pf = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
-                        
-                        # Send latest live frame to inference thread (evict any older queued frame for 0-latency live edge)
-                        if self._frame_queue.full():
-                            try:
-                                self._frame_queue.get_nowait()
-                            except Exception:
-                                pass
-                        try:
-                            self._frame_queue.put_nowait(pf.copy())
-                        except Exception:
-                            pass
 
                         # Draw ROI boundary if active
                         if self.roi_polygon and len(self.roi_polygon) == 2:
