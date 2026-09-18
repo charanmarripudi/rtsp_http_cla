@@ -1014,6 +1014,12 @@
         display: none;
       }
     }
+
+    @media (max-width: 900px) {
+      .vlab-grid-responsive {
+        grid-template-columns: 1fr !important;
+      }
+    }
   </style>
 </head>
 
@@ -1030,6 +1036,7 @@
       <button class="tab-btn active" data-tab="manage">Locations</button>
       <button class="tab-btn" data-tab="dashboard">Location Cameras</button>
       <button class="tab-btn" data-tab="ptz">🎮 PTZ Camera</button>
+      <button class="tab-btn" data-tab="videolab">🧪 AI Video Lab</button>
     </div>
     <div id="system-status">
       <div id="status-dot"></div>
@@ -1214,6 +1221,231 @@
           <div style="display:flex; gap:6px;">
             <input type="text" id="ptzPresetNameInput" placeholder="Preset name" style="flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.75rem; padding:6px 10px; border-radius:6px; outline:none;">
             <button class="btn-primary" id="ptzBtnAddPreset" style="padding:6px 12px; font-size:0.72rem;">Save</button>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Tab 4: AI Video Testing & Verification Lab -->
+  <div class="config-layout tab-content" id="tab-videolab" style="display: none; padding: 22px;">
+    <div style="max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px;">
+      
+      <!-- Top Banner / Title -->
+      <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+        <div>
+          <h2 style="font-family: var(--display); font-size: 1.15rem; color: var(--accent); display: flex; align-items: center; gap: 8px;">
+            <span>🧪</span> Edge AI Video Testing Lab
+          </h2>
+          <p style="font-size: 0.75rem; color: var(--muted); margin-top: 4px;">
+            Upload recorded test videos to evaluate detection accuracy, tune Conf/IoU/imgsz thresholds in real-time, and download web-ready annotated MP4 videos.
+          </p>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <span style="font-size: 0.72rem; color: var(--muted); background: rgba(0,0,0,0.3); padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border);">
+            ⚡ Codec: <strong style="color: var(--text);">H.264 MP4 (Web-Ready)</strong>
+          </span>
+        </div>
+      </div>
+
+      <!-- Main 2-Column Lab Grid -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;" class="vlab-grid-responsive">
+        
+        <!-- Left Column: Video Upload & Preview -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 16px;">
+          <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="font-size: 0.88rem; font-weight: 600;">1. Select & Upload Video</h3>
+            <span id="vlab-upload-status" style="font-size: 0.72rem; color: var(--muted);">Ready for upload</span>
+          </div>
+
+          <!-- Dropzone -->
+          <div id="vlab-dropzone" style="border: 2px dashed var(--border); border-radius: 10px; padding: 32px 16px; text-align: center; cursor: pointer; transition: all 0.25s ease; background: rgba(0,0,0,0.15);">
+            <div style="font-size: 2.2rem; margin-bottom: 8px;">📁</div>
+            <div style="font-size: 0.82rem; font-weight: 600; color: var(--text); margin-bottom: 4px;">
+              Click to browse or Drag & Drop video file here
+            </div>
+            <div style="font-size: 0.70rem; color: var(--muted);">
+              Supports .mp4, .mov, .avi, .mkv, .webm (Up to 250 MB)
+            </div>
+            <input type="file" id="vlab-file-input" accept="video/*" style="display: none;">
+          </div>
+
+          <!-- Uploaded Video Details Banner -->
+          <div id="vlab-file-details" style="display: none; background: rgba(0, 229, 160, 0.05); border: 1px solid rgba(0, 229, 160, 0.2); border-radius: 8px; padding: 10px 14px; font-size: 0.74rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <span style="font-weight: 600; color: var(--accent);" id="vlab-filename-label">video.mp4</span>
+              <span style="color: var(--muted);" id="vlab-filesize-label">12.4 MB</span>
+            </div>
+            <div style="display: flex; gap: 12px; color: var(--muted); font-size: 0.70rem;">
+              <span>Resolution: <strong id="vlab-resolution-label" style="color:var(--text);">-</strong></span>
+              <span>Duration: <strong id="vlab-duration-label" style="color:var(--text);">-</strong></span>
+            </div>
+          </div>
+
+          <!-- Raw Video Player Preview -->
+          <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;">
+            <video id="vlab-raw-video" controls playsinline style="width: 100%; height: 100%; object-fit: contain; display: none;"></video>
+            <div id="vlab-raw-placeholder" style="color: var(--muted); font-size: 0.75rem; text-align: center; padding: 20px;">
+              🎬 Raw video preview will appear here after selection
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Model Selection & AI Threshold Tuning -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 16px;">
+          <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="font-size: 0.88rem; font-weight: 600;">2. AI Model & Detection Parameters</h3>
+            <span style="font-size: 0.72rem; color: var(--accent);">YOLO Edge Engine</span>
+          </div>
+
+          <!-- Model Selector -->
+          <div>
+            <label style="font-size: 0.72rem; color: var(--muted); display: block; margin-bottom: 6px;">SELECT YOLO MODEL WEIGHTS:</label>
+            <select id="vlab-model-select" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; font-size: 0.80rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono);">
+              <option value="">Loading available models...</option>
+            </select>
+          </div>
+
+          <!-- Class Selection Pills -->
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label style="font-size: 0.72rem; color: var(--muted);">ENABLED DETECTION CLASSES:</label>
+              <div style="display: flex; gap: 6px;">
+                <button type="button" id="vlab-select-all-classes" class="btn-secondary" style="padding: 2px 8px; font-size: 0.65rem;">All</button>
+                <button type="button" id="vlab-deselect-all-classes" class="btn-secondary" style="padding: 2px 8px; font-size: 0.65rem;">None</button>
+              </div>
+            </div>
+            <div id="vlab-classes-container" style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 120px; overflow-y: auto; padding: 8px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px;">
+              <span style="font-size: 0.70rem; color: var(--muted);">Select a model to view classes...</span>
+            </div>
+          </div>
+
+          <!-- Sliders: Confidence & IoU -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+            <div style="background: rgba(0,0,0,0.2); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label style="font-size: 0.70rem; color: var(--muted);">CONFIDENCE (Conf):</label>
+                <strong id="vlab-conf-val" style="color: var(--accent); font-size: 0.75rem;">0.35</strong>
+              </div>
+              <input type="range" id="vlab-conf-slider" min="0.05" max="0.95" step="0.01" value="0.35" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
+            </div>
+
+            <div style="background: rgba(0,0,0,0.2); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label style="font-size: 0.70rem; color: var(--muted);">IoU NMS THRESHOLD:</label>
+                <strong id="vlab-iou-val" style="color: var(--accent); font-size: 0.75rem;">0.45</strong>
+              </div>
+              <input type="range" id="vlab-iou-slider" min="0.10" max="0.90" step="0.01" value="0.45" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
+            </div>
+          </div>
+
+          <!-- Resolution & Frame Skip Settings -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+            <div>
+              <label style="font-size: 0.70rem; color: var(--muted); display: block; margin-bottom: 6px;">IMAGE RESOLUTION (imgsz):</label>
+              <div style="display: flex; gap: 4px;" id="vlab-imgsz-buttons">
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="416" style="flex: 1; padding: 6px 4px; font-size: 0.70rem;">416</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="480" style="flex: 1; padding: 6px 4px; font-size: 0.70rem;">480</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="512" style="flex: 1; padding: 6px 4px; font-size: 0.70rem;">512</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn active" data-sz="640" style="flex: 1; padding: 6px 4px; font-size: 0.70rem; background: var(--accent-dim); border-color: var(--accent); color: var(--accent);">640</button>
+              </div>
+            </div>
+
+            <div>
+              <label style="font-size: 0.70rem; color: var(--muted); display: block; margin-bottom: 6px;">SPEED / FRAME PROCESSING:</label>
+              <select id="vlab-frameskip-select" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; font-size: 0.75rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono);">
+                <option value="1">1:1 Full Accuracy (Every Frame)</option>
+                <option value="2">2× Fast Preview (Every 2nd Frame)</option>
+                <option value="3">3× Ultra Preview (Every 3rd Frame)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Start Action Button -->
+          <div style="margin-top: auto; padding-top: 8px;">
+            <button id="vlab-start-btn" class="btn-primary" style="width: 100%; padding: 12px; font-size: 0.88rem; font-weight: 700; background: var(--accent); color: #000; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s;">
+              <span>🚀</span> Run AI Video Detection
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Processing Progress Section (Shown while running) -->
+      <div id="vlab-progress-card" class="widget-card" style="display: none; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="spin" style="width: 16px; height: 16px; border-width: 2px;"></div>
+            <strong style="color: var(--accent); font-size: 0.85rem;">Processing Video with YOLO...</strong>
+          </div>
+          <button id="vlab-cancel-btn" class="btn-secondary" style="color: var(--danger); border-color: rgba(255, 65, 85, 0.4); padding: 4px 12px; font-size: 0.72rem;">Cancel Job</button>
+        </div>
+
+        <!-- Progress Bar -->
+        <div style="background: rgba(0,0,0,0.4); border-radius: 8px; height: 14px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 12px;">
+          <div id="vlab-progress-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--accent), #00b4d8); transition: width 0.3s ease; box-shadow: 0 0 10px var(--accent);"></div>
+        </div>
+
+        <!-- Telemetry Stats -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; font-size: 0.72rem; color: var(--muted);">
+          <div>Progress: <strong id="vlab-prog-pct" style="color:var(--text);">0%</strong></div>
+          <div>Frame: <strong id="vlab-prog-frame" style="color:var(--text);">0 / 0</strong></div>
+          <div>Speed: <strong id="vlab-prog-fps" style="color:var(--accent);">0.0 FPS</strong></div>
+          <div>Elapsed: <strong id="vlab-prog-elapsed" style="color:var(--text);">0.0s</strong></div>
+          <div>ETA: <strong id="vlab-prog-eta" style="color:var(--text);">Calculating...</strong></div>
+        </div>
+      </div>
+
+      <!-- Results & Detection Video Player Section -->
+      <div id="vlab-results-card" class="widget-card" style="display: none; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 18px;">
+        <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 1.1rem;">🎬</span>
+            <h3 style="font-size: 0.92rem; font-weight: 700; color: var(--accent);">Annotated Detection Video Result</h3>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <a id="vlab-download-btn" href="#" download class="btn-primary" style="padding: 6px 14px; font-size: 0.75rem; text-decoration: none; display: flex; align-items: center; gap: 6px; background: var(--accent); color: #000;">
+              <span>⬇️</span> Download Detection MP4
+            </a>
+          </div>
+        </div>
+
+        <!-- Annotated Video Player -->
+        <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;">
+          <video id="vlab-result-video" controls playsinline style="width: 100%; height: 100%; object-fit: contain; background: #000;"></video>
+        </div>
+
+        <!-- Analytics Summary -->
+        <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 8px; padding: 14px;">
+          <h4 style="font-size: 0.78rem; color: var(--muted); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em;">Detection Analytics Matrix</h4>
+          
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px;">
+            <div style="background: var(--bg); padding: 10px; border-radius: 6px; border: 1px solid var(--border); text-align: center;">
+              <div style="font-size: 0.68rem; color: var(--muted);">TOTAL DETECTIONS</div>
+              <div id="vlab-res-total-dets" style="font-size: 1.1rem; font-weight: 800; color: var(--accent); margin-top: 2px;">0</div>
+            </div>
+            <div style="background: var(--bg); padding: 10px; border-radius: 6px; border: 1px solid var(--border); text-align: center;">
+              <div style="font-size: 0.68rem; color: var(--muted);">PROCESSED FRAMES</div>
+              <div id="vlab-res-frames" style="font-size: 1.1rem; font-weight: 800; color: var(--text); margin-top: 2px;">0</div>
+            </div>
+            <div style="background: var(--bg); padding: 10px; border-radius: 6px; border: 1px solid var(--border); text-align: center;">
+              <div style="font-size: 0.68rem; color: var(--muted);">PROCESSING TIME</div>
+              <div id="vlab-res-time" style="font-size: 1.1rem; font-weight: 800; color: var(--text); margin-top: 2px;">0.0s</div>
+            </div>
+            <div style="background: var(--bg); padding: 10px; border-radius: 6px; border: 1px solid var(--border); text-align: center;">
+              <div style="font-size: 0.68rem; color: var(--muted);">AVERAGE SPEED</div>
+              <div id="vlab-res-fps" style="font-size: 1.1rem; font-weight: 800; color: var(--accent); margin-top: 2px;">0.0 FPS</div>
+            </div>
+          </div>
+
+          <!-- Class Counts Breakdown Pills -->
+          <div>
+            <div style="font-size: 0.70rem; color: var(--muted); margin-bottom: 6px;">DETECTIONS BY CLASS:</div>
+            <div id="vlab-res-class-pills" style="display: flex; flex-wrap: wrap; gap: 6px;">
+              <span style="font-size: 0.72rem; color: var(--muted);">No detections registered</span>
+            </div>
           </div>
         </div>
 
@@ -1566,6 +1798,10 @@
         } else if (tabId === 'ptz') {
           setTimeout(() => {
             if (window.initPtzController) window.initPtzController();
+          }, 50);
+        } else if (tabId === 'videolab') {
+          setTimeout(() => {
+            if (window.initVideoLab) window.initVideoLab();
           }, 50);
         }
       }
@@ -2606,33 +2842,398 @@
       }
     };
 
-    // Auto-render saved ROIs for all loaded camera cards on resize
-    window.addEventListener("resize", () => {
-      Object.keys(roiDrawStates).forEach(cid => {
-        window.renderInlineRoi(cid);
-      });
-    });
+    // =========================================================================
+    // 🧪 AI VIDEO TESTING LAB CLIENT CONTROLLER
+    // =========================================================================
+    let vlabUploadedFilename = null;
+    let vlabActiveJobId = null;
+    let vlabPollInterval = null;
+    let vlabSelectedImgsz = 640;
 
-    // Auto-render saved ROIs for all camera cards after dashboard rendering completes
-    window.addEventListener("rtsp-dashboard-ready", () => {
-      setTimeout(() => {
-        if (typeof streamsArray !== "undefined" && Array.isArray(streamsArray)) {
-          streamsArray.forEach((s, idx) => {
-            if (s.model_configs && s.model_configs.roi_polygon) {
-              roiDrawStates[idx] = {
-                isDrawing: false,
-                startX: 0,
-                startY: 0,
-                startPctX: 0,
-                startPctY: 0,
-                vertices: s.model_configs.roi_polygon
-              };
-              window.renderInlineRoi(idx);
+    window.initVideoLab = function() {
+      const dropzone = document.getElementById("vlab-dropzone");
+      const fileInput = document.getElementById("vlab-file-input");
+      const modelSelect = document.getElementById("vlab-model-select");
+      const confSlider = document.getElementById("vlab-conf-slider");
+      const confVal = document.getElementById("vlab-conf-val");
+      const iouSlider = document.getElementById("vlab-iou-slider");
+      const iouVal = document.getElementById("vlab-iou-val");
+      const startBtn = document.getElementById("vlab-start-btn");
+      const cancelBtn = document.getElementById("vlab-cancel-btn");
+
+      // Load available models if select is empty
+      if (modelSelect && (modelSelect.options.length <= 1 || modelSelect.options[0].value === "")) {
+        fetch("/api/models")
+          .then(r => r.json())
+          .then(data => {
+            const models = data.models || [];
+            modelSelect.innerHTML = "";
+            if (models.length === 0) {
+              modelSelect.innerHTML = '<option value="">No .pt models found in models/ directory</option>';
+              return;
             }
+            models.forEach(m => {
+              const opt = document.createElement("option");
+              opt.value = m;
+              opt.textContent = m;
+              if (m.includes("hansung") || m.includes("ppe")) opt.selected = true;
+              modelSelect.appendChild(opt);
+            });
+            vlabLoadModelClasses(modelSelect.value);
+          })
+          .catch(e => console.error("[VideoLab] Failed to load models:", e));
+      }
+
+      // Model change handler
+      if (modelSelect) {
+        modelSelect.onchange = () => {
+          vlabLoadModelClasses(modelSelect.value);
+        };
+      }
+
+      // Slider live updates
+      if (confSlider && confVal) {
+        confSlider.oninput = () => { confVal.textContent = parseFloat(confSlider.value).toFixed(2); };
+      }
+      if (iouSlider && iouVal) {
+        iouSlider.oninput = () => { iouVal.textContent = parseFloat(iouSlider.value).toFixed(2); };
+      }
+
+      // Imgsz buttons
+      document.querySelectorAll(".vlab-imgsz-btn").forEach(btn => {
+        btn.onclick = () => {
+          document.querySelectorAll(".vlab-imgsz-btn").forEach(b => {
+            b.classList.remove("active");
+            b.style.background = "";
+            b.style.borderColor = "";
+            b.style.color = "";
           });
+          btn.classList.add("active");
+          btn.style.background = "var(--accent-dim)";
+          btn.style.borderColor = "var(--accent)";
+          btn.style.color = "var(--accent)";
+          vlabSelectedImgsz = parseInt(btn.getAttribute("data-sz")) || 640;
+        };
+      });
+
+      // Class select all / none buttons
+      const selectAllBtn = document.getElementById("vlab-select-all-classes");
+      const deselectAllBtn = document.getElementById("vlab-deselect-all-classes");
+      if (selectAllBtn) {
+        selectAllBtn.onclick = () => {
+          document.querySelectorAll("#vlab-classes-container input[type='checkbox']").forEach(cb => cb.checked = true);
+        };
+      }
+      if (deselectAllBtn) {
+        deselectAllBtn.onclick = () => {
+          document.querySelectorAll("#vlab-classes-container input[type='checkbox']").forEach(cb => cb.checked = false);
+        };
+      }
+
+      // Dropzone interactions
+      if (dropzone && fileInput) {
+        dropzone.onclick = () => fileInput.click();
+        
+        dropzone.ondragover = (e) => {
+          e.preventDefault();
+          dropzone.style.borderColor = "var(--accent)";
+          dropzone.style.background = "var(--accent-dim)";
+        };
+        dropzone.ondragleave = () => {
+          dropzone.style.borderColor = "var(--border)";
+          dropzone.style.background = "rgba(0,0,0,0.15)";
+        };
+        dropzone.ondrop = (e) => {
+          e.preventDefault();
+          dropzone.style.borderColor = "var(--border)";
+          dropzone.style.background = "rgba(0,0,0,0.15)";
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            handleVideoFileSelected(e.dataTransfer.files[0]);
+          }
+        };
+
+        fileInput.onchange = () => {
+          if (fileInput.files && fileInput.files.length > 0) {
+            handleVideoFileSelected(fileInput.files[0]);
+          }
+        };
+      }
+
+      // Start processing button
+      if (startBtn) {
+        startBtn.onclick = vlabStartDetectionJob;
+      }
+
+      // Cancel button
+      if (cancelBtn) {
+        cancelBtn.onclick = vlabCancelJob;
+      }
+    };
+
+    function vlabLoadModelClasses(modelName) {
+      const container = document.getElementById("vlab-classes-container");
+      if (!container || !modelName) return;
+      
+      container.innerHTML = '<span style="font-size: 0.70rem; color: var(--muted);">Loading classes...</span>';
+      
+      fetch(`/api/model-classes?model=${encodeURIComponent(modelName)}`)
+        .then(r => r.json())
+        .then(data => {
+          const classes = data.classes || [];
+          container.innerHTML = "";
+          if (classes.length === 0) {
+            container.innerHTML = '<span style="font-size: 0.70rem; color: var(--muted);">All classes enabled by default</span>';
+            return;
+          }
+          classes.forEach(c => {
+            const label = document.createElement("label");
+            label.style.cssText = "display: flex; align-items: center; gap: 5px; font-size: 0.72rem; background: rgba(0,0,0,0.3); border: 1px solid var(--border); padding: 3px 8px; border-radius: 4px; cursor: pointer; user-select: none;";
+            
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.value = c;
+            cb.checked = true; // Enabled by default
+            cb.style.accentColor = "var(--accent)";
+            
+            const span = document.createElement("span");
+            span.textContent = c;
+            
+            label.appendChild(cb);
+            label.appendChild(span);
+            container.appendChild(label);
+          });
+        })
+        .catch(e => {
+          container.innerHTML = '<span style="font-size: 0.70rem; color: var(--danger);">Failed to load classes</span>';
+        });
+    }
+
+    function handleVideoFileSelected(file) {
+      if (!file) return;
+      
+      const detailsBox = document.getElementById("vlab-file-details");
+      const filenameLabel = document.getElementById("vlab-filename-label");
+      const filesizeLabel = document.getElementById("vlab-filesize-label");
+      const resLabel = document.getElementById("vlab-resolution-label");
+      const durLabel = document.getElementById("vlab-duration-label");
+      const rawVideo = document.getElementById("vlab-raw-video");
+      const rawPlaceholder = document.getElementById("vlab-raw-placeholder");
+      const uploadStatus = document.getElementById("vlab-upload-status");
+
+      filenameLabel.textContent = file.name;
+      filesizeLabel.textContent = (file.size / (1024 * 1024)).toFixed(1) + " MB";
+      detailsBox.style.display = "block";
+      
+      const localUrl = URL.createObjectURL(file);
+      rawVideo.src = localUrl;
+      rawVideo.style.display = "block";
+      rawPlaceholder.style.display = "none";
+      
+      rawVideo.onloadedmetadata = () => {
+        resLabel.textContent = `${rawVideo.videoWidth}x${rawVideo.videoHeight}`;
+        durLabel.textContent = `${rawVideo.duration.toFixed(1)}s`;
+      };
+
+      // Upload file to server
+      uploadStatus.textContent = "Uploading to server...";
+      uploadStatus.style.color = "var(--accent)";
+      
+      const formData = new FormData();
+      formData.append("file", file);
+      
+      fetch("/api/video-test/upload", {
+        method: "POST",
+        body: formData
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.status === "ok") {
+          vlabUploadedFilename = res.raw_filename;
+          uploadStatus.textContent = "Ready for AI Detection ✓";
+          uploadStatus.style.color = "var(--accent)";
+        } else {
+          uploadStatus.textContent = "Upload Error: " + (res.message || "Failed");
+          uploadStatus.style.color = "var(--danger)";
         }
-      }, 600);
-    });
+      })
+      .catch(err => {
+        uploadStatus.textContent = "Upload Failed: " + err.message;
+        uploadStatus.style.color = "var(--danger)";
+      });
+    }
+
+    function vlabStartDetectionJob() {
+      if (!vlabUploadedFilename) {
+        alert("Please select and upload a video file first.");
+        return;
+      }
+      
+      const modelSelect = document.getElementById("vlab-model-select");
+      const confSlider = document.getElementById("vlab-conf-slider");
+      const iouSlider = document.getElementById("vlab-iou-slider");
+      const frameSkipSelect = document.getElementById("vlab-frameskip-select");
+      
+      const modelName = modelSelect ? modelSelect.value : "";
+      if (!modelName) {
+        alert("Please select a YOLO model.");
+        return;
+      }
+
+      // Collect checked classes
+      const enabledClasses = [];
+      document.querySelectorAll("#vlab-classes-container input[type='checkbox']:checked").forEach(cb => {
+        enabledClasses.push(cb.value);
+      });
+
+      const payload = {
+        raw_filename: vlabUploadedFilename,
+        model_name: modelName,
+        conf: parseFloat(confSlider.value) || 0.35,
+        iou: parseFloat(iouSlider.value) || 0.45,
+        imgsz: vlabSelectedImgsz || 640,
+        enabled_classes: enabledClasses,
+        frame_skip: parseInt(frameSkipSelect.value) || 1
+      };
+
+      const startBtn = document.getElementById("vlab-start-btn");
+      startBtn.disabled = true;
+      startBtn.style.opacity = "0.5";
+
+      const progressCard = document.getElementById("vlab-progress-card");
+      const resultsCard = document.getElementById("vlab-results-card");
+      progressCard.style.display = "block";
+      resultsCard.style.display = "none";
+
+      fetch("/api/video-test/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      .then(r => r.json())
+      .then(res => {
+        startBtn.disabled = false;
+        startBtn.style.opacity = "1";
+        
+        if (res.status === "ok" && res.job) {
+          vlabActiveJobId = res.job.job_id;
+          vlabStartStatusPolling(vlabActiveJobId);
+        } else {
+          alert("Failed to start detection job: " + (res.message || "Unknown error"));
+          progressCard.style.display = "none";
+        }
+      })
+      .catch(err => {
+        startBtn.disabled = false;
+        startBtn.style.opacity = "1";
+        alert("Network error: " + err.message);
+        progressCard.style.display = "none";
+      });
+    }
+
+    function vlabStartStatusPolling(jobId) {
+      if (vlabPollInterval) clearInterval(vlabPollInterval);
+      
+      const progressFill = document.getElementById("vlab-progress-fill");
+      const progPct = document.getElementById("vlab-prog-pct");
+      const progFrame = document.getElementById("vlab-prog-frame");
+      const progFps = document.getElementById("vlab-prog-fps");
+      const progElapsed = document.getElementById("vlab-prog-elapsed");
+      const progEta = document.getElementById("vlab-prog-eta");
+
+      vlabPollInterval = setInterval(() => {
+        fetch(`/api/video-test/status/${jobId}`)
+          .then(r => r.json())
+          .then(res => {
+            if (res.status !== "ok" || !res.job) return;
+            const job = res.job;
+            
+            // Update telemetry
+            const pct = Math.min(100, Math.max(0, job.progress || 0));
+            progressFill.style.width = pct + "%";
+            progPct.textContent = pct.toFixed(1) + "%";
+            progFrame.textContent = `${job.current_frame} / ${job.total_frames}`;
+            progFps.textContent = (job.processing_fps || 0).toFixed(1) + " FPS";
+            progElapsed.textContent = (job.elapsed_sec || 0).toFixed(1) + "s";
+            progEta.textContent = job.eta_sec > 0 ? `${job.eta_sec.toFixed(1)}s` : "Finishing...";
+
+            if (job.status === "completed") {
+              clearInterval(vlabPollInterval);
+              vlabPollInterval = null;
+              vlabRenderCompletedResults(job);
+            } else if (job.status === "failed") {
+              clearInterval(vlabPollInterval);
+              vlabPollInterval = null;
+              document.getElementById("vlab-progress-card").style.display = "none";
+              alert("Video AI Detection Failed: " + (job.error || "Unknown error"));
+            } else if (job.status === "cancelled") {
+              clearInterval(vlabPollInterval);
+              vlabPollInterval = null;
+              document.getElementById("vlab-progress-card").style.display = "none";
+            }
+          })
+          .catch(e => console.error("[VideoLab] Status poll error:", e));
+      }, 500);
+    }
+
+    function vlabRenderCompletedResults(job) {
+      document.getElementById("vlab-progress-card").style.display = "none";
+      const resultsCard = document.getElementById("vlab-results-card");
+      resultsCard.style.display = "flex";
+
+      const videoEl = document.getElementById("vlab-result-video");
+      const downloadBtn = document.getElementById("vlab-download-btn");
+      
+      const videoSrc = `/api/video-test/result/${job.job_id}?t=${Date.now()}`;
+      videoEl.src = videoSrc;
+      videoEl.load();
+      videoEl.play().catch(() => {});
+      
+      downloadBtn.href = videoSrc;
+      downloadBtn.download = job.result_filename;
+
+      // Stats
+      document.getElementById("vlab-res-total-dets").textContent = job.detections_total || 0;
+      document.getElementById("vlab-res-frames").textContent = job.total_frames || 0;
+      document.getElementById("vlab-res-time").textContent = (job.elapsed_sec || 0).toFixed(1) + "s";
+      document.getElementById("vlab-res-fps").textContent = (job.processing_fps || 0).toFixed(1) + " FPS";
+
+      // Class Pills
+      const pillsContainer = document.getElementById("vlab-res-class-pills");
+      pillsContainer.innerHTML = "";
+      const classCounts = job.class_counts || {};
+      const keys = Object.keys(classCounts);
+      
+      if (keys.length === 0) {
+        pillsContainer.innerHTML = '<span style="font-size: 0.72rem; color: var(--muted);">No target objects detected in video</span>';
+      } else {
+        keys.forEach(k => {
+          const count = classCounts[k];
+          const pill = document.createElement("div");
+          const isViolation = k.toLowerCase().startsWith("no-") || k.toLowerCase().startsWith("without-");
+          pill.style.cssText = `background: ${isViolation ? 'rgba(255, 65, 85, 0.15)' : 'rgba(0, 229, 160, 0.15)'}; border: 1px solid ${isViolation ? 'var(--danger)' : 'var(--accent)'}; color: ${isViolation ? '#ff8090' : 'var(--accent)'}; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; display: flex; align-items: center; gap: 6px;`;
+          pill.innerHTML = `<span>${k}</span><strong style="color:#fff; background:rgba(0,0,0,0.4); padding:1px 6px; border-radius:4px;">${count}</strong>`;
+          pillsContainer.appendChild(pill);
+        });
+      }
+    }
+
+    function vlabCancelJob() {
+      if (vlabActiveJobId) {
+        fetch(`/api/video-test/${vlabActiveJobId}`, { method: "DELETE" });
+      }
+      if (vlabPollInterval) {
+        clearInterval(vlabPollInterval);
+        vlabPollInterval = null;
+      }
+      document.getElementById("vlab-progress-card").style.display = "none";
+    }
+
+    // Auto-init video lab if already on videolab tab on load
+    if (localStorage.getItem("active_dashboard_tab") === "videolab") {
+      setTimeout(() => {
+        if (window.initVideoLab) window.initVideoLab();
+      }, 200);
+    }
   </script>
 
 </body>

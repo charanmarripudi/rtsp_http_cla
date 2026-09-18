@@ -23,7 +23,7 @@ try:
 except Exception:
     pass
 
-from fastapi import FastAPI, Body, Query, Request
+from fastapi import FastAPI, Body, Query, Request, UploadFile, File, Form, HTTPException
 from typing import Optional, Tuple, Any
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,8 +62,8 @@ class DeviceHeartbeat(BaseModel):
 DEVICE_STATUS = {}
 
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response, FileResponse
-import os, glob, subprocess, mimetypes, signal, json, socket, time, threading, sys
+from fastapi.responses import Response, FileResponse, JSONResponse
+import os, glob, subprocess, mimetypes, signal, json, socket, time, threading, sys, uuid
 
 # Import DetectorWorker to pre-load PyTorch/YOLO libraries at server boot time (takes ~25s once on boot)
 # so that camera detection starts instantly (in under 3 seconds) when clicking Start in the browser.
@@ -73,6 +73,20 @@ try:
     from detector_worker import DetectorWorker
 except Exception as e:
     print(f"[ERROR] Failed to pre-import DetectorWorker: {e}")
+
+try:
+    from video_tester import (
+        create_job, get_job, delete_job, start_video_test,
+        RAW_DIR, RESULTS_DIR, JOBS
+    )
+except Exception as e:
+    try:
+        from detector.video_tester import (
+            create_job, get_job, delete_job, start_video_test,
+            RAW_DIR, RESULTS_DIR, JOBS
+        )
+    except Exception as e2:
+        print(f"[ERROR] Failed to import video_tester: {e2}")
 
 class ThreadProcWrapper:
     """Wrapper that mimics a subprocess.Popen object so that running worker threads
@@ -1162,6 +1176,102 @@ def get_model_classes_endpoint(model: Optional[str] = Query(default=None), model
     if not target_model:
         return {"classes": ALL_MODEL_CLASSES if 'ALL_MODEL_CLASSES' in globals() else {}}
     return {"model": target_model, "classes": get_model_classes(target_model)}
+
+# ---------------------------------------------------------
+# VIDEO TESTING LAB ENDPOINTS
+# ---------------------------------------------------------
+class VideoProcessRequest(BaseModel):
+    raw_filename: str
+    model_name: str
+    conf: Optional[float] = 0.35
+    iou: Optional[float] = 0.45
+    imgsz: Optional[int] = 640
+    enabled_classes: Optional[list] = None
+    frame_skip: Optional[int] = 1
+
+@app.post("/api/video-test/upload")
+async def upload_test_video(file: UploadFile = File(...)):
+    try:
+        if not file.filename:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "No filename provided"})
+        
+        ext = os.path.splitext(file.filename)[1].lower()
+        if not ext:
+            ext = ".mp4"
+        safe_name = f"upload_{int(time.time())}_{str(uuid.uuid4())[:6]}{ext}"
+        save_path = os.path.join(str(RAW_DIR), safe_name)
+        
+        with open(save_path, "wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                f.write(chunk)
+                
+        file_size = os.path.getsize(save_path)
+        return {
+            "status": "ok",
+            "raw_filename": safe_name,
+            "original_filename": file.filename,
+            "file_size": file_size,
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
+@app.post("/api/video-test/process")
+def process_test_video(req: VideoProcessRequest):
+    try:
+        raw_path = os.path.join(str(RAW_DIR), req.raw_filename)
+        if not os.path.exists(raw_path):
+            return JSONResponse(status_code=404, content={"status": "error", "message": f"Uploaded file {req.raw_filename} not found"})
+            
+        job = create_job(
+            raw_filename=req.raw_filename,
+            model_name=req.model_name,
+            conf=req.conf if req.conf is not None else 0.35,
+            iou=req.iou if req.iou is not None else 0.45,
+            imgsz=req.imgsz if req.imgsz is not None else 640,
+            enabled_classes=req.enabled_classes or [],
+            frame_skip=req.frame_skip if req.frame_skip is not None else 1
+        )
+        start_video_test(job.job_id)
+        return {"status": "ok", "job": job.to_dict()}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
+@app.get("/api/video-test/status/{job_id}")
+def get_video_test_status(job_id: str):
+    job = get_job(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Job not found"})
+    return {"status": "ok", "job": job.to_dict()}
+
+@app.get("/api/video-test/result/{job_id}")
+def get_video_test_result(job_id: str):
+    job = get_job(job_id)
+    if not job or not os.path.exists(job.result_path):
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Processed video result not found"})
+    return FileResponse(
+        job.result_path,
+        media_type="video/mp4",
+        filename=job.result_filename,
+        headers={"Accept-Ranges": "bytes"}
+    )
+
+@app.get("/api/video-test/raw/{job_id}")
+def get_video_test_raw(job_id: str):
+    job = get_job(job_id)
+    if not job or not os.path.exists(job.raw_path):
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Raw uploaded video not found"})
+    return FileResponse(
+        job.raw_path,
+        media_type="video/mp4",
+        filename=job.raw_filename,
+        headers={"Accept-Ranges": "bytes"}
+    )
+
+@app.delete("/api/video-test/{job_id}")
+def delete_video_test_job(job_id: str):
+    success = delete_job(job_id)
+    return {"status": "ok" if success else "not_found"}
+
 
 @app.get("/api/streams")
 def get_streams(
