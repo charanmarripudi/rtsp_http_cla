@@ -7,8 +7,6 @@ try:
 except Exception:
     pass
 from datetime import datetime
-from ultralytics import YOLO
-from ultralytics.utils.plotting import Annotator, colors
 try:
     import psycopg2
     PSYCOPG2_AVAILABLE = True
@@ -33,7 +31,13 @@ import re
 
 from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db
 
+# NOTE: YOLO/ultralytics/torch are NOT imported at module level.
+# They are lazy-loaded inside get_yolo_model() when the first camera
+# starts detection. This prevents SIGSEGV at server.py startup on ARM64
+# Raspberry Pi when memory is fragmented after a previous crash.
 YOLO_CACHE = {}
+_YOLO_CLASS = None  # Lazy-loaded YOLO class reference
+
 
 def clean_str(s):
     res = re.sub(r'[^a-z0-9]', '', str(s).lower())
@@ -119,11 +123,27 @@ def match_class(box_cls, enabled_cls):
 INFERENCE_LOCK = threading.Lock()
 
 def get_yolo_model(model_path):
+    global _YOLO_CLASS
+    if _YOLO_CLASS is None:
+        # Lazy-load YOLO and torch only when the first model is requested.
+        # This prevents SIGSEGV at server startup on ARM64 Raspberry Pi.
+        print(f"[CACHE] First model request — lazy-loading YOLO/torch now...", flush=True)
+        try:
+            import torch
+            torch.set_num_threads(1)
+            if hasattr(torch, "set_num_interop_threads"):
+                torch.set_num_interop_threads(1)
+        except Exception as te:
+            print(f"[WARN] torch thread config failed: {te}", flush=True)
+        from ultralytics import YOLO as _YOLO
+        _YOLO_CLASS = _YOLO
+        print(f"[CACHE] YOLO/torch loaded successfully.", flush=True)
+
     if model_path not in YOLO_CACHE:
         with INFERENCE_LOCK:
             if model_path not in YOLO_CACHE:
                 print(f"[CACHE] Loading model weights into memory: {model_path}", flush=True)
-                YOLO_CACHE[model_path] = YOLO(model_path)
+                YOLO_CACHE[model_path] = _YOLO_CLASS(model_path)
     return YOLO_CACHE[model_path]
 
 def get_alerts_base_url():
