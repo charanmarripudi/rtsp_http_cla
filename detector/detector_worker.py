@@ -617,60 +617,142 @@ class DetectorWorker:
                 })
                 cur_cls.add(cls_name)
 
-            # Universal Temporal EMA Smoothing & Jitter Filter (Works for ANY AI Use Case)
-            # If an object matches a previous detection (IoU >= 0.35 and matching class),
-            # smooth coordinates to eliminate bounding box shifting when person is stationary.
-            smoothed_boxes = []
+            # =========================================================================
+            # UNIVERSAL LIGHTWEIGHT MULTI-OBJECT TRACKING & HYSTERESIS MEMORY
+            # 1. Matches incoming detections with existing active tracks (IoU + Distance).
+            # 2. Smooths stationary detections (alpha=0.25) to eliminate jitter/wobble.
+            # 3. Responsive snapping (alpha=0.90) for moving/walking objects.
+            # 4. Track Persistence: Holds missed detections for up to 2 inference cycles (~10-12s)
+            #    so 10+ seated people stay continuously bounded without flickering on/off.
+            # 5. Drops dead tracks if unobserved for > 12s.
+            # =========================================================================
             with self._box_lock:
-                prev_tracked = list(getattr(self, '_tracked_boxes', []))
+                prev_tracks = list(getattr(self, '_tracked_objects', []))
 
-            for new_b in render_boxes:
+            updated_tracks = []
+            used_det_indices = set()
+            used_track_indices = set()
+
+            # Step A: Match new detections to existing tracks greedily by score
+            matches = []
+            for didx, new_b in enumerate(render_boxes):
                 nx1, ny1, nx2, ny2 = new_b['box']
+                ncx, ncy = (nx1 + nx2) / 2.0, (ny1 + ny2) / 2.0
                 n_cls = new_b['cls']
-                best_match = None
-                best_iou = 0.0
+                n_area = max(1.0, (nx2 - nx1) * (ny2 - ny1))
 
-                for prev_b in prev_tracked:
-                    if match_class(prev_b.get('cls', ''), n_cls):
-                        px1, py1, px2, py2 = prev_b['box']
-                        ix1, iy1, ix2, iy2 = max(nx1, px1), max(ny1, py1), min(nx2, px2), min(ny2, py2)
+                for tidx, trk in enumerate(prev_tracks):
+                    if match_class(trk.get('cls', ''), n_cls):
+                        tx1, ty1, tx2, ty2 = trk['box']
+                        tcx, tcy = (tx1 + tx2) / 2.0, (ty1 + ty2) / 2.0
+                        t_area = max(1.0, (tx2 - tx1) * (ty2 - ty1))
+
+                        # Calculate IoU
+                        ix1, iy1 = max(nx1, tx1), max(ny1, ty1)
+                        ix2, iy2 = min(nx2, tx2), min(ny2, ty2)
                         if ix2 > ix1 and iy2 > iy1:
                             inter = (ix2 - ix1) * (iy2 - iy1)
-                            union = (nx2 - nx1)*(ny2 - ny1) + (px2 - px1)*(py2 - py1) - inter
+                            union = n_area + t_area - inter
                             iou = inter / max(1.0, union)
-                            if iou > best_iou:
-                                best_iou = iou
-                                best_match = prev_b
+                        else:
+                            iou = 0.0
 
-                if best_match is not None and best_iou >= 0.35:
-                    px1, py1, px2, py2 = best_match['box']
-                    pcx, pcy = (px1 + px2) / 2.0, (py1 + py2) / 2.0
-                    ncx, ncy = (nx1 + nx2) / 2.0, (ny1 + ny2) / 2.0
-                    dist = math.hypot(ncx - pcx, ncy - pcy)
+                        dist = math.hypot(ncx - tcx, ncy - tcy)
+                        area_ratio = n_area / t_area
 
-                    # Stationary person (micro-movement < 25px): strong smoothing to eliminate shifting
-                    # Moving person (walking > 25px): fast responsive tracking
-                    alpha = 0.25 if dist < 25 else 0.65
-                    sx1 = px1 * (1.0 - alpha) + nx1 * alpha
-                    sy1 = py1 * (1.0 - alpha) + ny1 * alpha
-                    sx2 = px2 * (1.0 - alpha) + nx2 * alpha
-                    sy2 = py2 * (1.0 - alpha) + ny2 * alpha
-                    new_b['box'] = [sx1, sy1, sx2, sy2]
+                        # Valid match conditions:
+                        # 1. Direct IoU overlap >= 0.20
+                        # 2. Proximity match: center distance < 75px and similar size
+                        if iou >= 0.20 or (dist < 75.0 and 0.40 <= area_ratio <= 2.5):
+                            score = iou * 1.5 + max(0.0, 1.0 - (dist / 100.0))
+                            matches.append((score, didx, tidx, iou, dist))
 
-                smoothed_boxes.append(new_b)
+            # Sort matches by highest affinity score
+            matches.sort(key=lambda x: x[0], reverse=True)
+
+            for score, didx, tidx, iou, dist in matches:
+                if didx in used_det_indices or tidx in used_track_indices:
+                    continue
+                used_det_indices.add(didx)
+                used_track_indices.add(tidx)
+
+                new_b = render_boxes[didx]
+                trk = prev_tracks[tidx]
+
+                nx1, ny1, nx2, ny2 = new_b['box']
+                tx1, ty1, tx2, ty2 = trk['box']
+
+                # Motion-adaptive smoothing:
+                # Stationary (< 15px): smooth heavily (alpha=0.25) to eliminate jitter
+                # Moving / Walking (>= 15px): fast tracking (alpha=0.90) to follow body directly
+                alpha = 0.25 if dist < 15.0 else 0.90
+                sx1 = tx1 * (1.0 - alpha) + nx1 * alpha
+                sy1 = ty1 * (1.0 - alpha) + ny1 * alpha
+                sx2 = tx2 * (1.0 - alpha) + nx2 * alpha
+                sy2 = ty2 * (1.0 - alpha) + ny2 * alpha
+
+                trk['box'] = [sx1, sy1, sx2, sy2]
+                trk['conf'] = new_b['conf']
+                trk['cls'] = new_b['cls']
+                trk['color'] = new_b['color']
+                trk['label'] = f"{new_b['cls']} {new_b['conf']:.2f}"
+                trk['missed'] = 0
+                trk['hits'] = trk.get('hits', 1) + 1
+                trk['last_seen'] = now
+                updated_tracks.append(trk)
+
+            # Step B: Register new detections that didn't match any existing track
+            for didx, new_b in enumerate(render_boxes):
+                if didx not in used_det_indices:
+                    new_track = {
+                        'id': self._get_next_track_id(),
+                        'box': list(new_b['box']),
+                        'cls': new_b['cls'],
+                        'color': new_b['color'],
+                        'conf': new_b['conf'],
+                        'label': f"{new_b['cls']} {new_b['conf']:.2f}",
+                        'hits': 1,
+                        'missed': 0,
+                        'last_seen': now
+                    }
+                    updated_tracks.append(new_track)
+
+            # Step C: Hysteresis Memory — Hold unmatched existing tracks for up to 2 cycles (~10-12s)
+            for tidx, trk in enumerate(prev_tracks):
+                if tidx not in used_track_indices:
+                    trk['missed'] = trk.get('missed', 0) + 1
+                    time_since_seen = now - trk.get('last_seen', now)
+                    if trk['missed'] <= 2 and time_since_seen <= 12.0:
+                        decayed_conf = max(0.20, trk['conf'] * 0.95)
+                        trk['label'] = f"{trk['cls']} {decayed_conf:.2f}"
+                        updated_tracks.append(trk)
+                        cur_cls.add(trk['cls'])
+
+            # Export active tracks to live 15 FPS display buffer
+            display_boxes = []
+            for trk in updated_tracks:
+                display_boxes.append({
+                    'box': trk['box'],
+                    'label': trk['label'],
+                    'color': trk['color'],
+                    'cls': trk['cls'],
+                    'conf': trk['conf'],
+                    'track_id': trk['id']
+                })
 
             with self._box_lock:
-                self._tracked_boxes = smoothed_boxes
+                self._tracked_objects = updated_tracks
+                self._tracked_boxes = display_boxes
 
             # Precision calculation and print for first detection box appear time
-            if not getattr(self, '_first_box_logged', False) and render_boxes:
+            if not getattr(self, '_first_box_logged', False) and display_boxes:
                 self._first_box_logged = True
                 now_t = time.time()
                 t_start = getattr(self, '_start_time', now_t)
                 t_active = getattr(self, '_models_active_time', t_start)
                 delay_from_start_ms = int((now_t - t_start) * 1000)
                 delay_from_active_ms = int((now_t - t_active) * 1000)
-                detected_labels = [b['label'] for b in render_boxes]
+                detected_labels = [b['label'] for b in display_boxes]
                 selected_classes_str = ", ".join(all_camera_enabled_classes) if all_camera_enabled_classes else "ALL (unfiltered)"
                 detected_classes_str = ", ".join(detected_labels)
                 print(f"\n==================================================================", flush=True)
@@ -695,7 +777,7 @@ class DetectorWorker:
                 except:
                     pass
 
-            for t_box in render_boxes:
+            for t_box in display_boxes:
                 try:
                     x1, y1, x2, y2 = [int(v) for v in t_box['box']]
                     cv2.rectangle(snap_img, (x1, y1), (x2, y2), t_box['color'], 2)
