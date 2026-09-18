@@ -467,10 +467,13 @@ class DetectorWorker:
         if f is None:
             return
 
-        # Snapshot the exact live frame once for all models
+        # Capture the original raw camera frame directly for maximum long-range feature extraction
+        orig_h, orig_w = f.shape[:2]
+        scale_x = float(self.width) / max(1.0, float(orig_w))
+        scale_y = float(self.height) / max(1.0, float(orig_h))
+
         frame_snapshot = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
-        safe_f = np.ascontiguousarray(frame_snapshot) if not frame_snapshot.flags['C_CONTIGUOUS'] else frame_snapshot
-        f_h, f_w = safe_f.shape[:2]
+        f_h, f_w = self.height, self.width
         f_area = f_w * f_h
 
         cur_cls, now = set(), time.time()
@@ -503,25 +506,14 @@ class DetectorWorker:
             filter_classes = enabled_classes if (enabled_classes is not None) else []
             effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
 
-            # Map model-specific enabled classes to model class IDs for tensor pruning
-            target_class_ids = []
-            if hasattr(model, 'names') and isinstance(model.names, dict):
-                if filter_classes:
-                    for cid, cname in model.names.items():
-                        if any(match_class(cname, e) for e in filter_classes):
-                            target_class_ids.append(int(cid))
-                    if not target_class_ids:
-                        continue
-
+            # Direct Native Prediction on full-res frame (Identical to Video Lab)
             predict_kwargs = {
-                "source": safe_f,
+                "source": f,
                 "conf": effective_conf,
                 "iou": m_iou,
                 "imgsz": m_imgsz,
                 "verbose": False
             }
-            if filter_classes and target_class_ids:
-                predict_kwargs["classes"] = target_class_ids
 
             try:
                 t_infer_start = time.time()
@@ -536,9 +528,12 @@ class DetectorWorker:
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
-                            cls_name = r.names[int(b.cls[0])]
+                            cls_id = int(b.cls[0].item())
+                            cls_name = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
+                            conf_val = float(b.conf[0].item())
+                            
                             if not filter_classes or any(match_class(cls_name, e) for e in filter_classes):
-                                mod_dets.append(f"{cls_name} {float(b.conf[0]):.2f}")
+                                mod_dets.append(f"{cls_name} {conf_val:.2f}")
 
                 print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure: {infer_ms}ms | Selected: {filter_classes if filter_classes else 'ALL'} | Detected: {mod_dets if mod_dets else 'None'} ({datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
             except Exception as pred_err:
@@ -548,36 +543,39 @@ class DetectorWorker:
             for r in results:
                 if r.boxes:
                     for b in r.boxes:
-                        cls = r.names[int(b.cls[0])]
-                        conf_val = float(b.conf[0])
+                        cls_id = int(b.cls[0].item())
+                        cls = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
+                        conf_val = float(b.conf[0].item())
 
-                        if filter_classes and target_class_ids:
-                            if int(b.cls[0]) not in target_class_ids:
-                                continue
-                        elif filter_classes:
+                        if filter_classes:
                             if not any(match_class(cls, e) for e in filter_classes):
                                 continue
 
-                        box_xyxy = b.xyxy[0].cpu().numpy().tolist()
-                        x1, y1, x2, y2 = box_xyxy
+                        # Scale coordinates from raw frame to output stream resolution
+                        box_raw = b.xyxy[0].cpu().numpy().tolist()
+                        rx1, ry1, rx2, ry2 = box_raw
+                        x1 = max(0, min(self.width - 1, rx1 * scale_x))
+                        y1 = max(0, min(self.height - 1, ry1 * scale_y))
+                        x2 = max(0, min(self.width - 1, rx2 * scale_x))
+                        y2 = max(0, min(self.height - 1, ry2 * scale_y))
+                        box_xyxy = [x1, y1, x2, y2]
+                        
                         bw = max(0, x2 - x1)
                         bh = max(0, y2 - y1)
-                        box_area = bw * bh
+                        if bw < 3 or bh < 3:
+                            continue
+                            
                         cx = (x1 + x2) / 2.0
                         cy = (y1 + y2) / 2.0
-
-                        # Apply Box Validation Pipeline
-                        if not self._is_valid_box(conf_val, effective_conf, bw, bh, box_area, f_w, f_h, f_area):
-                            continue
 
                         # Apply ROI rectangle filter if configured
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             try:
-                                rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
-                                ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
-                                rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
-                                ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
-                                if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
+                                roi_x1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                                roi_y1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                                roi_x2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                                roi_y2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                                if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2):
                                     continue
                             except Exception:
                                 pass
@@ -1016,16 +1014,35 @@ class DetectorWorker:
                         with self._box_lock:
                             cur_tracked = list(getattr(self, '_tracked_boxes', []))
                         
+                        pf_h, pf_w = pf.shape[:2]
                         for t_box in cur_tracked:
                             try:
                                 b_xyxy = t_box['box']
                                 label_text = t_box['label']
                                 color_val = t_box['color']
                                 x1, y1, x2, y2 = [int(v) for v in b_xyxy]
+                                x1 = max(0, min(pf_w - 1, x1))
+                                y1 = max(0, min(pf_h - 1, y1))
+                                x2 = max(0, min(pf_w - 1, x2))
+                                y2 = max(0, min(pf_h - 1, y2))
+                                
                                 cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
-                                t_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
-                                cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), color_val, -1)
-                                cv2.putText(pf, label_text, (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+                                (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
+                                
+                                # Position label badge: above box if space permits, else inside top
+                                if y1 - th - 6 > 0:
+                                    bg_y1 = y1 - th - 6
+                                    bg_y2 = y1
+                                    text_y = y1 - 4
+                                else:
+                                    bg_y1 = y1
+                                    bg_y2 = min(pf_h - 1, y1 + th + 6)
+                                    text_y = y1 + th + 2
+                                    
+                                bg_x2 = min(pf_w - 1, x1 + tw + 6)
+                                cv2.rectangle(pf, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
+                                cv2.rectangle(pf, (x1, bg_y1), (bg_x2, bg_y2), color_val, 1)
+                                cv2.putText(pf, label_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
                             except: pass
 
                         if ffmpeg.poll() is not None: break
