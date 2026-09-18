@@ -1,4 +1,13 @@
 import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["TORCH_NUM_THREADS"] = "1"
+os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
+
 import cv2, subprocess, time, threading, queue, json, math
 import numpy as np
 try:
@@ -7,6 +16,8 @@ try:
 except Exception:
     pass
 from datetime import datetime
+from ultralytics import YOLO
+from ultralytics.utils.plotting import Annotator, colors
 try:
     import psycopg2
     PSYCOPG2_AVAILABLE = True
@@ -27,17 +38,20 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+# Optimize PyTorch CPU threading to prevent CPU starvation on Raspberry Pi
+try:
+    import torch
+    torch.set_num_threads(1)
+    if hasattr(torch, "set_num_interop_threads"):
+        torch.set_num_interop_threads(1)
+except Exception:
+    pass
+
 import re
 
 from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db
 
-# NOTE: YOLO/ultralytics/torch are NOT imported at module level.
-# They are lazy-loaded inside get_yolo_model() when the first camera
-# starts detection. This prevents SIGSEGV at server.py startup on ARM64
-# Raspberry Pi when memory is fragmented after a previous crash.
 YOLO_CACHE = {}
-_YOLO_CLASS = None  # Lazy-loaded YOLO class reference
-
 
 def clean_str(s):
     res = re.sub(r'[^a-z0-9]', '', str(s).lower())
@@ -123,27 +137,11 @@ def match_class(box_cls, enabled_cls):
 INFERENCE_LOCK = threading.Lock()
 
 def get_yolo_model(model_path):
-    global _YOLO_CLASS
-    if _YOLO_CLASS is None:
-        # Lazy-load YOLO and torch only when the first model is requested.
-        # This prevents SIGSEGV at server startup on ARM64 Raspberry Pi.
-        print(f"[CACHE] First model request — lazy-loading YOLO/torch now...", flush=True)
-        try:
-            import torch
-            torch.set_num_threads(1)
-            if hasattr(torch, "set_num_interop_threads"):
-                torch.set_num_interop_threads(1)
-        except Exception as te:
-            print(f"[WARN] torch thread config failed: {te}", flush=True)
-        from ultralytics import YOLO as _YOLO
-        _YOLO_CLASS = _YOLO
-        print(f"[CACHE] YOLO/torch loaded successfully.", flush=True)
-
     if model_path not in YOLO_CACHE:
         with INFERENCE_LOCK:
             if model_path not in YOLO_CACHE:
                 print(f"[CACHE] Loading model weights into memory: {model_path}", flush=True)
-                YOLO_CACHE[model_path] = _YOLO_CLASS(model_path)
+                YOLO_CACHE[model_path] = YOLO(model_path)
     return YOLO_CACHE[model_path]
 
 def get_alerts_base_url():
@@ -435,7 +433,7 @@ class DetectorWorker:
                 m_conf = self.conf
                 m_iou = self.iou
                 enabled_classes = None
-                m_imgsz = 640  # Safe default for Raspberry Pi ARM64 (1280 causes OOM)
+                m_imgsz = 640  # 640 is safe for Pi 4 (1280 can OOM with multi-camera)
                 cfg = get_config_for_model(self.model_configs, m_name)
                 if cfg and isinstance(cfg, dict):
                     m_conf = float(cfg.get("conf", self.conf))
@@ -454,7 +452,7 @@ class DetectorWorker:
                     except Exception:
                         pass
 
-                filter_classes = list(all_camera_enabled_classes) if all_camera_enabled_classes else (enabled_classes if enabled_classes else [])
+                filter_classes = enabled_classes if enabled_classes else (list(all_camera_enabled_classes) if all_camera_enabled_classes else [])
                 effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
 
                 # Map enabled classes to model class IDs for hardware-level tensor filtering
@@ -465,9 +463,8 @@ class DetectorWorker:
                             if any(match_class(cname, e) for e in filter_classes):
                                 target_class_ids.append(int(cid))
 
-                # CRITICAL: ensure frame is C-contiguous before passing to YOLO/PyTorch
-                # Non-contiguous numpy arrays (e.g. from cv2.resize slices) cause SIGABRT
-                # on ARM64 Raspberry Pi due to memory alignment violations in libtorch.
+                # CRITICAL: ascontiguousarray prevents SIGABRT on ARM64 — non-contiguous
+                # numpy arrays passed to libtorch cause memory alignment violations.
                 safe_f = np.ascontiguousarray(f) if not f.flags['C_CONTIGUOUS'] else f
 
                 predict_kwargs = {
@@ -484,7 +481,7 @@ class DetectorWorker:
                     with INFERENCE_LOCK:
                         results = model.predict(**predict_kwargs)
                 except Exception as pred_err:
-                    print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name} predict failed: {pred_err}", flush=True)
+                    print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name}: {pred_err}", flush=True)
                     continue
 
                 for r in results:
@@ -707,15 +704,16 @@ class DetectorWorker:
 
     def _capture_thread(self, cap, cap_stop_evt):
         while not self._stop_event.is_set() and not cap_stop_evt.is_set():
+            t_start = time.time()
             try:
                 if not cap.grab():
                     time.sleep(0.005)
                     continue
             except Exception:
                 break
-
-            # Drain buffer: discard up to 3 stale frames to stay at live edge.
-            # Capped at 3 (was 30) to prevent CPU starvation on Raspberry Pi 4.
+            
+            # Drain buffer: cap at 3 frames to avoid CPU starvation on Pi 4.
+            # (was 30 frames — caused 100% CPU competing with inference+FFmpeg)
             grab_count = 0
             while grab_count < 3 and not cap_stop_evt.is_set():
                 try:
@@ -724,7 +722,7 @@ class DetectorWorker:
                 except Exception:
                     break
                 grab_count += 1
-
+            
             if cap_stop_evt.is_set():
                 break
 
@@ -736,14 +734,15 @@ class DetectorWorker:
             if not ret or f is None:
                 time.sleep(0.005)
                 continue
-
+                
             with self._frame_lock:
                 self._latest_raw_frame = f.copy()
                 self._cap_ok = True
                 self._last_frame_time = time.time()
 
-            # Small yield to prevent 100% CPU spin on Raspberry Pi 4
+            # Small yield so inference + FFmpeg threads get CPU time on Pi 4
             time.sleep(0.001)
+
 
     def run(self):
         ffmpeg, cap, inf_t, cap_t = None, None, None, None

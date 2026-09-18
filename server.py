@@ -8,10 +8,20 @@ os.environ["TORCH_NUM_THREADS"] = "1"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
 
-# Enable Python faulthandler: dumps stack trace to stderr on SIGABRT/SIGSEGV
-# This makes crash details appear in server.log for diagnosis.
-import faulthandler
-faulthandler.enable()
+import cv2
+try:
+    cv2.setNumThreads(1)
+    cv2.ocl.setUseOpenCL(False)
+except Exception:
+    pass
+
+import torch
+try:
+    torch.set_num_threads(1)
+    if hasattr(torch, "set_num_interop_threads"):
+        torch.set_num_interop_threads(1)
+except Exception:
+    pass
 
 from fastapi import FastAPI, Body, Query, Request
 from typing import Optional, Tuple, Any
@@ -1739,18 +1749,15 @@ def start_detection(d: dict):
             return {"status": "started", "camera": cid, "models": mods, "location": loc}
 
         # Otherwise, stop previous worker before starting new worker.
-        # CRITICAL: wait for old inference thread to fully exit BEFORE spawning new one.
-        # If old thread is inside model.predict() when new thread calls predict(),
-        # the two concurrent predict() calls on the same YOLO model object on ARM64
-        # corrupt PyTorch's internal state → SIGABRT.
+        # Wait 3s (not 2s) for old inference thread to fully exit model.predict()
+        # before new thread starts — concurrent predict() on same model = SIGABRT.
         if existing_proc:
             try:
                 existing_proc.kill()
-                existing_proc.wait(timeout=3.0)  # Give old thread time to exit predict()
+                existing_proc.wait(timeout=3.0)
             except: pass
         running.pop(cid, None)
-        # Brief safety pause so OS can release any lingering C-extension locks
-        time.sleep(0.15)
+        time.sleep(0.15)  # Safety pause: let OS release any C-extension locks
 
     # Clean only detected dir
     det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
@@ -1765,17 +1772,17 @@ def start_detection(d: dict):
     # Start detector worker inside an inline thread (avoids subprocess boot overhead entirely)
     print(f"[SERVER-TIMER] Initializing DetectorWorker thread for Camera {cid} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
     t_start = time.time()
-
+    
     model_paths = [os.path.join(BASE_DIR, "models", m if m.endswith(".pt") else f"{m}.pt") for m in mods]
     worker = DetectorWorker(rtsp, det_dir, model_paths, conf=conf, iou=iou, location=loc, model_configs=model_configs)
-
+    
     # Run the worker's run() loop in a daemon thread
     thread = threading.Thread(target=worker.run, daemon=True)
     thread.start()
-
+    
     proc = ThreadProcWrapper(worker, thread)
     print(f"[SERVER-TIMER] DetectorWorker thread started for Camera {cid} in {int((time.time() - t_start)*1000)}ms")
-
+    
     running[cid] = {"proc": proc, "worker": worker, "models": mods, "conf": conf, "iou": iou, "location": loc, "model_configs": model_configs, "start_time": int(time.time())}
     return {"status": "started", "camera": cid, "models": mods, "location": loc}
 
