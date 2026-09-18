@@ -617,8 +617,50 @@ class DetectorWorker:
                 })
                 cur_cls.add(cls_name)
 
+            # Universal Temporal EMA Smoothing & Jitter Filter (Works for ANY AI Use Case)
+            # If an object matches a previous detection (IoU >= 0.35 and matching class),
+            # smooth coordinates to eliminate bounding box shifting when person is stationary.
+            smoothed_boxes = []
             with self._box_lock:
-                self._tracked_boxes = render_boxes
+                prev_tracked = list(getattr(self, '_tracked_boxes', []))
+
+            for new_b in render_boxes:
+                nx1, ny1, nx2, ny2 = new_b['box']
+                n_cls = new_b['cls']
+                best_match = None
+                best_iou = 0.0
+
+                for prev_b in prev_tracked:
+                    if match_class(prev_b.get('cls', ''), n_cls):
+                        px1, py1, px2, py2 = prev_b['box']
+                        ix1, iy1, ix2, iy2 = max(nx1, px1), max(ny1, py1), min(nx2, px2), min(ny2, py2)
+                        if ix2 > ix1 and iy2 > iy1:
+                            inter = (ix2 - ix1) * (iy2 - iy1)
+                            union = (nx2 - nx1)*(ny2 - ny1) + (px2 - px1)*(py2 - py1) - inter
+                            iou = inter / max(1.0, union)
+                            if iou > best_iou:
+                                best_iou = iou
+                                best_match = prev_b
+
+                if best_match is not None and best_iou >= 0.35:
+                    px1, py1, px2, py2 = best_match['box']
+                    pcx, pcy = (px1 + px2) / 2.0, (py1 + py2) / 2.0
+                    ncx, ncy = (nx1 + nx2) / 2.0, (ny1 + ny2) / 2.0
+                    dist = math.hypot(ncx - pcx, ncy - pcy)
+
+                    # Stationary person (micro-movement < 25px): strong smoothing to eliminate shifting
+                    # Moving person (walking > 25px): fast responsive tracking
+                    alpha = 0.25 if dist < 25 else 0.65
+                    sx1 = px1 * (1.0 - alpha) + nx1 * alpha
+                    sy1 = py1 * (1.0 - alpha) + ny1 * alpha
+                    sx2 = px2 * (1.0 - alpha) + nx2 * alpha
+                    sy2 = py2 * (1.0 - alpha) + ny2 * alpha
+                    new_b['box'] = [sx1, sy1, sx2, sy2]
+
+                smoothed_boxes.append(new_b)
+
+            with self._box_lock:
+                self._tracked_boxes = smoothed_boxes
 
             # Precision calculation and print for first detection box appear time
             if not getattr(self, '_first_box_logged', False) and render_boxes:
