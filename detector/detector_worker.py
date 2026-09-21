@@ -335,6 +335,7 @@ class DetectorWorker:
         self._latest_boxes = []
         self._latest_box_time = 0.0
         self._tracked_boxes = []
+        self._prev_inference_boxes = []
         self._tracked_objects = []
         self._next_track_id_counter = 1
         self._frame_lock, self._box_lock = threading.Lock(), threading.Lock()
@@ -636,16 +637,58 @@ class DetectorWorker:
                 if not suppress:
                     kept_items.append(item)
 
+        # Smooth Sub-Frame Motion Vector Extraction
         render_boxes = []
+        new_prev_boxes = []
+        now_cycle = time.time()
+        
         for b_xyxy, color_val, conf_val, cls_name in kept_items:
+            cx = (b_xyxy[0] + b_xyxy[2]) / 2.0
+            cy = (b_xyxy[1] + b_xyxy[3]) / 2.0
+            
+            vx, vy = 0.0, 0.0
+            best_prev = None
+            min_dist = 90.0  # Search radius in pixels for moving person match
+            
+            for prev in getattr(self, '_prev_inference_boxes', []):
+                if match_class(cls_name, prev['cls']):
+                    d = math.hypot(cx - prev['cx'], cy - prev['cy'])
+                    if d < min_dist:
+                        min_dist = d
+                        best_prev = prev
+                        
+            if best_prev is not None:
+                dt = max(0.02, now_cycle - best_prev['t'])
+                raw_vx = (cx - best_prev['cx']) / dt
+                raw_vy = (cy - best_prev['cy']) / dt
+                raw_vx = max(-300.0, min(300.0, raw_vx))
+                raw_vy = max(-300.0, min(300.0, raw_vy))
+                # Exponential moving average filter
+                vx = 0.5 * raw_vx + 0.5 * best_prev.get('vx', 0.0)
+                vy = 0.5 * raw_vy + 0.5 * best_prev.get('vy', 0.0)
+                
+            new_prev_boxes.append({
+                'cls': cls_name,
+                'cx': cx,
+                'cy': cy,
+                't': now_cycle,
+                'vx': vx,
+                'vy': vy
+            })
+            
             render_boxes.append({
                 'box': b_xyxy,
                 'label': f"{cls_name} {conf_val:.2f}",
                 'color': color_val,
                 'cls': cls_name,
-                'conf': conf_val
+                'conf': conf_val,
+                't': now_cycle,
+                'vx': vx,
+                'vy': vy
             })
             cur_cls.add(cls_name)
+            
+        self._prev_inference_boxes = new_prev_boxes
 
         # Direct Frame Box Rendering (Identical to Video Lab video_tester.py)
         # Eliminates class switching, ghost boxes, and tracker latency completely
@@ -880,21 +923,30 @@ class DetectorWorker:
                                 cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
                             except: pass
 
-                        # Overlay latest active tracked boxes onto fresh live frame pf at 15 FPS
+                        # Overlay latest active tracked boxes with sub-frame motion interpolation onto live frame
                         with self._box_lock:
                             cur_tracked = list(getattr(self, '_tracked_boxes', []))
                         
                         pf_h, pf_w = pf.shape[:2]
+                        now_render = time.time()
                         for t_box in cur_tracked:
                             try:
                                 b_xyxy = t_box['box']
                                 label_text = t_box['label']
                                 color_val = t_box['color']
-                                x1, y1, x2, y2 = [int(v) for v in b_xyxy]
-                                x1 = max(0, min(pf_w - 1, x1))
-                                y1 = max(0, min(pf_h - 1, y1))
-                                x2 = max(0, min(pf_w - 1, x2))
-                                y2 = max(0, min(pf_h - 1, y2))
+                                t_infer = t_box.get('t', now_render)
+                                vx = t_box.get('vx', 0.0)
+                                vy = t_box.get('vy', 0.0)
+                                
+                                # Sub-frame motion extrapolation: glides box smoothly between inference intervals
+                                dt = min(0.35, max(0.0, now_render - t_infer))
+                                dx = max(-25.0, min(25.0, vx * dt))
+                                dy = max(-25.0, min(25.0, vy * dt))
+                                
+                                x1 = max(0, min(pf_w - 1, int(b_xyxy[0] + dx)))
+                                y1 = max(0, min(pf_h - 1, int(b_xyxy[1] + dy)))
+                                x2 = max(0, min(pf_w - 1, int(b_xyxy[2] + dx)))
+                                y2 = max(0, min(pf_h - 1, int(b_xyxy[3] + dy)))
                                 
                                 cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
                                 (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
