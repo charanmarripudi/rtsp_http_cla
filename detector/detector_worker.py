@@ -808,12 +808,26 @@ class DetectorWorker:
                 break
 
 
+    def _infer_loop(self, infer_stop_evt):
+        while not self._stop_event.is_set() and not infer_stop_evt.is_set():
+            try:
+                if self._latest_raw_frame is not None:
+                    self.run_single_inference_cycle()
+                else:
+                    time.sleep(0.01)
+            except Exception as e:
+                print(f"[INFER-ERR] Camera {self.cam_id}: {e}", flush=True)
+            time.sleep(0.005)
+
     def run(self):
         ffmpeg, cap, cap_t = None, None, None
         cap_stop_evt = None
+        infer_t, infer_stop_evt = None, None
 
         def cleanup_subthreads():
-            nonlocal cap, cap_t, cap_stop_evt, ffmpeg
+            nonlocal cap, cap_t, cap_stop_evt, infer_t, infer_stop_evt, ffmpeg
+            if infer_stop_evt: infer_stop_evt.set()
+            if infer_t and infer_t.is_alive(): infer_t.join(timeout=1.0)
             if cap_stop_evt: cap_stop_evt.set()
             if cap_t and cap_t.is_alive(): cap_t.join(timeout=1.0)
             GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)
@@ -884,7 +898,9 @@ class DetectorWorker:
                     
                     print(f"[WORKER-TIMER] Camera {self.cam_id} first raw frame received in {int((time.time() - t_frame_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
                     
-                    GLOBAL_INFERENCE_SCHEDULER.register_worker(self)
+                    infer_stop_evt = threading.Event()
+                    infer_t = threading.Thread(target=self._infer_loop, args=(infer_stop_evt,), daemon=True, name=f"InferWorker-{self.cam_id}")
+                    infer_t.start()
                     
                     f_int = 1.0 / self.fps
                     next_frame_time = time.time()
