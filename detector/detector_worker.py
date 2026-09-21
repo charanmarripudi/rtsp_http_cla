@@ -754,13 +754,6 @@ class DetectorWorker:
                     self.alert_triggered.remove(c)
 
     def _save_alert(self, class_name, frame):
-        # Dispatch DB write & snapshot saving to background thread with zero latency impact on live video
-        if frame is None:
-            return
-        snap = frame.copy()
-        threading.Thread(target=self._async_save_alert_worker, args=(class_name, snap), daemon=True).start()
-
-    def _async_save_alert_worker(self, class_name, frame):
         try:
             now_dt = datetime.now()
             ts = now_dt.strftime("%Y%m%d_%H%M%S")
