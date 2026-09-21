@@ -700,13 +700,8 @@ class DetectorWorker:
             trk['vx'] = trk.get('vx', 0.0) * 0.3 + curr_vx * 0.7
             trk['vy'] = trk.get('vy', 0.0) * 0.3 + curr_vy * 0.7
 
-            alpha = 0.25 if dist < 15.0 else 0.90
-            sx1 = tx1 * (1.0 - alpha) + nx1 * alpha
-            sy1 = ty1 * (1.0 - alpha) + ny1 * alpha
-            sx2 = tx2 * (1.0 - alpha) + nx2 * alpha
-            sy2 = ty2 * (1.0 - alpha) + ny2 * alpha
-
-            trk['box'] = [sx1, sy1, sx2, sy2]
+            # Snap directly to the current detection box for instantaneous tracking responsiveness (0ms lag)
+            trk['box'] = [nx1, ny1, nx2, ny2]
             trk['conf'] = new_b['conf']
             trk['cls'] = new_b['cls']
             trk['color'] = new_b['color']
@@ -734,16 +729,7 @@ class DetectorWorker:
                 }
                 updated_tracks.append(new_track)
 
-        # Time-based track retention (Grace timeout = 6.0 seconds)
-        for tidx, trk in enumerate(prev_tracks):
-            if tidx not in used_track_indices:
-                time_since_seen = now - trk.get('last_seen', now)
-                if time_since_seen <= 6.0:
-                    trk['missed'] = trk.get('missed', 0) + 1
-                    decayed_conf = max(0.20, trk['conf'] * 0.95)
-                    trk['label'] = f"{trk['cls']} {decayed_conf:.2f}"
-                    updated_tracks.append(trk)
-                    cur_cls.add(trk['cls'])
+        # Removed 6.0s ghost track retention so moved or exited objects disappear immediately (identical to Video Lab)
 
         display_boxes = []
         for trk in updated_tracks:
