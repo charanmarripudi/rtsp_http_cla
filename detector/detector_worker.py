@@ -505,10 +505,17 @@ class DetectorWorker:
             filter_classes = enabled_classes if (enabled_classes is not None) else []
             effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
 
+            class_configs = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}
+            min_class_conf = effective_conf
+            if class_configs and isinstance(class_configs, dict):
+                for cc in class_configs.values():
+                    if isinstance(cc, dict) and "conf" in cc:
+                        min_class_conf = min(min_class_conf, float(cc["conf"]))
+
             # Direct Native Prediction on full-res frame (Identical to Video Lab)
             predict_kwargs = {
                 "source": f,
-                "conf": effective_conf,
+                "conf": min_class_conf,
                 "iou": m_iou,
                 "imgsz": m_imgsz,
                 "verbose": False
@@ -549,6 +556,16 @@ class DetectorWorker:
                         if filter_classes:
                             if not any(match_class(cls, e) for e in filter_classes):
                                 continue
+
+                        # Per-class confidence filter
+                        req_conf = effective_conf
+                        if class_configs:
+                            for cc_name, cc_val in class_configs.items():
+                                if match_class(cls, cc_name) and isinstance(cc_val, dict) and "conf" in cc_val:
+                                    req_conf = float(cc_val["conf"])
+                                    break
+                        if conf_val < req_conf:
+                            continue
 
                         # Scale coordinates from raw frame to output stream resolution
                         box_raw = b.xyxy[0].cpu().numpy().tolist()
