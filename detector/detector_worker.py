@@ -304,8 +304,8 @@ class InferenceScheduler:
                 except Exception as e:
                     print(f"[SCHEDULER-ERR] Camera {worker.cam_id} inference error: {e}", flush=True)
 
-                # Thermal relief pacing pause (30ms) between camera turns
-                time.sleep(0.03)
+                # Ultra-fast pacing pause (5ms) between camera turns
+                time.sleep(0.005)
 
 GLOBAL_INFERENCE_SCHEDULER = InferenceScheduler()
 
@@ -606,11 +606,13 @@ class DetectorWorker:
                         inter = (ix2 - ix1) * (iy2 - iy1)
                         union = area1 + area2 - inter
                         iou = inter / max(1.0, union)
+                        min_area = max(1.0, min(area1, area2))
+                        io_min = inter / min_area
 
-                        # Only suppress duplicates of the SAME class (e.g. from multiple models)
+                        # Only suppress duplicates of the SAME class (e.g. from multiple models or nested detections)
                         # Different classes (e.g. Hardhat on head vs Vest on torso vs Person) must NEVER suppress each other
                         is_same_cls = match_class(cls1_name, cls2_name)
-                        if is_same_cls and iou >= 0.45:
+                        if is_same_cls and (iou >= 0.35 or io_min >= 0.50):
                             suppress = True
                             break
 
