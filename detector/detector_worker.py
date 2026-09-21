@@ -417,9 +417,9 @@ class DetectorWorker:
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "baseline", "-level:v", "3.1",
             "-b:v", "350k", "-maxrate", "450k", "-bufsize", "800k",
-            "-g", str(max(1, int(self.fps) * 2)), 
-            "-keyint_min", str(max(1, int(self.fps) * 2)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "4",
+            "-g", str(int(self.fps)), 
+            "-keyint_min", str(int(self.fps)), "-sc_threshold", "0",
+            "-f", "hls", "-hls_time", "1", "-hls_list_size", "3",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
@@ -628,122 +628,11 @@ class DetectorWorker:
             })
             cur_cls.add(cls_name)
 
-        # =========================================================================
-        # TIME-AWARE VELOCITY TRACKER & DISPLAY SEPARATION
-        # 1. Matches incoming detections using IoU + Spatial Distance.
-        # 2. Tracks velocity vectors (vx, vy) for responsive movement tracking.
-        # 3. Time-based track retention (expires after 6.0s timeout).
-        # =========================================================================
-        with self._box_lock:
-            prev_tracks = list(getattr(self, '_tracked_objects', []))
-
-        updated_tracks = []
-        used_det_indices = set()
-        used_track_indices = set()
-
-        matches = []
-        for didx, new_b in enumerate(render_boxes):
-            nx1, ny1, nx2, ny2 = new_b['box']
-            ncx, ncy = (nx1 + nx2) / 2.0, (ny1 + ny2) / 2.0
-            n_cls = new_b['cls']
-            n_area = max(1.0, (nx2 - nx1) * (ny2 - ny1))
-
-            for tidx, trk in enumerate(prev_tracks):
-                if match_class(trk.get('cls', ''), n_cls):
-                    tx1, ty1, tx2, ty2 = trk['box']
-                    # Apply constant velocity prediction for tracking over time
-                    dt = max(0.0, now - trk.get('last_seen', now))
-                    vx, vy = trk.get('vx', 0.0), trk.get('vy', 0.0)
-                    px1 = tx1 + vx * dt
-                    py1 = ty1 + vy * dt
-                    px2 = tx2 + vx * dt
-                    py2 = ty2 + vy * dt
-                    pcx, pcy = (px1 + px2) / 2.0, (py1 + py2) / 2.0
-                    t_area = max(1.0, (px2 - px1) * (py2 - py1))
-
-                    ix1, iy1 = max(nx1, px1), max(ny1, py1)
-                    ix2, iy2 = min(nx2, px2), min(ny2, py2)
-                    if ix2 > ix1 and iy2 > iy1:
-                        inter = (ix2 - ix1) * (iy2 - iy1)
-                        union = n_area + t_area - inter
-                        iou = inter / max(1.0, union)
-                    else:
-                        iou = 0.0
-
-                    dist = math.hypot(ncx - pcx, ncy - pcy)
-                    area_ratio = n_area / t_area
-
-                    if iou >= 0.25 or (dist < 60.0 and 0.45 <= area_ratio <= 2.2):
-                        score = iou * 2.0 + max(0.0, 1.0 - (dist / 80.0))
-                        matches.append((score, didx, tidx, iou, dist))
-
-        matches.sort(key=lambda x: x[0], reverse=True)
-
-        for score, didx, tidx, iou, dist in matches:
-            if didx in used_det_indices or tidx in used_track_indices:
-                continue
-            used_det_indices.add(didx)
-            used_track_indices.add(tidx)
-
-            new_b = render_boxes[didx]
-            trk = prev_tracks[tidx]
-
-            nx1, ny1, nx2, ny2 = new_b['box']
-            tx1, ty1, tx2, ty2 = trk['box']
-            dt = max(0.1, now - trk.get('last_seen', now))
-            ncx, ncy = (nx1 + nx2) / 2.0, (ny1 + ny2) / 2.0
-            tcx, tcy = (tx1 + tx2) / 2.0, (ty1 + ty2) / 2.0
-
-            # Calculate velocity
-            curr_vx = (ncx - tcx) / dt if dist >= 15.0 else 0.0
-            curr_vy = (ncy - tcy) / dt if dist >= 15.0 else 0.0
-            trk['vx'] = trk.get('vx', 0.0) * 0.3 + curr_vx * 0.7
-            trk['vy'] = trk.get('vy', 0.0) * 0.3 + curr_vy * 0.7
-
-            # Snap directly to the current detection box for instantaneous tracking responsiveness (0ms lag)
-            trk['box'] = [nx1, ny1, nx2, ny2]
-            trk['conf'] = new_b['conf']
-            trk['cls'] = new_b['cls']
-            trk['color'] = new_b['color']
-            trk['label'] = f"{new_b['cls']} {new_b['conf']:.2f}"
-            trk['missed'] = 0
-            trk['hits'] = trk.get('hits', 1) + 1
-            trk['last_seen'] = now
-            updated_tracks.append(trk)
-
-        for didx, new_b in enumerate(render_boxes):
-            if didx not in used_det_indices:
-                new_track = {
-                    'id': self._get_next_track_id(),
-                    'box': list(new_b['box']),
-                    'cls': new_b['cls'],
-                    'color': new_b['color'],
-                    'conf': new_b['conf'],
-                    'label': f"{new_b['cls']} {new_b['conf']:.2f}",
-                    'vx': 0.0,
-                    'vy': 0.0,
-                    'hits': 1,
-                    'missed': 0,
-                    'first_seen': now,
-                    'last_seen': now
-                }
-                updated_tracks.append(new_track)
-
-        # Removed 6.0s ghost track retention so moved or exited objects disappear immediately (identical to Video Lab)
-
-        display_boxes = []
-        for trk in updated_tracks:
-            display_boxes.append({
-                'box': trk['box'],
-                'label': trk['label'],
-                'color': trk['color'],
-                'cls': trk['cls'],
-                'conf': trk['conf'],
-                'track_id': trk['id']
-            })
+        # Direct Frame Box Rendering (Identical to Video Lab video_tester.py)
+        # Eliminates class switching, ghost boxes, and tracker latency completely
+        display_boxes = render_boxes
 
         with self._box_lock:
-            self._tracked_objects = updated_tracks
             self._tracked_boxes = display_boxes
 
         # Precision calculation and print for first detection box appear time
@@ -844,41 +733,17 @@ class DetectorWorker:
 
     def _capture_thread(self, cap, cap_stop_evt):
         while not self._stop_event.is_set() and not cap_stop_evt.is_set():
-            t_start = time.time()
             try:
-                if not cap.grab():
+                ret, f = cap.read()
+                if not ret or f is None:
                     time.sleep(0.005)
                     continue
+                with self._frame_lock:
+                    self._latest_raw_frame = f
+                    self._cap_ok = True
+                    self._last_frame_time = time.time()
             except Exception:
                 break
-            
-            # Drain buffer: discard old frames queued in socket buffer to reach live edge
-            grab_count = 0
-            while grab_count < 30 and (time.time() - t_start) < 0.005 and not cap_stop_evt.is_set():
-                t_start = time.time()
-                try:
-                    if not cap.grab():
-                        break
-                except Exception:
-                    break
-                grab_count += 1
-            
-            if cap_stop_evt.is_set():
-                break
-
-            try:
-                ret, f = cap.retrieve()
-            except Exception:
-                break
-
-            if not ret or f is None:
-                time.sleep(0.005)
-                continue
-                
-            with self._frame_lock:
-                self._latest_raw_frame = f.copy()
-                self._cap_ok = True
-                self._last_frame_time = time.time()
 
 
     def run(self):
