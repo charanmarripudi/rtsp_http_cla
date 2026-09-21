@@ -607,9 +607,10 @@ class DetectorWorker:
                         union = area1 + area2 - inter
                         iou = inter / max(1.0, union)
 
+                        # Only suppress duplicates of the SAME class (e.g. from multiple models)
+                        # Different classes (e.g. Hardhat on head vs Vest on torso vs Person) must NEVER suppress each other
                         is_same_cls = match_class(cls1_name, cls2_name)
-                        iou_thresh = 0.40 if is_same_cls else 0.65
-                        if iou >= iou_thresh:
+                        if is_same_cls and iou >= 0.45:
                             suppress = True
                             break
 
