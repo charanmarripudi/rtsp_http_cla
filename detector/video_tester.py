@@ -54,14 +54,17 @@ except ImportError:
             return YOLO_CACHE[model_path]
 
     DYNAMIC_CLASS_COLOR_MAP = {
-        "no-hardhat": (0, 50, 255),
-        "no-helmet": (0, 50, 255),
-        "no-safety-vest": (255, 230, 0),
-        "no-vest": (255, 230, 0),
-        "no-mask": (255, 0, 255),
-        "hardhat": (0, 220, 100),
-        "safety-vest": (255, 140, 0),
-        "person": (30, 45, 255),
+        "no-safety-vest": (0, 0, 255),        # Bright Alert Red (BGR)
+        "no-vest": (0, 0, 255),
+        "no-hardhat": (0, 100, 255),         # Amber Orange (BGR)
+        "no-helmet": (0, 100, 255),
+        "no-mask": (255, 0, 255),            # Magenta (BGR)
+        "safety-vest": (255, 220, 0),        # Cyan Sky Blue (BGR)
+        "vest": (255, 220, 0),
+        "hardhat": (0, 230, 80),             # Emerald Green (BGR)
+        "helmet": (0, 230, 80),
+        "mask": (0, 230, 255),               # Lemon Yellow (BGR)
+        "person": (200, 100, 50),            # Slate Blue (BGR)
     }
 
     def clean_str(s):

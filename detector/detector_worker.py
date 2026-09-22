@@ -153,51 +153,61 @@ def get_alerts_base_url():
                 if val and not val.startswith("("):
                     return val
     except: pass
+def is_opposite_class(cls1, cls2):
+    try:
+        b_neg, b_core, _ = extract_negation_and_core(cls1)
+        e_neg, e_core, _ = extract_negation_and_core(cls2)
+        if b_neg != e_neg and b_core == e_core and len(b_core) >= 3:
+            return True
+    except Exception:
+        pass
+    return False
+
 DYNAMIC_CLASS_COLOR_MAP = {
-    # Violations - Bright High-Contrast Distinct Colors
-    "no-hardhat": (0, 50, 255),          # Bright Coral Red / Orange-Red
-    "no-helmet": (0, 50, 255),
-    "nohardhat": (0, 50, 255),
-    "nohelmet": (0, 50, 255),
-    
-    "no-safety-vest": (255, 230, 0),     # Electric Neon Cyan / Turquoise
-    "no-vest": (255, 230, 0),
-    "nosafetyvest": (255, 230, 0),
-    "novest": (255, 230, 0),
-    "no-saftey-vest": (255, 230, 0),
-    
-    "no-mask": (255, 0, 255),            # Bright Magenta / Neon Pink
+    # Violations (NO-PPE) -> Distinct Warning Colors (Red, Orange, Magenta, Pink)
+    "no-safety-vest": (0, 0, 255),        # Bright Crimson Alert Red (BGR)
+    "no-vest": (0, 0, 255),
+    "nosafetyvest": (0, 0, 255),
+    "novest": (0, 0, 255),
+    "no-saftey-vest": (0, 0, 255),
+
+    "no-hardhat": (0, 100, 255),         # Vivid Amber Orange (BGR)
+    "no-helmet": (0, 100, 255),
+    "nohardhat": (0, 100, 255),
+    "nohelmet": (0, 100, 255),
+
+    "no-mask": (255, 0, 255),            # Electric Magenta / Fuchsia (BGR)
     "nomask": (255, 0, 255),
-    
-    "no-goggles": (0, 215, 255),         # Vivid Golden Yellow
-    "nogoggles": (0, 215, 255),
-    "no-glasses": (0, 215, 255),
-    
-    "no-gloves": (255, 105, 180),        # Light Neon Pink
-    "nogloves": (255, 105, 180),
-    
-    "no-shoes": (0, 140, 255),           # Vivid Tangerine Orange
-    "noshoes": (0, 140, 255),
-    "no-boots": (0, 140, 255),
-    
-    # Positive Equipment - Green / Sky Blue / Lime
-    "hardhat": (0, 220, 100),            # Emerald Green
-    "helmet": (0, 220, 100),
-    
-    "safety-vest": (255, 140, 0),        # Deep Sky Blue
-    "vest": (255, 140, 0),
-    "saftey-vest": (255, 140, 0),
-    
-    "mask": (180, 220, 0),               # Bright Lime Green
-    "goggles": (255, 190, 40),           # Electric Cyan
-    "gloves": (200, 100, 255),           # Lavender Violet
-    "shoes": (50, 205, 50),              # Spring Green
+
+    "no-gloves": (200, 80, 255),         # Neon Pink (BGR)
+    "nogloves": (200, 80, 255),
+
+    "no-goggles": (220, 30, 180),        # Deep Violet (BGR)
+    "nogoggles": (220, 30, 180),
+    "no-glasses": (220, 30, 180),
+
+    "no-shoes": (0, 140, 220),           # Amber Rust (BGR)
+    "noshoes": (0, 140, 220),
+    "no-boots": (0, 140, 220),
+
+    # Compliant Equipment -> Emerald Green, Cyan Sky-Blue, Lemon Yellow
+    "safety-vest": (255, 220, 0),        # Electric Sky Blue / Cyan (BGR)
+    "vest": (255, 220, 0),
+    "saftey-vest": (255, 220, 0),
+
+    "hardhat": (0, 230, 80),             # Emerald Lime Green (BGR)
+    "helmet": (0, 230, 80),
+
+    "mask": (0, 230, 255),               # Lemon Yellow (BGR)
+    "goggles": (255, 120, 30),           # Cobalt Blue (BGR)
+    "gloves": (180, 230, 50),            # Turquoise Teal (BGR)
+    "shoes": (50, 205, 50),              # Spring Green (BGR)
     "boots": (50, 205, 50),
-    
+
     # Objects & People
-    "person": (30, 45, 255),             # Coral Red
-    "worker": (30, 45, 255),
-    "human": (30, 45, 255),
+    "person": (200, 100, 50),            # Slate Blue (BGR)
+    "worker": (200, 100, 50),
+    "human": (200, 100, 50),
     "fire": (0, 0, 255),                 # Pure Red
     "smoke": (180, 180, 180),            # Silver Grey
 }
@@ -627,10 +637,10 @@ class DetectorWorker:
                         min_area = max(1.0, min(area1, area2))
                         io_min = inter / min_area
 
-                        # Only suppress duplicates of the SAME class (e.g. from multiple models or nested detections)
-                        # Different classes (e.g. Hardhat on head vs Vest on torso vs Person) must NEVER suppress each other
+                        # Suppress duplicate detections of the same class or conflicting positive/negative opposites on the same object
                         is_same_cls = match_class(cls1_name, cls2_name)
-                        if is_same_cls and (iou >= 0.35 or io_min >= 0.50):
+                        is_opp_cls = is_opposite_class(cls1_name, cls2_name)
+                        if (is_same_cls and (iou >= 0.35 or io_min >= 0.50)) or (is_opp_cls and (iou >= 0.40 or io_min >= 0.55)):
                             suppress = True
                             break
 
@@ -1010,7 +1020,8 @@ class DetectorWorker:
                                         io_min = inter / min_area
 
                                         is_same_cls = match_class(cls1_name, cls2_name)
-                                        if is_same_cls and (iou >= 0.35 or io_min >= 0.50):
+                                        is_opp_cls = is_opposite_class(cls1_name, cls2_name)
+                                        if (is_same_cls and (iou >= 0.35 or io_min >= 0.50)) or (is_opp_cls and (iou >= 0.40 or io_min >= 0.55)):
                                             suppress = True
                                             break
 
