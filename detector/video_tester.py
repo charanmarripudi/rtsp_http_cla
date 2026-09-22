@@ -53,39 +53,119 @@ except ImportError:
                 YOLO_CACHE[model_path] = YOLO(model_path)
             return YOLO_CACHE[model_path]
 
-    DYNAMIC_CLASS_COLOR_MAP = {
-        "no-safety-vest": (0, 0, 255),        # Bright Alert Red (BGR)
-        "no-vest": (0, 0, 255),
-        "no-hardhat": (0, 100, 255),         # Amber Orange (BGR)
-        "no-helmet": (0, 100, 255),
-        "no-mask": (255, 0, 255),            # Magenta (BGR)
-        "safety-vest": (255, 220, 0),        # Cyan Sky Blue (BGR)
-        "vest": (255, 220, 0),
-        "hardhat": (0, 230, 80),             # Emerald Green (BGR)
-        "helmet": (0, 230, 80),
-        "mask": (0, 230, 255),               # Lemon Yellow (BGR)
-        "person": (200, 100, 50),            # Slate Blue (BGR)
-    }
-
     def clean_str(s):
-        return "".join(c for c in str(s).lower().strip() if c.isalnum() or c in ("-", "_")).replace("_", "-")
+        import re
+        res = re.sub(r'[^a-z0-9]', '', str(s).lower())
+        return res.replace("saftey", "safety")
 
-    def extract_negation_and_core(name):
-        c = clean_str(name)
+    def extract_negation_and_core(s):
+        s_str = str(s).strip()
+        if " - " in s_str:
+            s_str = s_str.split(" - ")[-1]
+        elif ":" in s_str:
+            s_str = s_str.split(":")[-1]
+        elif "/" in s_str:
+            s_str = s_str.split("/")[-1]
+            
+        cleaned = clean_str(s_str)
+        neg_prefixes = ["no", "without", "non", "un"]
         is_neg = False
-        for prefix in ["no-", "without-", "non-"]:
-            if c.startswith(prefix):
+        core = cleaned
+        for p in neg_prefixes:
+            if cleaned.startswith(p):
                 is_neg = True
-                c = c[len(prefix):]
+                core = cleaned[len(p):]
                 break
-        return is_neg, c, clean_str(name)
+        
+        synonym_map = {
+            "hardhat": "headgear",
+            "helmet": "headgear",
+            "safetyhelmet": "headgear",
+            "headprotection": "headgear",
+            "head": "headgear",
+            "vest": "bodyvest",
+            "safetyvest": "bodyvest",
+            "reflectivevest": "bodyvest",
+            "jacket": "bodyvest",
+            "mask": "facemask",
+            "facemask": "facemask",
+            "facecover": "facemask",
+            "goggles": "eyegoggles",
+            "glasses": "eyegoggles",
+            "safetyglasses": "eyegoggles",
+            "eyewear": "eyegoggles",
+            "glove": "handgloves",
+            "gloves": "handgloves",
+            "handglove": "handgloves",
+            "shoe": "footshoes",
+            "shoes": "footshoes",
+            "boot": "footshoes",
+            "boots": "footshoes",
+            "safetyshoe": "footshoes",
+            "safetyshoes": "footshoes",
+            "person": "person",
+            "worker": "person",
+            "human": "person",
+            "man": "person",
+            "woman": "person",
+            "fire": "fire",
+            "flame": "fire",
+            "smoke": "smoke",
+        }
+        mapped_core = synonym_map.get(core, core)
+        return is_neg, mapped_core, cleaned
 
-    def match_class(b_cls, e_cls):
-        return clean_str(b_cls) == clean_str(e_cls)
+    def match_class(box_cls, enabled_cls):
+        if not box_cls or not enabled_cls:
+            return False
+        b_neg, b_core, b_clean = extract_negation_and_core(box_cls)
+        e_neg, e_core, e_clean = extract_negation_and_core(enabled_cls)
+        if b_clean == e_clean: return True
+        if b_neg != e_neg: return False
+        if b_core == e_core: return True
+        if (b_core in e_core or e_core in b_core) and len(b_core) >= 3 and len(e_core) >= 3: return True
+        return False
 
-    def get_dynamic_class_color(cname):
-        clean = clean_str(cname)
-        return DYNAMIC_CLASS_COLOR_MAP.get(clean, (0, 220, 100))
+    def is_opposite_class(cls1, cls2):
+        try:
+            b_neg, b_core, _ = extract_negation_and_core(cls1)
+            e_neg, e_core, _ = extract_negation_and_core(cls2)
+            if b_neg != e_neg and b_core == e_core and len(b_core) >= 3:
+                return True
+        except Exception:
+            pass
+        return False
+
+    def get_dynamic_class_color(class_name):
+        if not class_name:
+            return (0, 255, 255)
+        is_neg, core, cleaned = extract_negation_and_core(class_name)
+        is_hazard = is_neg or any(w in cleaned for w in ("fire", "smoke", "fall", "danger", "hazard", "violation", "unauthorized"))
+        import hashlib
+        if is_hazard:
+            hazard_palette = [
+                (0, 0, 255),      # Bright Alert Red (BGR)
+                (0, 90, 255),     # Vivid Amber Orange (BGR)
+                (255, 0, 255),    # Electric Magenta / Fuchsia (BGR)
+                (180, 50, 255),   # Hot Crimson Pink (BGR)
+                (0, 140, 255),    # Deep Tangerine (BGR)
+                (220, 20, 180),   # Deep Purple Violet (BGR)
+            ]
+            core_h = int(hashlib.md5(core.encode('utf-8')).hexdigest(), 16)
+            return hazard_palette[core_h % len(hazard_palette)]
+        else:
+            safe_palette = [
+                (255, 215, 0),    # Bright Cyan Sky Blue (BGR)
+                (0, 230, 80),     # Emerald Lime Green (BGR)
+                (0, 230, 255),    # Golden Lemon Yellow (BGR)
+                (180, 230, 50),   # Mint Teal (BGR)
+                (255, 120, 180),  # Soft Lavender Violet (BGR)
+                (50, 205, 50),    # Spring Green (BGR)
+                (200, 100, 50),   # Slate Blue (BGR)
+                (255, 140, 0),    # Deep Cobalt Blue (BGR)
+            ]
+            core_h = int(hashlib.md5(core.encode('utf-8')).hexdigest(), 16)
+            return safe_palette[core_h % len(safe_palette)]
 
 logger = logging.getLogger("VideoTester")
 logger.setLevel(logging.INFO)

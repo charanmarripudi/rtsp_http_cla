@@ -58,7 +58,15 @@ def clean_str(s):
     return res.replace("saftey", "safety")
 
 def extract_negation_and_core(s):
-    cleaned = clean_str(s)
+    s_str = str(s).strip()
+    if " - " in s_str:
+        s_str = s_str.split(" - ")[-1]
+    elif ":" in s_str:
+        s_str = s_str.split(":")[-1]
+    elif "/" in s_str:
+        s_str = s_str.split("/")[-1]
+        
+    cleaned = clean_str(s_str)
     neg_prefixes = ["no", "without", "non", "un"]
     is_neg = False
     core = cleaned
@@ -113,16 +121,13 @@ def match_class(box_cls, enabled_cls):
     """
     if not box_cls or not enabled_cls:
         return False
-    
-    b_clean = clean_str(box_cls)
-    e_clean = clean_str(enabled_cls)
+        
+    b_neg, b_core, b_clean = extract_negation_and_core(box_cls)
+    e_neg, e_core, e_clean = extract_negation_and_core(enabled_cls)
     
     if b_clean == e_clean:
         return True
         
-    b_neg, b_core, _ = extract_negation_and_core(box_cls)
-    e_neg, e_core, _ = extract_negation_and_core(enabled_cls)
-    
     if b_neg != e_neg:
         return False
         
@@ -153,6 +158,7 @@ def get_alerts_base_url():
                 if val and not val.startswith("("):
                     return val
     except: pass
+
 def is_opposite_class(cls1, cls2):
     try:
         b_neg, b_core, _ = extract_negation_and_core(cls1)
@@ -163,90 +169,43 @@ def is_opposite_class(cls1, cls2):
         pass
     return False
 
-DYNAMIC_CLASS_COLOR_MAP = {
-    # Violations (NO-PPE) -> Distinct Warning Colors (Red, Orange, Magenta, Pink)
-    "no-safety-vest": (0, 0, 255),        # Bright Crimson Alert Red (BGR)
-    "no-vest": (0, 0, 255),
-    "nosafetyvest": (0, 0, 255),
-    "novest": (0, 0, 255),
-    "no-saftey-vest": (0, 0, 255),
-
-    "no-hardhat": (0, 100, 255),         # Vivid Amber Orange (BGR)
-    "no-helmet": (0, 100, 255),
-    "nohardhat": (0, 100, 255),
-    "nohelmet": (0, 100, 255),
-
-    "no-mask": (255, 0, 255),            # Electric Magenta / Fuchsia (BGR)
-    "nomask": (255, 0, 255),
-
-    "no-gloves": (200, 80, 255),         # Neon Pink (BGR)
-    "nogloves": (200, 80, 255),
-
-    "no-goggles": (220, 30, 180),        # Deep Violet (BGR)
-    "nogoggles": (220, 30, 180),
-    "no-glasses": (220, 30, 180),
-
-    "no-shoes": (0, 140, 220),           # Amber Rust (BGR)
-    "noshoes": (0, 140, 220),
-    "no-boots": (0, 140, 220),
-
-    # Compliant Equipment -> Emerald Green, Cyan Sky-Blue, Lemon Yellow
-    "safety-vest": (255, 220, 0),        # Electric Sky Blue / Cyan (BGR)
-    "vest": (255, 220, 0),
-    "saftey-vest": (255, 220, 0),
-
-    "hardhat": (0, 230, 80),             # Emerald Lime Green (BGR)
-    "helmet": (0, 230, 80),
-
-    "mask": (0, 230, 255),               # Lemon Yellow (BGR)
-    "goggles": (255, 120, 30),           # Cobalt Blue (BGR)
-    "gloves": (180, 230, 50),            # Turquoise Teal (BGR)
-    "shoes": (50, 205, 50),              # Spring Green (BGR)
-    "boots": (50, 205, 50),
-
-    # Objects & People
-    "person": (200, 100, 50),            # Slate Blue (BGR)
-    "worker": (200, 100, 50),
-    "human": (200, 100, 50),
-    "fire": (0, 0, 255),                 # Pure Red
-    "smoke": (180, 180, 180),            # Silver Grey
-}
-
 def get_dynamic_class_color(class_name):
     """
-    Returns a unique, fixed, high-contrast BGR color for each class name.
-    Guarantees NO-Hardhat, NO-Safety Vest, NO-Mask, etc., have completely distinct colors.
+    Fully dynamic, zero-hardcoded color assignment that works for ANY current and future models.
+    - Violations (NO-*, without-*, non-*, fire, danger) -> Alert Red / Orange / Magenta (BGR).
+    - Compliant gear & Objects -> High-contrast Safe Palette (Lime Green, Cyan Sky-Blue, Yellow, Teal, Violet).
     """
     if not class_name:
         return (0, 255, 255)
-    
-    norm_name = clean_str(class_name).replace("_", "-").replace(" ", "-")
-    if norm_name in DYNAMIC_CLASS_COLOR_MAP:
-        return DYNAMIC_CLASS_COLOR_MAP[norm_name]
         
-    for k, v in DYNAMIC_CLASS_COLOR_MAP.items():
-        if k in norm_name or norm_name in k:
-            return v
-            
+    is_neg, core, cleaned = extract_negation_and_core(class_name)
+    is_hazard = is_neg or any(w in cleaned for w in ("fire", "smoke", "fall", "danger", "hazard", "violation", "unauthorized"))
+    
     import hashlib
-    h = int(hashlib.md5(norm_name.encode('utf-8')).hexdigest(), 16)
-    palette = [
-        (0, 140, 255),   # Vivid Orange
-        (255, 190, 40),  # Electric Cyan
-        (30, 45, 255),   # Coral Red
-        (0, 230, 115),   # Emerald Green
-        (180, 20, 255),  # Magenta
-        (0, 215, 255),   # Golden Yellow
-        (255, 105, 180), # Neon Pink
-        (210, 230, 0),   # Turquoise
-        (50, 205, 50),   # Lime Green
-        (238, 130, 238), # Violet
-        (30, 144, 255),  # Sky Blue
-        (255, 215, 0),   # Gold
-        (255, 69, 0),    # Red Orange
-        (0, 255, 127),   # Spring Green
-    ]
-    return palette[h % len(palette)]
+    if is_hazard:
+        hazard_palette = [
+            (0, 0, 255),      # Bright Alert Red (BGR)
+            (0, 90, 255),     # Vivid Amber Orange (BGR)
+            (255, 0, 255),    # Electric Magenta / Fuchsia (BGR)
+            (180, 50, 255),   # Hot Crimson Pink (BGR)
+            (0, 140, 255),    # Deep Tangerine (BGR)
+            (220, 20, 180),   # Deep Purple Violet (BGR)
+        ]
+        core_h = int(hashlib.md5(core.encode('utf-8')).hexdigest(), 16)
+        return hazard_palette[core_h % len(hazard_palette)]
+    else:
+        safe_palette = [
+            (255, 215, 0),    # Bright Cyan Sky Blue (BGR)
+            (0, 230, 80),     # Emerald Lime Green (BGR)
+            (0, 230, 255),    # Golden Lemon Yellow (BGR)
+            (180, 230, 50),   # Mint Teal (BGR)
+            (255, 120, 180),  # Soft Lavender Violet (BGR)
+            (50, 205, 50),    # Spring Green (BGR)
+            (200, 100, 50),   # Slate Blue (BGR)
+            (255, 140, 0),    # Deep Cobalt Blue (BGR)
+        ]
+        core_h = int(hashlib.md5(core.encode('utf-8')).hexdigest(), 16)
+        return safe_palette[core_h % len(safe_palette)]
 
 def get_config_for_model(model_configs, m_name):
     if not isinstance(model_configs, dict) or not model_configs:
