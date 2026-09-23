@@ -167,7 +167,6 @@ def get_alerts_base_url():
                 if val and not val.startswith("("):
                     return val
     except: pass
-
 def is_opposite_class(cls1, cls2):
     try:
         b_neg, b_core, _ = extract_negation_and_core(cls1)
@@ -178,43 +177,90 @@ def is_opposite_class(cls1, cls2):
         pass
     return False
 
+DYNAMIC_CLASS_COLOR_MAP = {
+    # Violations (NO-PPE) -> Distinct Warning Colors (Red, Orange, Magenta, Pink)
+    "no-safety-vest": (0, 0, 255),        # Bright Crimson Alert Red (BGR)
+    "no-vest": (0, 0, 255),
+    "nosafetyvest": (0, 0, 255),
+    "novest": (0, 0, 255),
+    "no-saftey-vest": (0, 0, 255),
+
+    "no-hardhat": (0, 100, 255),         # Vivid Amber Orange (BGR)
+    "no-helmet": (0, 100, 255),
+    "nohardhat": (0, 100, 255),
+    "nohelmet": (0, 100, 255),
+
+    "no-mask": (255, 0, 255),            # Electric Magenta / Fuchsia (BGR)
+    "nomask": (255, 0, 255),
+
+    "no-gloves": (200, 80, 255),         # Neon Pink (BGR)
+    "nogloves": (200, 80, 255),
+
+    "no-goggles": (220, 30, 180),        # Deep Violet (BGR)
+    "nogoggles": (220, 30, 180),
+    "no-glasses": (220, 30, 180),
+
+    "no-shoes": (0, 140, 220),           # Amber Rust (BGR)
+    "noshoes": (0, 140, 220),
+    "no-boots": (0, 140, 220),
+
+    # Compliant Equipment -> Emerald Green, Cyan Sky-Blue, Lemon Yellow
+    "safety-vest": (255, 220, 0),        # Electric Sky Blue / Cyan (BGR)
+    "vest": (255, 220, 0),
+    "saftey-vest": (255, 220, 0),
+
+    "hardhat": (0, 230, 80),             # Emerald Lime Green (BGR)
+    "helmet": (0, 230, 80),
+
+    "mask": (0, 230, 255),               # Lemon Yellow (BGR)
+    "goggles": (255, 120, 30),           # Cobalt Blue (BGR)
+    "gloves": (180, 230, 50),            # Turquoise Teal (BGR)
+    "shoes": (50, 205, 50),              # Spring Green (BGR)
+    "boots": (50, 205, 50),
+
+    # Objects & People
+    "person": (200, 100, 50),            # Slate Blue (BGR)
+    "worker": (200, 100, 50),
+    "human": (200, 100, 50),
+    "fire": (0, 0, 255),                 # Pure Red
+    "smoke": (180, 180, 180),            # Silver Grey
+}
+
 def get_dynamic_class_color(class_name):
     """
-    Fully dynamic, zero-hardcoded color assignment that works for ANY current and future models.
-    - Violations (NO-*, without-*, non-*, fire, danger) -> Alert Red / Orange / Magenta (BGR).
-    - Compliant gear & Objects -> High-contrast Safe Palette (Lime Green, Cyan Sky-Blue, Yellow, Teal, Violet).
+    Returns a unique, fixed, high-contrast BGR color for each class name.
+    Guarantees NO-Hardhat, NO-Safety Vest, NO-Mask, etc., have completely distinct colors.
     """
     if not class_name:
         return (0, 255, 255)
-        
-    is_neg, core, cleaned = extract_negation_and_core(class_name)
-    is_hazard = is_neg or any(w in cleaned for w in ("fire", "smoke", "fall", "danger", "hazard", "violation", "unauthorized"))
     
+    norm_name = clean_str(class_name).replace("_", "-").replace(" ", "-")
+    if norm_name in DYNAMIC_CLASS_COLOR_MAP:
+        return DYNAMIC_CLASS_COLOR_MAP[norm_name]
+        
+    for k, v in DYNAMIC_CLASS_COLOR_MAP.items():
+        if k in norm_name or norm_name in k:
+            return v
+            
     import hashlib
-    if is_hazard:
-        hazard_palette = [
-            (0, 0, 255),      # Bright Alert Red (BGR)
-            (0, 90, 255),     # Vivid Amber Orange (BGR)
-            (255, 0, 255),    # Electric Magenta / Fuchsia (BGR)
-            (180, 50, 255),   # Hot Crimson Pink (BGR)
-            (0, 140, 255),    # Deep Tangerine (BGR)
-            (220, 20, 180),   # Deep Purple Violet (BGR)
-        ]
-        core_h = int(hashlib.md5(core.encode('utf-8')).hexdigest(), 16)
-        return hazard_palette[core_h % len(hazard_palette)]
-    else:
-        safe_palette = [
-            (255, 215, 0),    # Bright Cyan Sky Blue (BGR)
-            (0, 230, 80),     # Emerald Lime Green (BGR)
-            (0, 230, 255),    # Golden Lemon Yellow (BGR)
-            (180, 230, 50),   # Mint Teal (BGR)
-            (255, 120, 180),  # Soft Lavender Violet (BGR)
-            (50, 205, 50),    # Spring Green (BGR)
-            (200, 100, 50),   # Slate Blue (BGR)
-            (255, 140, 0),    # Deep Cobalt Blue (BGR)
-        ]
-        core_h = int(hashlib.md5(core.encode('utf-8')).hexdigest(), 16)
-        return safe_palette[core_h % len(safe_palette)]
+    h = int(hashlib.md5(norm_name.encode('utf-8')).hexdigest(), 16)
+    palette = [
+        (0, 140, 255),   # Vivid Orange
+        (255, 190, 40),  # Electric Cyan
+        (30, 45, 255),   # Coral Red
+        (0, 230, 115),   # Emerald Green
+        (180, 20, 255),  # Magenta
+        (0, 215, 255),   # Golden Yellow
+        (255, 105, 180), # Neon Pink
+        (210, 230, 0),   # Turquoise
+        (50, 205, 50),   # Lime Green
+        (238, 130, 238), # Violet
+        (30, 144, 255),  # Sky Blue
+        (255, 215, 0),   # Gold
+        (255, 69, 0),    # Red Orange
+        (0, 255, 127),   # Spring Green
+    ]
+    return palette[h % len(palette)]
 
 def get_config_for_model(model_configs, m_name):
     if not isinstance(model_configs, dict) or not model_configs:
@@ -282,8 +328,8 @@ class InferenceScheduler:
                 except Exception as e:
                     print(f"[SCHEDULER-ERR] Camera {worker.cam_id} inference error: {e}", flush=True)
 
-                # Fair round-robin pacing sleep (15ms) between cameras to keep Pi CPU cool (72-74°C)
-                time.sleep(0.015)
+                # Ultra-fast pacing pause (5ms) between camera turns
+                time.sleep(0.005)
 
 GLOBAL_INFERENCE_SCHEDULER = InferenceScheduler()
 
@@ -373,7 +419,7 @@ class DetectorWorker:
         if not PSYCOPG2_AVAILABLE:
             print("[ALERT-DB-ERR] psycopg2 module not available in Python environment", flush=True)
             return None
-        if self._db_conn is None or self._db_conn.closed:
+        if self._db_conn is None or getattr(self._db_conn, 'closed', 1) != 0:
             try:
                 self._db_conn = psycopg2.connect(DB_DSN, connect_timeout=5)
             except Exception as e:
@@ -450,6 +496,11 @@ class DetectorWorker:
         if f is None:
             return
 
+        # Capture original raw camera frame for maximum feature extraction & long-range detection
+        orig_h, orig_w = f.shape[:2]
+        scale_x = float(self.width) / max(1.0, float(orig_w))
+        scale_y = float(self.height) / max(1.0, float(orig_h))
+
         frame_snapshot = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
         f_h, f_w = self.height, self.width
 
@@ -460,10 +511,6 @@ class DetectorWorker:
             paths = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
             self.models = [get_yolo_model(mp) for mp in paths]
             self._models_active_time = time.time()
-
-        orig_h, orig_w = f.shape[:2]
-        scale_x = self.width / float(orig_w) if orig_w > 0 else 1.0
-        scale_y = self.height / float(orig_h) if orig_h > 0 else 1.0
 
         for midx, model in enumerate(self.models):
             m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
@@ -494,7 +541,7 @@ class DetectorWorker:
                     if isinstance(cc, dict) and "conf" in cc:
                         min_class_conf = min(min_class_conf, float(cc["conf"]))
 
-            # Direct Native Prediction on raw frame (Full sensor clarity for distant/small objects)
+            # Direct Native Prediction on full-res frame (Identical to Video Lab)
             predict_kwargs = {
                 "source": f,
                 "conf": min_class_conf,
@@ -535,17 +582,8 @@ class DetectorWorker:
                         cls = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
                         conf_val = float(b.conf[0].item())
 
-                        matched_label = cls
                         if filter_classes:
-                            matched = False
-                            for e in filter_classes:
-                                if match_class(cls, e):
-                                    matched = True
-                                    e_str = str(e).strip()
-                                    if " - " in e_str: e_str = e_str.split(" - ")[-1]
-                                    matched_label = e_str
-                                    break
-                            if not matched:
+                            if not any(match_class(cls, e) for e in filter_classes):
                                 continue
 
                         # Per-class confidence filter
@@ -558,13 +596,13 @@ class DetectorWorker:
                         if conf_val < req_conf:
                             continue
 
-                        # Coordinate mapping from native sensor resolution to display canvas
+                        # Scale coordinates from raw frame to output stream resolution
                         box_raw = b.xyxy[0].cpu().numpy().tolist()
                         rx1, ry1, rx2, ry2 = box_raw
-                        x1 = max(0, min(self.width - 1, int(rx1 * scale_x)))
-                        y1 = max(0, min(self.height - 1, int(ry1 * scale_y)))
-                        x2 = max(0, min(self.width - 1, int(rx2 * scale_x)))
-                        y2 = max(0, min(self.height - 1, int(ry2 * scale_y)))
+                        x1 = max(0, min(self.width - 1, rx1 * scale_x))
+                        y1 = max(0, min(self.height - 1, ry1 * scale_y))
+                        x2 = max(0, min(self.width - 1, rx2 * scale_x))
+                        y2 = max(0, min(self.height - 1, ry2 * scale_y))
                         box_xyxy = [x1, y1, x2, y2]
                         
                         bw = max(0, x2 - x1)
@@ -587,8 +625,8 @@ class DetectorWorker:
                             except Exception:
                                 pass
 
-                        color_val = get_dynamic_class_color(matched_label)
-                        raw_boxes.append((box_xyxy, color_val, conf_val, matched_label))
+                        color_val = get_dynamic_class_color(cls)
+                        raw_boxes.append((box_xyxy, color_val, conf_val, cls))
 
         # Multi-Model NMS
         kept_items = []
@@ -719,7 +757,7 @@ class DetectorWorker:
             except:
                 pass
 
-        # Persistent Alert Processing: 1.0s continuous / 2-cycle trigger + 30.0s repeat interval
+        # Persistent Alert Processing: 1.0s continuous trigger + 30.0s repeat interval
         for c in cur_cls:
             # Skip non-hazard classes like person/worker
             is_neg, core_type, cleaned_cls = extract_negation_and_core(c)
@@ -727,25 +765,23 @@ class DetectorWorker:
                 continue
 
             if c not in self.alert_timers:
-                self.alert_timers[c] = {'start': now, 'last_seen': now, 'count': 1, 'last_alert': 0.0}
+                self.alert_timers[c] = {'start': now, 'last_seen': now, 'last_alert': 0.0}
             else:
                 self.alert_timers[c]['last_seen'] = now
-                self.alert_timers[c]['count'] = self.alert_timers[c].get('count', 0) + 1
 
             duration = now - self.alert_timers[c]['start']
-            count = self.alert_timers[c].get('count', 1)
             last_alert_time = self.alert_timers[c].get('last_alert', 0.0)
 
-            if duration >= 1.0 or count >= 2:
+            if duration >= 1.0:
                 if last_alert_time == 0.0 or (now - last_alert_time) >= 30.0:
                     self.alert_timers[c]['last_alert'] = now
                     self.alert_triggered.add(c)
-                    print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, count={count}, is_repeat={(last_alert_time > 0)}", flush=True)
+                    print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, is_repeat={(last_alert_time > 0)}", flush=True)
                     self._save_alert(c, snap_img)
 
-        # Cleanup expired alert classes (absent for > 6.0s)
+        # Cleanup expired alert classes (absent for > 4.0s)
         for c in list(self.alert_timers.keys()):
-            if now - self.alert_timers[c]['last_seen'] > 6.0:
+            if now - self.alert_timers[c]['last_seen'] > 4.0:
                 del self.alert_timers[c]
                 if c in self.alert_triggered:
                     self.alert_triggered.remove(c)
@@ -770,7 +806,7 @@ class DetectorWorker:
 
             type_of_alert_str = f"{disp_name} Detected"
 
-            # Also append to alerts.json so the UI sidebar displays it immediately
+            # 1. Append to alerts.json for immediate UI dashboard update
             alerts_json_file = os.path.join(adir, "alerts.json")
             alert_entry = {
                 "id": int(time.time() * 1000),
@@ -788,13 +824,14 @@ class DetectorWorker:
                         except: data = []
                 if not isinstance(data, list): data = []
                 data.insert(0, alert_entry)
-                data = data[:100]  # Keep latest 100 alerts
+                data = data[:100]
                 with open(alerts_json_file, "w") as jf:
                     json.dump(data, jf, indent=2)
                 print(f"[ALERT-JSON] Appended alert to alerts.json: {type_of_alert_str}", flush=True)
             except Exception as jerr:
                 print(f"[ALERT-JSON-ERR] Failed updating alerts.json: {jerr}", flush=True)
 
+            # 2. Store directly into PostgreSQL DB
             conn = self._get_db_conn()
             if conn:
                 try:
@@ -807,12 +844,12 @@ class DetectorWorker:
                 except Exception as dbe:
                     print(f"[ALERT-DB-ERR] DB insert error: {dbe}", flush=True)
                     try: conn.rollback()
-                    except Exception: pass
+                    except: pass
                     try: self._db_conn.close()
-                    except Exception: pass
+                    except: pass
                     self._db_conn = None
             else:
-                print(f"[ALERT-DB-WARN] No DB connection available (PSYCOPG2={PSYCOPG2_AVAILABLE})", flush=True)
+                print(f"[ALERT-DB-WARN] No DB connection available (PSYCOPG2={PSYCOPG2_AVAILABLE}, DSN={DB_DSN})", flush=True)
         except Exception as e:
             print(f"[ALERT-ERR] Failed to save alert: {e}", flush=True)
 
@@ -824,42 +861,11 @@ class DetectorWorker:
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
         return frame
 
-    def _capture_thread(self, cap, cap_stop_evt):
-        while not self._stop_event.is_set() and not cap_stop_evt.is_set():
-            try:
-                ret, f = cap.read()
-                if not ret or f is None:
-                    time.sleep(0.005)
-                    continue
-                with self._frame_lock:
-                    self._latest_raw_frame = f
-                    self._cap_ok = True
-                    self._last_frame_time = time.time()
-            except Exception:
-                break
-
-    def _infer_loop(self, infer_stop_evt):
-        while not self._stop_event.is_set() and not infer_stop_evt.is_set():
-            try:
-                if self._latest_raw_frame is not None:
-                    self.run_single_inference_cycle()
-                else:
-                    time.sleep(0.01)
-            except Exception as e:
-                print(f"[INFER-ERR] Camera {self.cam_id}: {e}", flush=True)
-            time.sleep(0.005)
-
     def run(self):
-        ffmpeg, cap, cap_t = None, None, None
-        cap_stop_evt = None
-        infer_t, infer_stop_evt = None, None
+        ffmpeg, cap = None, None
 
         def cleanup_subthreads():
-            nonlocal cap, cap_t, cap_stop_evt, infer_t, infer_stop_evt, ffmpeg
-            if infer_stop_evt: infer_stop_evt.set()
-            if infer_t and infer_t.is_alive(): infer_t.join(timeout=1.0)
-            if cap_stop_evt: cap_stop_evt.set()
-            if cap_t and cap_t.is_alive(): cap_t.join(timeout=1.0)
+            nonlocal cap, ffmpeg
             if cap:
                 try: cap.release()
                 except Exception: pass
@@ -882,12 +888,9 @@ class DetectorWorker:
 
             while not self._stop_event.is_set():
                 cleanup_subthreads()
-
+                
                 if self._stop_event.is_set():
                     break
-
-                self._latest_raw_frame = None
-                self._cap_ok = True
 
                 try:
                     print(f"[WORKER-TIMER] Camera {self.cam_id} creating FFmpeg process...", flush=True)
@@ -899,62 +902,35 @@ class DetectorWorker:
                     t_conn_start = time.time()
                     cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
+                    
                     retry_count = 0
                     while not cap.isOpened() and retry_count < 10 and not self._stop_event.is_set():
                         time.sleep(0.5)
                         cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
                         retry_count += 1
-
+                    
                     if self._stop_event.is_set():
                         break
-
+                    
                     print(f"[WORKER-TIMER] Camera {self.cam_id} RTSP connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
 
-                    # Start dedicated capture thread to constantly drain RTSP buffer (eliminates lag)
-                    cap_stop_evt = threading.Event()
-                    cap_t = threading.Thread(target=self._capture_thread, args=(cap, cap_stop_evt), daemon=True, name=f"CapWorker-{self.cam_id}")
-                    cap_t.start()
-
-                    # Wait for first real raw frame from camera
-                    t_frame_start = time.time()
-                    while time.time() - t_frame_start < 5.0 and self._latest_raw_frame is None and not self._stop_event.is_set():
-                        time.sleep(0.05)
-
-                    if self._stop_event.is_set():
-                        break
-
-                    print(f"[WORKER-TIMER] Camera {self.cam_id} first raw frame received in {int((time.time() - t_frame_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-
-                    # Start asynchronous background inference thread
-                    infer_stop_evt = threading.Event()
-                    infer_t = threading.Thread(target=self._infer_loop, args=(infer_stop_evt,), daemon=True, name=f"InferWorker-{self.cam_id}")
-                    infer_t.start()
-
-                    f_int = 1.0 / self.fps
-                    next_frame_time = time.time()
-
-                    # Main 12 FPS render and FFmpeg output loop (never blocks, never starves HLS)
+                    frame_idx = 0
                     while not self._stop_event.is_set():
-                        if cap and cap.isOpened():
-                            if not self._cap_ok or time.time() - self._last_frame_time > 15.0: break
+                        # Read the latest fresh live frame
+                        ret, raw_frame = cap.read()
+                        if not ret or raw_frame is None:
+                            time.sleep(0.02)
+                            continue
 
+                        frame_idx += 1
                         now = time.time()
-                        if now < next_frame_time:
-                            time.sleep(max(0.001, next_frame_time - now))
-                            continue
-                        next_frame_time += f_int
-                        if now - next_frame_time > 0.3:
-                            next_frame_time = now + f_int
-
-                        with self._frame_lock:
-                            f = self._latest_raw_frame
-
-                        if f is None:
-                            continue
-
-                        pf = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                        orig_h, orig_w = raw_frame.shape[:2]
+                        
+                        # Output canvas frame
+                        pf = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
                         f_h, f_w = pf.shape[:2]
+                        scale_x = float(f_w) / max(1.0, float(orig_w))
+                        scale_y = float(f_h) / max(1.0, float(orig_h))
 
                         # Draw ROI boundary if active
                         if self.roi_polygon and len(self.roi_polygon) == 2:
@@ -968,43 +944,175 @@ class DetectorWorker:
                                 cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
                             except: pass
 
-                        # Overlay latest active tracked boxes onto live frame
-                        with self._box_lock:
-                            cur_tracked = list(getattr(self, '_tracked_boxes', []))
+                        # Direct Native Prediction on this exact frame (Exact AI Video Lab Logic)
+                        raw_boxes = []
+                        cur_cls = set()
 
-                        for t_box in cur_tracked:
+                        if not self.models:
+                            paths = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+                            self.models = [get_yolo_model(mp) for mp in paths]
+
+                        for midx, model in enumerate(self.models):
+                            m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
+                            m_name = os.path.basename(m_path)
+
+                            m_conf = self.conf
+                            m_iou = self.iou
+                            enabled_classes = None
+                            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "640"))
+                            m_imgsz = default_imgsz
+                            cfg = get_config_for_model(self.model_configs, m_name)
+                            if cfg and isinstance(cfg, dict):
+                                m_conf = float(cfg.get("conf", self.conf))
+                                m_iou = float(cfg.get("iou", self.iou))
+                                enabled_classes = cfg.get("enabled_classes")
+                                m_imgsz = int(cfg.get("imgsz", default_imgsz))
+
+                            if m_imgsz % 32 != 0:
+                                m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
+
+                            filter_classes = enabled_classes if (enabled_classes is not None) else []
+                            effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
+
+                            class_configs = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}
+                            min_class_conf = effective_conf
+                            if class_configs and isinstance(class_configs, dict):
+                                for cc in class_configs.values():
+                                    if isinstance(cc, dict) and "conf" in cc:
+                                        min_class_conf = min(min_class_conf, float(cc["conf"]))
+
+                            predict_kwargs = {
+                                "source": raw_frame,
+                                "conf": min_class_conf,
+                                "iou": m_iou,
+                                "imgsz": m_imgsz,
+                                "verbose": False
+                            }
+
                             try:
-                                b_xyxy = t_box['box']
-                                color_val = t_box['color']
-                                cls_name = t_box.get('cls', '')
-                                conf_val = t_box.get('conf', 0.0)
-
-                                x1 = max(0, min(f_w - 1, int(b_xyxy[0])))
-                                y1 = max(0, min(f_h - 1, int(b_xyxy[1])))
-                                x2 = max(0, min(f_w - 1, int(b_xyxy[2])))
-                                y2 = max(0, min(f_h - 1, int(b_xyxy[3])))
-
-                                disp_cls = "NO-PPE" if str(cls_name).lower() == "none" else cls_name
-                                label_text = f"{disp_cls} {conf_val:.2f}"
-
-                                cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
-                                (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
-
-                                if y1 - th - 6 > 0:
-                                    bg_y1 = y1 - th - 6
-                                    bg_y2 = y1
-                                    text_y = y1 - 4
+                                if 'torch' in globals() and hasattr(torch, 'inference_mode'):
+                                    with torch.inference_mode():
+                                        results = model.predict(**predict_kwargs)
                                 else:
-                                    bg_y1 = y1
-                                    bg_y2 = min(f_h - 1, y1 + th + 6)
-                                    text_y = y1 + th + 2
+                                    results = model.predict(**predict_kwargs)
 
-                                bg_x2 = min(f_w - 1, x1 + tw + 6)
-                                cv2.rectangle(pf, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
-                                cv2.rectangle(pf, (x1, bg_y1), (bg_x2, bg_y2), color_val, 1)
-                                cv2.putText(pf, label_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-                            except:
-                                pass
+                                if results and len(results) > 0:
+                                    r = results[0]
+                                    if r.boxes is not None and len(r.boxes) > 0:
+                                        for b in r.boxes:
+                                            cls_id = int(b.cls[0].item())
+                                            cls = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
+                                            conf_val = float(b.conf[0].item())
+
+                                            if filter_classes:
+                                                if not any(match_class(cls, e) for e in filter_classes):
+                                                    continue
+
+                                            # Per-class confidence filter
+                                            req_conf = effective_conf
+                                            if class_configs:
+                                                for cc_name, cc_val in class_configs.items():
+                                                    if match_class(cls, cc_name) and isinstance(cc_val, dict) and "conf" in cc_val:
+                                                        req_conf = float(cc_val["conf"])
+                                                        break
+                                            if conf_val < req_conf:
+                                                continue
+
+                                            box_raw = b.xyxy[0].cpu().numpy().tolist()
+                                            rx1, ry1, rx2, ry2 = box_raw
+                                            x1 = max(0, min(self.width - 1, rx1 * scale_x))
+                                            y1 = max(0, min(self.height - 1, ry1 * scale_y))
+                                            x2 = max(0, min(self.width - 1, rx2 * scale_x))
+                                            y2 = max(0, min(self.height - 1, ry2 * scale_y))
+                                            box_xyxy = [x1, y1, x2, y2]
+                                            
+                                            bw = max(0, x2 - x1)
+                                            bh = max(0, y2 - y1)
+                                            if bw < 3 or bh < 3:
+                                                continue
+                                                
+                                            cx = (x1 + x2) / 2.0
+                                            cy = (y1 + y2) / 2.0
+
+                                            if self.roi_polygon and len(self.roi_polygon) == 2:
+                                                try:
+                                                    roi_x1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                                                    roi_y1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                                                    roi_x2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                                                    roi_y2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                                                    if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2):
+                                                        continue
+                                                except Exception:
+                                                    pass
+
+                                            color_val = get_dynamic_class_color(cls)
+                                            raw_boxes.append((box_xyxy, color_val, conf_val, cls))
+                            except Exception as pred_err:
+                                print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name}: {pred_err}", flush=True)
+
+                        # Multi-Model Same-Class NMS
+                        kept_items = []
+                        if raw_boxes:
+                            raw_boxes.sort(key=lambda x: x[2], reverse=True)
+                            for item in raw_boxes:
+                                b1_xyxy, c1_color, conf1_val, cls1_name = item
+                                x1_1, y1_1, x2_1, y2_1 = b1_xyxy
+                                area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
+
+                                suppress = False
+                                for k_item in kept_items:
+                                    b2_xyxy, c2_color, conf2_val, cls2_name = k_item
+                                    x1_2, y1_2, x2_2, y2_2 = b2_xyxy
+                                    area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
+
+                                    ix1 = max(x1_1, x1_2)
+                                    iy1 = max(y1_1, y1_2)
+                                    ix2 = min(x2_1, x2_2)
+                                    iy2 = min(y2_1, y2_2)
+
+                                    if ix2 > ix1 and iy2 > iy1:
+                                        inter = (ix2 - ix1) * (iy2 - iy1)
+                                        union = area1 + area2 - inter
+                                        iou = inter / max(1.0, union)
+                                        min_area = max(1.0, min(area1, area2))
+                                        io_min = inter / min_area
+
+                                        is_same_cls = match_class(cls1_name, cls2_name)
+                                        is_opp_cls = is_opposite_class(cls1_name, cls2_name)
+                                        if (is_same_cls and (iou >= 0.35 or io_min >= 0.50)) or (is_opp_cls and (iou >= 0.40 or io_min >= 0.55)):
+                                            suppress = True
+                                            break
+
+                                if not suppress:
+                                    kept_items.append(item)
+
+                        # Draw exact bounding boxes directly on this identical frame pf
+                        for b_xyxy, color_val, conf_val, cls_name in kept_items:
+                            x1, y1, x2, y2 = [int(v) for v in b_xyxy]
+                            x1 = max(0, min(f_w - 1, x1))
+                            y1 = max(0, min(f_h - 1, y1))
+                            x2 = max(0, min(f_w - 1, x2))
+                            y2 = max(0, min(f_h - 1, y2))
+                            
+                            label_text = f"{cls_name} {conf_val:.2f}"
+                            cur_cls.add(cls_name)
+
+                            cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
+                            (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
+                            
+                            if y1 - th - 6 > 0:
+                                bg_y1 = y1 - th - 6
+                                bg_y2 = y1
+                                text_y = y1 - 4
+                            else:
+                                bg_y1 = y1
+                                bg_y2 = min(f_h - 1, y1 + th + 6)
+                                text_y = y1 + th + 2
+                                
+                            bg_x2 = min(f_w - 1, x1 + tw + 6)
+                            cv2.rectangle(pf, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
+                            cv2.rectangle(pf, (x1, bg_y1), (bg_x2, bg_y2), color_val, 1)
+                            cv2.putText(pf, label_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
 
                         if ffmpeg.poll() is not None: break
                         try:
@@ -1012,9 +1120,39 @@ class DetectorWorker:
                             ffmpeg.stdin.flush()
                         except: break
 
-                except Exception:
+                        # Flush RTSP socket backlog so next read is 100% current live time
+                        for _ in range(2):
+                            cap.grab()
+
+                        # Persistent Alert Processing
+                        for c in cur_cls:
+                            # Skip non-hazard classes like person/worker
+                            is_neg, core_type, cleaned_cls = extract_negation_and_core(c)
+                            if cleaned_cls in ("person", "worker", "human", "man", "woman", "machinery", "vehicle"):
+                                continue
+
+                            if c not in self.alert_timers:
+                                self.alert_timers[c] = {'start': now, 'last_seen': now, 'last_alert': 0.0}
+                            else:
+                                self.alert_timers[c]['last_seen'] = now
+
+                            duration = now - self.alert_timers[c]['start']
+                            last_alert_time = self.alert_timers[c].get('last_alert', 0.0)
+
+                            if duration >= 1.0:
+                                if last_alert_time == 0.0 or (now - last_alert_time) >= 30.0:
+                                    self.alert_timers[c]['last_alert'] = now
+                                    self.alert_triggered.add(c)
+                                    print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s", flush=True)
+                                    self._save_alert(c, pf)
+
+                        for c in list(self.alert_timers.keys()):
+                            if now - self.alert_timers[c]['last_seen'] > 4.0:
+                                del self.alert_timers[c]
+                                if c in self.alert_triggered:
+                                    self.alert_triggered.remove(c)
+                except:
                     import traceback
                     traceback.print_exc()
         finally:
             cleanup_subthreads()
-
