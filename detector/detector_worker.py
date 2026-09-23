@@ -709,20 +709,22 @@ class DetectorWorker:
                 continue
 
             if c not in self.alert_timers:
-                self.alert_timers[c] = {'start': now, 'last_seen': now}
+                self.alert_timers[c] = {'start': now, 'last_seen': now, 'hits': 1}
             else:
                 self.alert_timers[c]['last_seen'] = now
+                self.alert_timers[c]['hits'] = self.alert_timers[c].get('hits', 1) + 1
 
             duration = now - self.alert_timers[c]['start']
-            if duration >= 3.0:
+            hits = self.alert_timers[c].get('hits', 1)
+            if duration >= 3.0 or hits >= 2:
                 self._class_last_alert[c] = now
                 self.alert_triggered.add(c)
-                print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s (30s cooldown active)", flush=True)
+                print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, hits={hits} (30s cooldown active)", flush=True)
                 self._save_alert(c, snap_img)
 
-        # Cleanup expired alert timers (absent for > 3.0s)
+        # Cleanup expired alert timers (absent for > 25.0s across multi-camera cycles)
         for c in list(self.alert_timers.keys()):
-            if now - self.alert_timers[c]['last_seen'] > 3.0:
+            if now - self.alert_timers[c]['last_seen'] > 25.0:
                 del self.alert_timers[c]
                 if c in self.alert_triggered:
                     self.alert_triggered.remove(c)
