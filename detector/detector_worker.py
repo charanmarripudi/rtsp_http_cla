@@ -757,13 +757,16 @@ class DetectorWorker:
             else:
                 image_path = f"/hls/alerts/{filename}"
 
+            disp_name = "NO-PPE" if str(class_name).lower() == "none" else class_name
+            type_of_alert_str = f"{disp_name} Detected"
+
             # Also append to alerts.json so the UI sidebar displays it immediately
             alerts_json_file = os.path.join(adir, "alerts.json")
             alert_entry = {
                 "id": int(time.time() * 1000),
                 "camera_id": str(self.cam_id),
                 "location": str(self.location),
-                "type_of_alert": f"{class_name} Detected",
+                "type_of_alert": type_of_alert_str,
                 "image": image_path,
                 "created_at": now_dt.strftime("%Y-%m-%d %H:%M:%S")
             }
@@ -778,7 +781,7 @@ class DetectorWorker:
                 data = data[:100]  # Keep latest 100 alerts
                 with open(alerts_json_file, "w") as jf:
                     json.dump(data, jf, indent=2)
-                print(f"[ALERT-JSON] Appended alert to alerts.json: {class_name}", flush=True)
+                print(f"[ALERT-JSON] Appended alert to alerts.json: {type_of_alert_str}", flush=True)
             except Exception as jerr:
                 print(f"[ALERT-JSON-ERR] Failed updating alerts.json: {jerr}", flush=True)
 
@@ -787,10 +790,10 @@ class DetectorWorker:
                 try:
                     cur = conn.cursor()
                     ensure_alerts_schema(cur)
-                    insert_alert_db(cur, self.cam_id, self.location, f"{class_name} Detected", image_path, now_dt)
+                    insert_alert_db(cur, self.cam_id, self.location, type_of_alert_str, image_path, now_dt)
                     conn.commit()
                     cur.close()
-                    print(f"[ALERT-DB] Alert stored successfully in DB: cam={self.cam_id}, class={class_name}, location={self.location}", flush=True)
+                    print(f"[ALERT-DB] Alert stored successfully in DB: cam={self.cam_id}, class={type_of_alert_str}, location={self.location}", flush=True)
                 except Exception as dbe:
                     print(f"[ALERT-DB-ERR] DB insert error: {dbe}", flush=True)
             else:
@@ -1112,21 +1115,23 @@ class DetectorWorker:
                         if frame_idx % INFER_EVERY == 1:
                             for c in last_cur_cls:
                                 if c not in self.alert_timers:
-                                    self.alert_timers[c] = {'start': now, 'last_seen': now, 'last_alert': 0.0}
+                                    self.alert_timers[c] = {'start': now, 'last_seen': now, 'count': 1, 'last_alert': 0.0}
                                 else:
                                     self.alert_timers[c]['last_seen'] = now
+                                    self.alert_timers[c]['count'] = self.alert_timers[c].get('count', 0) + 1
 
                                 duration = now - self.alert_timers[c]['start']
+                                count = self.alert_timers[c].get('count', 1)
                                 last_alert_time = self.alert_timers[c].get('last_alert', 0.0)
 
-                                if duration >= 3.0:
+                                if duration >= 1.0 or count >= 2:
                                     if last_alert_time == 0.0 or (now - last_alert_time) >= 30.0:
                                         self.alert_timers[c]['last_alert'] = now
                                         self.alert_triggered.add(c)
                                         self._save_alert(c, pf)
 
                             for c in list(self.alert_timers.keys()):
-                                if now - self.alert_timers[c]['last_seen'] > 2.0:
+                                if now - self.alert_timers[c]['last_seen'] > 4.0:
                                     del self.alert_timers[c]
                                     if c in self.alert_triggered:
                                         self.alert_triggered.remove(c)
