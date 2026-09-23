@@ -67,6 +67,11 @@ def extract_negation_and_core(s):
         s_str = s_str.split("/")[-1]
         
     cleaned = clean_str(s_str)
+    
+    # Generic violation keywords
+    if cleaned in ("none", "noppe", "noviolation", "violation", "withoutppe"):
+        return True, "violation", cleaned
+
     neg_prefixes = ["no", "without", "non", "un"]
     is_neg = False
     core = cleaned
@@ -130,6 +135,10 @@ def match_class(box_cls, enabled_cls):
         
     if b_neg != e_neg:
         return False
+        
+    # Generic violation matching (e.g. 'none' from construction.pt matches 'NO-Hardhat' / 'NO-Safety Vest')
+    if b_core == "violation" or e_core == "violation":
+        return True
         
     if b_core == e_core:
         return True
@@ -1075,7 +1084,8 @@ class DetectorWorker:
                             y1 = max(0, min(f_h - 1, y1))
                             x2 = max(0, min(f_w - 1, x2))
                             y2 = max(0, min(f_h - 1, y2))
-                            label_text = f"{cls_name} {conf_val:.2f}"
+                            disp_cls = "NO-PPE" if cls_name.lower() == "none" else cls_name
+                            label_text = f"{disp_cls} {conf_val:.2f}"
                             cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
                             (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
                             if y1 - th - 6 > 0:
