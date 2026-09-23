@@ -1,17 +1,17 @@
 import os
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["TORCH_NUM_THREADS"] = "1"
-os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
+os.environ["OMP_NUM_THREADS"] = "4"
+os.environ["MKL_NUM_THREADS"] = "4"
+os.environ["OPENBLAS_NUM_THREADS"] = "4"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
+os.environ["NUMEXPR_NUM_THREADS"] = "4"
+os.environ["TORCH_NUM_THREADS"] = "4"
+os.environ["OPENCV_FOR_THREADS_NUM"] = "2"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
 
 import cv2, subprocess, time, threading, queue, json, math
 import numpy as np
 try:
-    cv2.setNumThreads(1)
+    cv2.setNumThreads(2)
     cv2.ocl.setUseOpenCL(False)
 except Exception:
     pass
@@ -38,10 +38,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Optimize PyTorch CPU threading to 2 threads
+# Optimize PyTorch CPU threading to 4 cores for Raspberry Pi 4
 try:
     import torch
-    torch.set_num_threads(2)
+    torch.set_num_threads(4)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
 except Exception:
@@ -531,17 +531,19 @@ class DetectorWorker:
                 infer_ms = int((time.time() - t_infer_start) * 1000)
 
                 mod_dets = []
+                all_raw_dets = []
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
                             cls_id = int(b.cls[0].item())
                             cls_name = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
                             conf_val = float(b.conf[0].item())
+                            all_raw_dets.append(f"{cls_name} {conf_val:.2f}")
                             
                             if not filter_classes or any(match_class(cls_name, e) for e in filter_classes):
                                 mod_dets.append(f"{cls_name} {conf_val:.2f}")
 
-                print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure: {infer_ms}ms | Selected: {filter_classes if filter_classes else 'ALL'} | Detected: {mod_dets if mod_dets else 'None'} ({datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
+                print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure: {infer_ms}ms | Selected: {filter_classes if filter_classes else 'ALL'} | Filtered Match: {mod_dets if mod_dets else 'None'} | Raw YOLO Output: {all_raw_dets if all_raw_dets else 'None'} ({datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
             except Exception as pred_err:
                 print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name}: {pred_err}", flush=True)
                 continue
