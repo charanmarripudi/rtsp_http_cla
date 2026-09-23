@@ -159,12 +159,20 @@ def get_yolo_model(model_path):
         elif os.path.exists(os.path.join(m_dir, os.path.basename(resolved_path))):
             resolved_path = os.path.join(m_dir, os.path.basename(resolved_path))
 
+    if not os.path.exists(resolved_path):
+        # File is not on disk — return None to prevent Ultralytics from freezing with GitHub 429 errors
+        return None
+
     if resolved_path not in YOLO_CACHE:
         with INFERENCE_LOCK:
             if resolved_path not in YOLO_CACHE:
-                print(f"[CACHE] Loading model weights into memory: {resolved_path}", flush=True)
-                YOLO_CACHE[resolved_path] = YOLO(resolved_path)
-    return YOLO_CACHE[resolved_path]
+                try:
+                    print(f"[CACHE] Loading model weights into memory: {resolved_path}", flush=True)
+                    YOLO_CACHE[resolved_path] = YOLO(resolved_path)
+                except Exception as e:
+                    print(f"[CACHE-ERR] Could not load model weights {resolved_path}: {e}", flush=True)
+                    return None
+    return YOLO_CACHE.get(resolved_path)
 
 def get_alerts_base_url():
     try:
@@ -484,6 +492,8 @@ class DetectorWorker:
             self._models_active_time = time.time()
 
         for midx, model in enumerate(self.models):
+            if model is None:
+                continue
             m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
             m_name = os.path.basename(m_path)
 
