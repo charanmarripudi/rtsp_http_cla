@@ -490,7 +490,7 @@ class DetectorWorker:
             m_conf = self.conf
             m_iou = self.iou
             enabled_classes = None
-            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "384"))
+            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz = default_imgsz
             cfg = get_config_for_model(self.model_configs, m_name)
             if cfg and isinstance(cfg, dict):
@@ -512,9 +512,9 @@ class DetectorWorker:
                     if isinstance(cc, dict) and "conf" in cc:
                         min_class_conf = min(min_class_conf, float(cc["conf"]))
 
-            # Native Prediction on canvas snapshot (Fast, 0% CPU choking, 120ms inference)
+            # Direct Native Prediction on full-res frame (Identical to f4d3e73)
             predict_kwargs = {
-                "source": frame_snapshot,
+                "source": f,
                 "conf": min_class_conf,
                 "iou": m_iou,
                 "imgsz": m_imgsz,
@@ -568,12 +568,13 @@ class DetectorWorker:
                         if conf_val < req_conf:
                             continue
 
+                        # Scale coordinates from raw frame to output stream resolution (Identical to f4d3e73)
                         box_raw = b.xyxy[0].cpu().numpy().tolist()
                         rx1, ry1, rx2, ry2 = box_raw
-                        x1 = max(0, min(self.width - 1, rx1))
-                        y1 = max(0, min(self.height - 1, ry1))
-                        x2 = max(0, min(self.width - 1, rx2))
-                        y2 = max(0, min(self.height - 1, ry2))
+                        x1 = max(0, min(self.width - 1, rx1 * scale_x))
+                        y1 = max(0, min(self.height - 1, ry1 * scale_y))
+                        x2 = max(0, min(self.width - 1, rx2 * scale_x))
+                        y2 = max(0, min(self.height - 1, ry2 * scale_y))
                         box_xyxy = [x1, y1, x2, y2]
                         
                         bw = max(0, x2 - x1)
