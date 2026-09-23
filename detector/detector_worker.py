@@ -715,8 +715,13 @@ class DetectorWorker:
             except:
                 pass
 
-        # Persistent Alert Processing: 1.2s continuous / 2-cycle trigger + 30.0s repeat interval
+        # Persistent Alert Processing: 1.0s continuous / 2-cycle trigger + 30.0s repeat interval
         for c in cur_cls:
+            # Skip non-hazard classes like person/worker
+            is_neg, core_type, cleaned_cls = extract_negation_and_core(c)
+            if cleaned_cls in ("person", "worker", "human", "man", "woman", "machinery", "vehicle"):
+                continue
+
             if c not in self.alert_timers:
                 self.alert_timers[c] = {'start': now, 'last_seen': now, 'count': 1, 'last_alert': 0.0}
             else:
@@ -727,16 +732,16 @@ class DetectorWorker:
             count = self.alert_timers[c].get('count', 1)
             last_alert_time = self.alert_timers[c].get('last_alert', 0.0)
 
-            if (duration >= 1.2 or count >= 2):
+            if duration >= 1.0 or count >= 2:
                 if last_alert_time == 0.0 or (now - last_alert_time) >= 30.0:
                     self.alert_timers[c]['last_alert'] = now
                     self.alert_triggered.add(c)
                     print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, count={count}, is_repeat={(last_alert_time > 0)}", flush=True)
                     self._save_alert(c, snap_img)
 
-        # Cleanup expired alert classes (absent for > 8.0s)
+        # Cleanup expired alert classes (absent for > 6.0s)
         for c in list(self.alert_timers.keys()):
-            if now - self.alert_timers[c]['last_seen'] > 8.0:
+            if now - self.alert_timers[c]['last_seen'] > 6.0:
                 del self.alert_timers[c]
                 if c in self.alert_triggered:
                     self.alert_triggered.remove(c)
@@ -745,7 +750,9 @@ class DetectorWorker:
         try:
             now_dt = datetime.now()
             ts = now_dt.strftime("%Y%m%d_%H%M%S")
-            filename = f"cam{self.cam_id}_{ts}_{class_name}.jpg"
+            disp_name = "NO-PPE" if str(class_name).lower() == "none" else str(class_name)
+            safe_cls_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', disp_name)
+            filename = f"cam{self.cam_id}_{ts}_{safe_cls_filename}.jpg"
             adir = os.path.join(os.path.dirname(self.output_dir), "alerts")
             os.makedirs(adir, exist_ok=True)
             img_saved = cv2.imwrite(os.path.join(adir, filename), frame)
@@ -757,7 +764,6 @@ class DetectorWorker:
             else:
                 image_path = f"/hls/alerts/{filename}"
 
-            disp_name = "NO-PPE" if str(class_name).lower() == "none" else class_name
             type_of_alert_str = f"{disp_name} Detected"
 
             # Also append to alerts.json so the UI sidebar displays it immediately
@@ -796,6 +802,11 @@ class DetectorWorker:
                     print(f"[ALERT-DB] Alert stored successfully in DB: cam={self.cam_id}, class={type_of_alert_str}, location={self.location}", flush=True)
                 except Exception as dbe:
                     print(f"[ALERT-DB-ERR] DB insert error: {dbe}", flush=True)
+                    try: conn.rollback()
+                    except Exception: pass
+                    try: self._db_conn.close()
+                    except Exception: pass
+                    self._db_conn = None
             else:
                 print(f"[ALERT-DB-WARN] No DB connection available (PSYCOPG2={PSYCOPG2_AVAILABLE})", flush=True)
         except Exception as e:
