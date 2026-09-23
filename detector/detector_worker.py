@@ -835,10 +835,16 @@ class DetectorWorker:
             time.sleep(0.005)
 
     def run(self):
-        ffmpeg, cap = None, None
+        ffmpeg, cap, cap_t = None, None, None
+        cap_stop_evt = None
+        infer_t, infer_stop_evt = None, None
 
         def cleanup_subthreads():
-            nonlocal cap, ffmpeg
+            nonlocal cap, cap_t, cap_stop_evt, infer_t, infer_stop_evt, ffmpeg
+            if infer_stop_evt: infer_stop_evt.set()
+            if infer_t and infer_t.is_alive(): infer_t.join(timeout=1.0)
+            if cap_stop_evt: cap_stop_evt.set()
+            if cap_t and cap_t.is_alive(): cap_t.join(timeout=1.0)
             if cap:
                 try: cap.release()
                 except Exception: pass
@@ -865,6 +871,9 @@ class DetectorWorker:
                 if self._stop_event.is_set():
                     break
 
+                self._latest_raw_frame = None
+                self._cap_ok = True
+
                 try:
                     print(f"[WORKER-TIMER] Camera {self.cam_id} creating FFmpeg process...", flush=True)
                     t_ff_start = time.time()
@@ -887,37 +896,52 @@ class DetectorWorker:
 
                     print(f"[WORKER-TIMER] Camera {self.cam_id} RTSP connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
 
-                    # --- State for throttled inference + full-FPS rendering ---
-                    # Run YOLO every INFER_EVERY frames; draw last known boxes on ALL frames.
-                    # This keeps the HLS stream smooth (full FPS) while inference runs at ~2-3 FPS.
-                    INFER_EVERY = int(os.getenv("INFER_EVERY_N_FRAMES", "4"))
-                    frame_idx = 0
-                    last_kept_items = []   # last inference result: list of (box_xyxy, color, conf, cls)
-                    last_cur_cls = set()   # detected classes from last inference cycle
-                    last_infer_time = 0.0  # for stale-box expiry (clear after 3s of no inference)
-                    first_bbox_logged = False
+                    # Start dedicated capture thread to constantly drain RTSP buffer (eliminates lag)
+                    cap_stop_evt = threading.Event()
+                    cap_t = threading.Thread(target=self._capture_thread, args=(cap, cap_stop_evt), daemon=True, name=f"CapWorker-{self.cam_id}")
+                    cap_t.start()
 
+                    # Wait for first real raw frame from camera
+                    t_frame_start = time.time()
+                    while time.time() - t_frame_start < 5.0 and self._latest_raw_frame is None and not self._stop_event.is_set():
+                        time.sleep(0.05)
+
+                    if self._stop_event.is_set():
+                        break
+
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} first raw frame received in {int((time.time() - t_frame_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+
+                    # Start asynchronous background inference thread
+                    infer_stop_evt = threading.Event()
+                    infer_t = threading.Thread(target=self._infer_loop, args=(infer_stop_evt,), daemon=True, name=f"InferWorker-{self.cam_id}")
+                    infer_t.start()
+
+                    f_int = 1.0 / self.fps
+                    next_frame_time = time.time()
+
+                    # Main 12 FPS render and FFmpeg output loop (never blocks, never starves HLS)
                     while not self._stop_event.is_set():
-                        # --- 1. Drain RTSP buffer: grab stale frames before reading ---
-                        for _ in range(2):
-                            cap.grab()
+                        if cap and cap.isOpened():
+                            if not self._cap_ok or time.time() - self._last_frame_time > 15.0: break
 
-                        ret, raw_frame = cap.read()
-                        if not ret or raw_frame is None:
-                            time.sleep(0.02)
+                        now = time.time()
+                        if now < next_frame_time:
+                            time.sleep(max(0.001, next_frame_time - now))
+                            continue
+                        next_frame_time += f_int
+                        if now - next_frame_time > 0.3:
+                            next_frame_time = now + f_int
+
+                        with self._frame_lock:
+                            f = self._latest_raw_frame
+
+                        if f is None:
                             continue
 
-                        frame_idx += 1
-                        now = time.time()
-                        orig_h, orig_w = raw_frame.shape[:2]
-
-                        # --- 2. Resize to output canvas ---
-                        pf = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                        pf = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
                         f_h, f_w = pf.shape[:2]
-                        scale_x = float(f_w) / max(1.0, float(orig_w))
-                        scale_y = float(f_h) / max(1.0, float(orig_h))
 
-                        # --- 3. Draw ROI boundary if active ---
+                        # Draw ROI boundary if active
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             try:
                                 min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0])
@@ -929,212 +953,49 @@ class DetectorWorker:
                                 cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
                             except: pass
 
-                        # --- 4. Run YOLO inference on every INFER_EVERY-th frame ---
-                        if frame_idx % INFER_EVERY == 1:
-                            raw_boxes = []
+                        # Overlay latest active tracked boxes onto live frame
+                        with self._box_lock:
+                            cur_tracked = list(getattr(self, '_tracked_boxes', []))
 
-                            if not self.models:
-                                paths = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
-                                self.models = [get_yolo_model(mp) for mp in paths]
+                        for t_box in cur_tracked:
+                            try:
+                                b_xyxy = t_box['box']
+                                color_val = t_box['color']
+                                cls_name = t_box.get('cls', '')
+                                conf_val = t_box.get('conf', 0.0)
 
-                            for midx, model in enumerate(self.models):
-                                m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
-                                m_name = os.path.basename(m_path)
+                                x1 = max(0, min(f_w - 1, int(b_xyxy[0])))
+                                y1 = max(0, min(f_h - 1, int(b_xyxy[1])))
+                                x2 = max(0, min(f_w - 1, int(b_xyxy[2])))
+                                y2 = max(0, min(f_h - 1, int(b_xyxy[3])))
 
-                                m_conf = self.conf
-                                m_iou = self.iou
-                                enabled_classes = None
-                                default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "640"))
-                                m_imgsz = default_imgsz
-                                cfg = get_config_for_model(self.model_configs, m_name)
-                                if cfg and isinstance(cfg, dict):
-                                    m_conf = float(cfg.get("conf", self.conf))
-                                    m_iou = float(cfg.get("iou", self.iou))
-                                    enabled_classes = cfg.get("enabled_classes")
-                                    m_imgsz = int(cfg.get("imgsz", default_imgsz))
+                                disp_cls = "NO-PPE" if str(cls_name).lower() == "none" else cls_name
+                                label_text = f"{disp_cls} {conf_val:.2f}"
 
-                                if m_imgsz % 32 != 0:
-                                    m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
+                                cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
+                                (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
 
-                                filter_classes = enabled_classes if (enabled_classes is not None) else []
-                                effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
+                                if y1 - th - 6 > 0:
+                                    bg_y1 = y1 - th - 6
+                                    bg_y2 = y1
+                                    text_y = y1 - 4
+                                else:
+                                    bg_y1 = y1
+                                    bg_y2 = min(f_h - 1, y1 + th + 6)
+                                    text_y = y1 + th + 2
 
-                                class_configs = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}
-                                min_class_conf = effective_conf
-                                if class_configs and isinstance(class_configs, dict):
-                                    for cc in class_configs.values():
-                                        if isinstance(cc, dict) and "conf" in cc:
-                                            min_class_conf = min(min_class_conf, float(cc["conf"]))
+                                bg_x2 = min(f_w - 1, x1 + tw + 6)
+                                cv2.rectangle(pf, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
+                                cv2.rectangle(pf, (x1, bg_y1), (bg_x2, bg_y2), color_val, 1)
+                                cv2.putText(pf, label_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+                            except:
+                                pass
 
-                                predict_kwargs = {
-                                    "source": raw_frame,
-                                    "conf": min_class_conf,
-                                    "iou": m_iou,
-                                    "imgsz": m_imgsz,
-                                    "verbose": False
-                                }
-
-                                try:
-                                    if 'torch' in globals() and hasattr(torch, 'inference_mode'):
-                                        with torch.inference_mode():
-                                            results = model.predict(**predict_kwargs)
-                                    else:
-                                        results = model.predict(**predict_kwargs)
-
-                                    if results and len(results) > 0:
-                                        r = results[0]
-                                        if r.boxes is not None and len(r.boxes) > 0:
-                                            for b in r.boxes:
-                                                cls_id = int(b.cls[0].item())
-                                                cls = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
-                                                conf_val = float(b.conf[0].item())
-
-                                                if filter_classes:
-                                                    if not any(match_class(cls, e) for e in filter_classes):
-                                                        continue
-
-                                                req_conf = effective_conf
-                                                if class_configs:
-                                                    for cc_name, cc_val in class_configs.items():
-                                                        if match_class(cls, cc_name) and isinstance(cc_val, dict) and "conf" in cc_val:
-                                                            req_conf = float(cc_val["conf"])
-                                                            break
-                                                if conf_val < req_conf:
-                                                    continue
-
-                                                box_raw = b.xyxy[0].cpu().numpy().tolist()
-                                                rx1, ry1, rx2, ry2 = box_raw
-                                                x1 = max(0, min(self.width - 1, rx1 * scale_x))
-                                                y1 = max(0, min(self.height - 1, ry1 * scale_y))
-                                                x2 = max(0, min(self.width - 1, rx2 * scale_x))
-                                                y2 = max(0, min(self.height - 1, ry2 * scale_y))
-                                                box_xyxy = [x1, y1, x2, y2]
-
-                                                bw = max(0, x2 - x1)
-                                                bh = max(0, y2 - y1)
-                                                if bw < 3 or bh < 3:
-                                                    continue
-
-                                                cx = (x1 + x2) / 2.0
-                                                cy = (y1 + y2) / 2.0
-
-                                                if self.roi_polygon and len(self.roi_polygon) == 2:
-                                                    try:
-                                                        roi_x1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
-                                                        roi_y1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
-                                                        roi_x2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
-                                                        roi_y2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
-                                                        if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2):
-                                                            continue
-                                                    except Exception:
-                                                        pass
-
-                                                color_val = get_dynamic_class_color(cls)
-                                                raw_boxes.append((box_xyxy, color_val, conf_val, cls))
-                                except Exception as pred_err:
-                                    print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name}: {pred_err}", flush=True)
-
-                            # Multi-Model Same-Class NMS
-                            kept_items = []
-                            if raw_boxes:
-                                raw_boxes.sort(key=lambda x: x[2], reverse=True)
-                                for item in raw_boxes:
-                                    b1_xyxy, c1_color, conf1_val, cls1_name = item
-                                    x1_1, y1_1, x2_1, y2_1 = b1_xyxy
-                                    area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
-                                    suppress = False
-                                    for k_item in kept_items:
-                                        b2_xyxy, c2_color, conf2_val, cls2_name = k_item
-                                        x1_2, y1_2, x2_2, y2_2 = b2_xyxy
-                                        area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
-                                        ix1 = max(x1_1, x1_2)
-                                        iy1 = max(y1_1, y1_2)
-                                        ix2 = min(x2_1, x2_2)
-                                        iy2 = min(y2_1, y2_2)
-                                        if ix2 > ix1 and iy2 > iy1:
-                                            inter = (ix2 - ix1) * (iy2 - iy1)
-                                            union = area1 + area2 - inter
-                                            iou_val = inter / max(1.0, union)
-                                            min_area = max(1.0, min(area1, area2))
-                                            io_min = inter / min_area
-                                            is_same_cls = match_class(cls1_name, cls2_name)
-                                            is_opp_cls = is_opposite_class(cls1_name, cls2_name)
-                                            if (is_same_cls and (iou_val >= 0.35 or io_min >= 0.50)) or (is_opp_cls and (iou_val >= 0.40 or io_min >= 0.55)):
-                                                suppress = True
-                                                break
-                                    if not suppress:
-                                        kept_items.append(item)
-
-                            # Update cached inference result
-                            last_kept_items = kept_items
-                            last_cur_cls = set(cls_name for _, _, _, cls_name in kept_items)
-                            last_infer_time = now
-
-                            if not first_bbox_logged and kept_items:
-                                first_bbox_logged = True
-                                detected_labels = [cls_name for _, _, _, cls_name in kept_items]
-                                print(f"[FIRST-BBOX] Camera {self.cam_id} first detection: {detected_labels}", flush=True)
-
-                        # Expire stale boxes if no inference ran in last 3s (e.g. stream stalled)
-                        if now - last_infer_time > 3.0 and last_infer_time > 0:
-                            last_kept_items = []
-                            last_cur_cls = set()
-
-                        # --- 5. Draw LAST KNOWN boxes on every frame (smooth video) ---
-                        for b_xyxy, color_val, conf_val, cls_name in last_kept_items:
-                            x1, y1, x2, y2 = [int(v) for v in b_xyxy]
-                            x1 = max(0, min(f_w - 1, x1))
-                            y1 = max(0, min(f_h - 1, y1))
-                            x2 = max(0, min(f_w - 1, x2))
-                            y2 = max(0, min(f_h - 1, y2))
-                            disp_cls = "NO-PPE" if cls_name.lower() == "none" else cls_name
-                            label_text = f"{disp_cls} {conf_val:.2f}"
-                            cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
-                            (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
-                            if y1 - th - 6 > 0:
-                                bg_y1 = y1 - th - 6
-                                bg_y2 = y1
-                                text_y = y1 - 4
-                            else:
-                                bg_y1 = y1
-                                bg_y2 = min(f_h - 1, y1 + th + 6)
-                                text_y = y1 + th + 2
-                            bg_x2 = min(f_w - 1, x1 + tw + 6)
-                            cv2.rectangle(pf, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
-                            cv2.rectangle(pf, (x1, bg_y1), (bg_x2, bg_y2), color_val, 1)
-                            cv2.putText(pf, label_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-
-                        # --- 6. Write frame to FFmpeg at full FPS ---
                         if ffmpeg.poll() is not None: break
                         try:
                             ffmpeg.stdin.write(pf.tobytes())
                             ffmpeg.stdin.flush()
                         except: break
-
-                        # --- 7. Persistent Alert Processing (only on inference frames) ---
-                        if frame_idx % INFER_EVERY == 1:
-                            for c in last_cur_cls:
-                                if c not in self.alert_timers:
-                                    self.alert_timers[c] = {'start': now, 'last_seen': now, 'count': 1, 'last_alert': 0.0}
-                                else:
-                                    self.alert_timers[c]['last_seen'] = now
-                                    self.alert_timers[c]['count'] = self.alert_timers[c].get('count', 0) + 1
-
-                                duration = now - self.alert_timers[c]['start']
-                                count = self.alert_timers[c].get('count', 1)
-                                last_alert_time = self.alert_timers[c].get('last_alert', 0.0)
-
-                                if duration >= 1.0 or count >= 2:
-                                    if last_alert_time == 0.0 or (now - last_alert_time) >= 30.0:
-                                        self.alert_timers[c]['last_alert'] = now
-                                        self.alert_triggered.add(c)
-                                        self._save_alert(c, pf)
-
-                            for c in list(self.alert_timers.keys()):
-                                if now - self.alert_timers[c]['last_seen'] > 4.0:
-                                    del self.alert_timers[c]
-                                    if c in self.alert_triggered:
-                                        self.alert_triggered.remove(c)
 
                 except Exception:
                     import traceback
