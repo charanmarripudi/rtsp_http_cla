@@ -448,6 +448,10 @@ class DetectorWorker:
             self.models = [get_yolo_model(mp) for mp in paths]
             self._models_active_time = time.time()
 
+        orig_h, orig_w = f.shape[:2]
+        scale_x = self.width / float(orig_w) if orig_w > 0 else 1.0
+        scale_y = self.height / float(orig_h) if orig_h > 0 else 1.0
+
         for midx, model in enumerate(self.models):
             m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
             m_name = os.path.basename(m_path)
@@ -477,9 +481,9 @@ class DetectorWorker:
                     if isinstance(cc, dict) and "conf" in cc:
                         min_class_conf = min(min_class_conf, float(cc["conf"]))
 
-            # Direct Native Prediction on resized canvas (Blazing-fast <180ms on Pi CPU)
+            # Direct Native Prediction on raw frame (Full sensor clarity for distant/small objects)
             predict_kwargs = {
-                "source": frame_snapshot,
+                "source": f,
                 "conf": min_class_conf,
                 "iou": m_iou,
                 "imgsz": m_imgsz,
@@ -541,13 +545,13 @@ class DetectorWorker:
                         if conf_val < req_conf:
                             continue
 
-                        # Coordinate mapping directly on canvas
+                        # Coordinate mapping from native sensor resolution to display canvas
                         box_raw = b.xyxy[0].cpu().numpy().tolist()
                         rx1, ry1, rx2, ry2 = box_raw
-                        x1 = max(0, min(self.width - 1, rx1))
-                        y1 = max(0, min(self.height - 1, ry1))
-                        x2 = max(0, min(self.width - 1, rx2))
-                        y2 = max(0, min(self.height - 1, ry2))
+                        x1 = max(0, min(self.width - 1, int(rx1 * scale_x)))
+                        y1 = max(0, min(self.height - 1, int(ry1 * scale_y)))
+                        x2 = max(0, min(self.width - 1, int(rx2 * scale_x)))
+                        y2 = max(0, min(self.height - 1, int(ry2 * scale_y)))
                         box_xyxy = [x1, y1, x2, y2]
                         
                         bw = max(0, x2 - x1)
