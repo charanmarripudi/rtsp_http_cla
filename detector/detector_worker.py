@@ -515,7 +515,7 @@ class DetectorWorker:
             # Direct Native Prediction on full-res frame (Identical to f4d3e73)
             predict_kwargs = {
                 "source": f,
-                "conf": min_class_conf,
+                "conf": min(0.08, min_class_conf),
                 "iou": m_iou,
                 "imgsz": m_imgsz,
                 "verbose": False
@@ -684,28 +684,32 @@ class DetectorWorker:
             except:
                 pass
 
-        # Persistent Alert Processing: 3.0s continuous trigger + 30.0s repeat interval
+        # Persistent Alert Processing: 3.0s continuous trigger + Strict 30.0s repeat cooldown
+        if not hasattr(self, '_class_last_alert'):
+            self._class_last_alert = {}
+
         for c in cur_cls:
             is_neg, core_type, cleaned_cls = extract_negation_and_core(c)
             if cleaned_cls in ("person", "worker", "human", "man", "woman", "machinery", "vehicle"):
                 continue
 
+            last_alert_time = self._class_last_alert.get(c, 0.0)
+            if (now - last_alert_time) < 30.0:
+                continue
+
             if c not in self.alert_timers:
-                self.alert_timers[c] = {'start': now, 'last_seen': now, 'last_alert': 0.0}
+                self.alert_timers[c] = {'start': now, 'last_seen': now}
             else:
                 self.alert_timers[c]['last_seen'] = now
 
             duration = now - self.alert_timers[c]['start']
-            last_alert_time = self.alert_timers[c].get('last_alert', 0.0)
-
             if duration >= 3.0:
-                if last_alert_time == 0.0 or (now - last_alert_time) >= 30.0:
-                    self.alert_timers[c]['last_alert'] = now
-                    self.alert_triggered.add(c)
-                    print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, is_repeat={(last_alert_time > 0)}", flush=True)
-                    self._save_alert(c, snap_img)
+                self._class_last_alert[c] = now
+                self.alert_triggered.add(c)
+                print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s (30s cooldown active)", flush=True)
+                self._save_alert(c, snap_img)
 
-        # Cleanup expired alert classes (absent for > 3.0s)
+        # Cleanup expired alert timers (absent for > 3.0s)
         for c in list(self.alert_timers.keys()):
             if now - self.alert_timers[c]['last_seen'] > 3.0:
                 del self.alert_timers[c]
