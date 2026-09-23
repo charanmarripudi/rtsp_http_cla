@@ -337,7 +337,7 @@ class InferenceScheduler:
                 except Exception as e:
                     print(f"[SCHEDULER-ERR] Camera {worker.cam_id} inference error: {e}", flush=True)
 
-                time.sleep(0.005)
+                time.sleep(0.04)
 
 GLOBAL_INFERENCE_SCHEDULER = InferenceScheduler()
 
@@ -490,7 +490,7 @@ class DetectorWorker:
             m_conf = self.conf
             m_iou = self.iou
             enabled_classes = None
-            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "640"))
+            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "480"))
             m_imgsz = default_imgsz
             cfg = get_config_for_model(self.model_configs, m_name)
             if cfg and isinstance(cfg, dict):
@@ -602,7 +602,13 @@ class DetectorWorker:
                                 roi_y1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
                                 roi_x2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                                 roi_y2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
-                                if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2):
+                                in_roi = (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2)
+                                if not in_roi:
+                                    ix1, iy1 = max(x1, roi_x1), max(y1, roi_y1)
+                                    ix2, iy2 = min(x2, roi_x2), min(y2, roi_y2)
+                                    if ix2 > ix1 and iy2 > iy1:
+                                        in_roi = True
+                                if not in_roi:
                                     continue
                             except Exception:
                                 pass
