@@ -151,12 +151,20 @@ def match_class(box_cls, enabled_cls):
 INFERENCE_LOCK = threading.Lock()
 
 def get_yolo_model(model_path):
-    if model_path not in YOLO_CACHE:
+    resolved_path = str(model_path)
+    if not os.path.isabs(resolved_path) and not os.path.exists(resolved_path):
+        m_dir = os.path.join(str(BASE_DIR), "models")
+        if os.path.exists(os.path.join(m_dir, resolved_path)):
+            resolved_path = os.path.join(m_dir, resolved_path)
+        elif os.path.exists(os.path.join(m_dir, os.path.basename(resolved_path))):
+            resolved_path = os.path.join(m_dir, os.path.basename(resolved_path))
+
+    if resolved_path not in YOLO_CACHE:
         with INFERENCE_LOCK:
-            if model_path not in YOLO_CACHE:
-                print(f"[CACHE] Loading model weights into memory: {model_path}", flush=True)
-                YOLO_CACHE[model_path] = YOLO(model_path)
-    return YOLO_CACHE[model_path]
+            if resolved_path not in YOLO_CACHE:
+                print(f"[CACHE] Loading model weights into memory: {resolved_path}", flush=True)
+                YOLO_CACHE[resolved_path] = YOLO(resolved_path)
+    return YOLO_CACHE[resolved_path]
 
 def get_alerts_base_url():
     try:
