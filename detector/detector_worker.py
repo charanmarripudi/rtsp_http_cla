@@ -733,6 +733,31 @@ class DetectorWorker:
             else:
                 image_path = f"/hls/alerts/{filename}"
 
+            # Also append to alerts.json so the UI sidebar displays it immediately
+            alerts_json_file = os.path.join(adir, "alerts.json")
+            alert_entry = {
+                "id": int(time.time() * 1000),
+                "camera_id": str(self.cam_id),
+                "location": str(self.location),
+                "type_of_alert": f"{class_name} Detected",
+                "image": image_path,
+                "created_at": now_dt.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            try:
+                data = []
+                if os.path.exists(alerts_json_file):
+                    with open(alerts_json_file, "r") as jf:
+                        try: data = json.load(jf)
+                        except: data = []
+                if not isinstance(data, list): data = []
+                data.insert(0, alert_entry)
+                data = data[:100]  # Keep latest 100 alerts
+                with open(alerts_json_file, "w") as jf:
+                    json.dump(data, jf, indent=2)
+                print(f"[ALERT-JSON] Appended alert to alerts.json: {class_name}", flush=True)
+            except Exception as jerr:
+                print(f"[ALERT-JSON-ERR] Failed updating alerts.json: {jerr}", flush=True)
+
             conn = self._get_db_conn()
             if conn:
                 try:
