@@ -23,3 +23,24 @@ def insert_alert_db(cursor, camera_id, location, type_of_alert, image_path, crea
         "INSERT INTO alerts (camera_id, location, type_of_alert, image_path, created_at) VALUES (%s, %s, %s, %s, %s)",
         (camera_id, location, type_of_alert, image_path, created_at or datetime.now())
     )
+
+
+def insert_alert_via_psql(camera_id, location, type_of_alert, image_path, created_at=None, dsn=DB_DSN):
+    import subprocess
+    try:
+        ts_str = (created_at or datetime.now()).strftime("%Y-%m-%d %H:%M:%S.%f")
+        safe_cam = str(camera_id).replace("'", "''")
+        safe_loc = str(location).replace("'", "''")
+        safe_type = str(type_of_alert).replace("'", "''")
+        safe_img = str(image_path).replace("'", "''")
+        sql = f"INSERT INTO alerts (camera_id, location, type_of_alert, image_path, created_at) VALUES ('{safe_cam}', '{safe_loc}', '{safe_type}', '{safe_img}', '{ts_str}');"
+        res = subprocess.run(["psql", dsn, "-c", sql], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+        if res.returncode == 0:
+            return True
+        else:
+            print(f"[ALERT-PSQL-ERR] psql exited {res.returncode}: {res.stderr.strip()}", flush=True)
+            return False
+    except Exception as e:
+        print(f"[ALERT-PSQL-EXC] psql fallback error: {e}", flush=True)
+        return False
+
