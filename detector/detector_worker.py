@@ -632,88 +632,19 @@ class DetectorWorker:
                 if not suppress:
                     kept_items.append(item)
 
-        # Smooth Motion Tracker with Velocity Estimation
-        prev_boxes = getattr(self, '_prev_inference_boxes', [])
-        now_cycle = time.time()
-        new_prev_boxes = []
+        # Direct Frame Box Rendering (Identical to f4d3e73)
+        # Eliminates class jumping, floating boxes, and drifting completely
         render_boxes = []
-
         for b_xyxy, color_val, conf_val, cls_name in kept_items:
-            x1, y1, x2, y2 = b_xyxy
-            cx = (x1 + x2) / 2.0
-            cy = (y1 + y2) / 2.0
-            
-            best_prev = None
-            min_dist = 65.0
-            for pb in prev_boxes:
-                if match_class(pb.get('cls'), cls_name):
-                    dist = math.hypot(cx - pb['cx'], cy - pb['cy'])
-                    if dist < min_dist:
-                        min_dist = dist
-                        best_prev = pb
-            
-            vx, vy = 0.0, 0.0
-            if best_prev is not None:
-                dt = max(0.01, now_cycle - best_prev['t'])
-                raw_vx = (cx - best_prev['cx']) / dt
-                raw_vy = (cy - best_prev['cy']) / dt
-                raw_vx = max(-300.0, min(300.0, raw_vx))
-                raw_vy = max(-300.0, min(300.0, raw_vy))
-                vx = 0.5 * raw_vx + 0.5 * best_prev.get('vx', 0.0)
-                vy = 0.5 * raw_vy + 0.5 * best_prev.get('vy', 0.0)
-                
-            new_prev_boxes.append({
-                'cls': cls_name,
-                'cx': cx,
-                'cy': cy,
-                'box': b_xyxy,
-                'color': color_val,
-                'label': f"{cls_name} {conf_val:.2f}",
-                'conf': conf_val,
-                't': now_cycle,
-                'vx': vx,
-                'vy': vy
-            })
-            
             render_boxes.append({
                 'box': b_xyxy,
                 'label': f"{cls_name} {conf_val:.2f}",
                 'color': color_val,
                 'cls': cls_name,
                 'conf': conf_val,
-                't': now_cycle,
-                'vx': vx,
-                'vy': vy
             })
             cur_cls.add(cls_name)
 
-        # Track persistence: if an object had a single-frame detection drop, keep displaying it smoothly
-        if prev_boxes:
-            for pb in prev_boxes:
-                if not any(match_class(pb.get('cls'), nb.get('cls')) for nb in new_prev_boxes):
-                    if (now_cycle - pb.get('t', now_cycle)) <= 1.5:
-                        dt = now_cycle - pb.get('t', now_cycle)
-                        dx = int(pb.get('vx', 0.0) * dt)
-                        dy = int(pb.get('vy', 0.0) * dt)
-                        x1 = max(0, min(self.width - 1, pb['box'][0] + dx))
-                        y1 = max(0, min(self.height - 1, pb['box'][1] + dy))
-                        x2 = max(0, min(self.width - 1, pb['box'][2] + dx))
-                        y2 = max(0, min(self.height - 1, pb['box'][3] + dy))
-                        persisted_box = [x1, y1, x2, y2]
-                        render_boxes.append({
-                            'box': persisted_box,
-                            'label': pb.get('label', pb['cls']),
-                            'color': pb.get('color', (0, 255, 255)),
-                            'cls': pb['cls'],
-                            'conf': pb.get('conf', 0.2),
-                            't': pb['t'],
-                            'vx': pb.get('vx', 0.0),
-                            'vy': pb.get('vy', 0.0)
-                        })
-                        new_prev_boxes.append(pb)
-                        cur_cls.add(pb['cls'])
-            
-        self._prev_inference_boxes = new_prev_boxes
         display_boxes = render_boxes
 
         with self._box_lock:
@@ -976,19 +907,13 @@ class DetectorWorker:
                         with self._box_lock:
                             display_boxes = list(self._tracked_boxes)
 
-                        now_t = time.time()
                         for t_box in display_boxes:
                             try:
                                 x1, y1, x2, y2 = [int(v) for v in t_box['box']]
-                                vx = t_box.get('vx', 0.0)
-                                vy = t_box.get('vy', 0.0)
-                                dt_draw = max(0.0, min(1.2, now_t - t_box.get('t', now_t)))
-                                dx = int(vx * dt_draw)
-                                dy = int(vy * dt_draw)
-                                x1 = max(0, min(f_w - 1, x1 + dx))
-                                y1 = max(0, min(f_h - 1, y1 + dy))
-                                x2 = max(0, min(f_w - 1, x2 + dx))
-                                y2 = max(0, min(f_h - 1, y2 + dy))
+                                x1 = max(0, min(f_w - 1, x1))
+                                y1 = max(0, min(f_h - 1, y1))
+                                x2 = max(0, min(f_w - 1, x2))
+                                y2 = max(0, min(f_h - 1, y2))
 
                                 cv2.rectangle(pf, (x1, y1), (x2, y2), t_box['color'], 2)
                                 t_size = cv2.getTextSize(t_box['label'], cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
