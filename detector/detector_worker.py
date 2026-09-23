@@ -273,8 +273,8 @@ class InferenceScheduler:
                 except Exception as e:
                     print(f"[SCHEDULER-ERR] Camera {worker.cam_id} inference error: {e}", flush=True)
 
-                # Ultra-fast pacing pause (5ms) between camera turns
-                time.sleep(0.005)
+                # Fair round-robin pacing sleep (15ms) between cameras to keep Pi CPU cool (72-74°C)
+                time.sleep(0.015)
 
 GLOBAL_INFERENCE_SCHEDULER = InferenceScheduler()
 
@@ -518,8 +518,17 @@ class DetectorWorker:
                         cls = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
                         conf_val = float(b.conf[0].item())
 
+                        matched_label = cls
                         if filter_classes:
-                            if not any(match_class(cls, e) for e in filter_classes):
+                            matched = False
+                            for e in filter_classes:
+                                if match_class(cls, e):
+                                    matched = True
+                                    e_str = str(e).strip()
+                                    if " - " in e_str: e_str = e_str.split(" - ")[-1]
+                                    matched_label = e_str
+                                    break
+                            if not matched:
                                 continue
 
                         # Per-class confidence filter
@@ -561,8 +570,8 @@ class DetectorWorker:
                             except Exception:
                                 pass
 
-                        color_val = get_dynamic_class_color(cls)
-                        raw_boxes.append((box_xyxy, color_val, conf_val, cls))
+                        color_val = get_dynamic_class_color(matched_label)
+                        raw_boxes.append((box_xyxy, color_val, conf_val, matched_label))
 
         # Multi-Model NMS
         kept_items = []
@@ -693,26 +702,28 @@ class DetectorWorker:
             except:
                 pass
 
-        # Persistent Alert Processing: 3.0s continuous trigger + 30.0s repeat interval
+        # Persistent Alert Processing: 1.2s continuous / 2-cycle trigger + 30.0s repeat interval
         for c in cur_cls:
             if c not in self.alert_timers:
-                self.alert_timers[c] = {'start': now, 'last_seen': now, 'last_alert': 0.0}
+                self.alert_timers[c] = {'start': now, 'last_seen': now, 'count': 1, 'last_alert': 0.0}
             else:
                 self.alert_timers[c]['last_seen'] = now
+                self.alert_timers[c]['count'] = self.alert_timers[c].get('count', 0) + 1
 
             duration = now - self.alert_timers[c]['start']
+            count = self.alert_timers[c].get('count', 1)
             last_alert_time = self.alert_timers[c].get('last_alert', 0.0)
 
-            if duration >= 3.0:
+            if (duration >= 1.2 or count >= 2):
                 if last_alert_time == 0.0 or (now - last_alert_time) >= 30.0:
                     self.alert_timers[c]['last_alert'] = now
                     self.alert_triggered.add(c)
-                    print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, is_repeat={(last_alert_time > 0)}", flush=True)
+                    print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, count={count}, is_repeat={(last_alert_time > 0)}", flush=True)
                     self._save_alert(c, snap_img)
 
-        # Cleanup expired alert classes (absent for > 2.0s)
+        # Cleanup expired alert classes (absent for > 8.0s)
         for c in list(self.alert_timers.keys()):
-            if now - self.alert_timers[c]['last_seen'] > 2.0:
+            if now - self.alert_timers[c]['last_seen'] > 8.0:
                 del self.alert_timers[c]
                 if c in self.alert_triggered:
                     self.alert_triggered.remove(c)
@@ -813,9 +824,8 @@ class DetectorWorker:
         infer_t, infer_stop_evt = None, None
 
         def cleanup_subthreads():
-            nonlocal cap, cap_t, cap_stop_evt, infer_t, infer_stop_evt, ffmpeg
-            if infer_stop_evt: infer_stop_evt.set()
-            if infer_t and infer_t.is_alive(): infer_t.join(timeout=1.0)
+            nonlocal cap, cap_t, cap_stop_evt, ffmpeg
+            GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)
             if cap_stop_evt: cap_stop_evt.set()
             if cap_t and cap_t.is_alive(): cap_t.join(timeout=1.0)
             if cap:
@@ -884,9 +894,8 @@ class DetectorWorker:
                     
                     print(f"[WORKER-TIMER] Camera {self.cam_id} first raw frame received in {int((time.time() - t_frame_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
                     
-                    infer_stop_evt = threading.Event()
-                    infer_t = threading.Thread(target=self._infer_loop, args=(infer_stop_evt,), daemon=True, name=f"InferWorker-{self.cam_id}")
-                    infer_t.start()
+                    # Register into fair Centralized Multi-Camera Inference Scheduler
+                    GLOBAL_INFERENCE_SCHEDULER.register_worker(self)
                     
                     f_int = 1.0 / self.fps
                     next_frame_time = time.time()
