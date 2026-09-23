@@ -805,18 +805,24 @@ class DetectorWorker:
         return frame
 
     def _capture_thread(self, cap, cap_stop_evt):
+        consecutive_fails = 0
         while not self._stop_event.is_set() and not cap_stop_evt.is_set():
             try:
                 ret, f = cap.read()
                 if not ret or f is None:
-                    time.sleep(0.01)
+                    consecutive_fails += 1
+                    time.sleep(0.02)
+                    if consecutive_fails > 150:
+                        print(f"[WARN] Camera {self.cam_id} RTSP stream disconnected, requesting reconnect...", flush=True)
+                        break
                     continue
+                consecutive_fails = 0
                 with self._frame_lock:
                     self._latest_raw_frame = f
                     self._last_frame_time = time.time()
                     self._cap_ok = True
             except Exception:
-                time.sleep(0.01)
+                time.sleep(0.02)
 
     def run(self):
         ffmpeg, cap = None, None
@@ -875,11 +881,6 @@ class DetectorWorker:
                     cap_t = threading.Thread(target=self._capture_thread, args=(cap, cap_stop_evt), daemon=True)
                     cap_t.start()
 
-                    # Wait for initial frame
-                    t_w = time.time()
-                    while self._latest_raw_frame is None and (time.time() - t_w < 5.0) and not self._stop_event.is_set():
-                        time.sleep(0.05)
-
                     f_int = 1.0 / self.fps
                     next_frame_time = time.time()
 
@@ -892,7 +893,7 @@ class DetectorWorker:
                         if now - next_frame_time > 0.3:
                             next_frame_time = now + f_int
 
-                        if time.time() - getattr(self, '_last_frame_time', now) > 15.0:
+                        if time.time() - getattr(self, '_last_frame_time', now) > 15.0 and self._latest_raw_frame is not None:
                             print(f"[WARN] Camera {self.cam_id} frame timeout (>15s), reconnecting...", flush=True)
                             break
 
@@ -900,10 +901,9 @@ class DetectorWorker:
                             raw_frame = self._latest_raw_frame
 
                         if raw_frame is None:
-                            continue
-
-                        # Output canvas
-                        pf = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                            pf = self._get_connecting_frame()
+                        else:
+                            pf = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
                         f_h, f_w = pf.shape[:2]
 
                         # Draw ROI boundary if configured
