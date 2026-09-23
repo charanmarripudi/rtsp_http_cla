@@ -1,10 +1,10 @@
 import os
-os.environ["OMP_NUM_THREADS"] = "4"
-os.environ["MKL_NUM_THREADS"] = "4"
-os.environ["OPENBLAS_NUM_THREADS"] = "4"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
-os.environ["NUMEXPR_NUM_THREADS"] = "4"
-os.environ["TORCH_NUM_THREADS"] = "4"
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
+os.environ["NUMEXPR_NUM_THREADS"] = "2"
+os.environ["TORCH_NUM_THREADS"] = "2"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "2"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
 
@@ -38,10 +38,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Optimize PyTorch CPU threading to 4 cores for Raspberry Pi 4
+# Optimize PyTorch CPU threading to 2 cores for Raspberry Pi 4 (leaves 2 cores for RTSP decode & FFmpeg)
 try:
     import torch
-    torch.set_num_threads(4)
+    torch.set_num_threads(2)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
 except Exception:
@@ -490,7 +490,7 @@ class DetectorWorker:
             m_conf = self.conf
             m_iou = self.iou
             enabled_classes = None
-            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "640"))
+            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "480"))
             m_imgsz = default_imgsz
             cfg = get_config_for_model(self.model_configs, m_name)
             if cfg and isinstance(cfg, dict):
@@ -512,10 +512,10 @@ class DetectorWorker:
                     if isinstance(cc, dict) and "conf" in cc:
                         min_class_conf = min(min_class_conf, float(cc["conf"]))
 
-            # Direct Native Prediction on full-res frame (Identical to f4d3e73)
+            # Direct Native Prediction on full-res frame (Balanced latency & sharp details)
             predict_kwargs = {
                 "source": f,
-                "conf": min(0.08, min_class_conf),
+                "conf": min(0.06, min_class_conf),
                 "iou": m_iou,
                 "imgsz": m_imgsz,
                 "verbose": False
