@@ -490,7 +490,7 @@ class DetectorWorker:
             m_conf = self.conf
             m_iou = self.iou
             enabled_classes = None
-            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "480"))
+            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz = default_imgsz
             cfg = get_config_for_model(self.model_configs, m_name)
             if cfg and isinstance(cfg, dict):
@@ -512,7 +512,16 @@ class DetectorWorker:
                     if isinstance(cc, dict) and "conf" in cc:
                         min_class_conf = min(min_class_conf, float(cc["conf"]))
 
-            # Direct Native Prediction on full-res frame (Balanced latency & sharp details)
+            target_classes = None
+            if filter_classes and hasattr(model, 'names') and isinstance(model.names, dict):
+                matched_ids = []
+                for class_id, class_name in model.names.items():
+                    if any(match_class(class_name, e) for e in filter_classes):
+                        matched_ids.append(int(class_id))
+                if matched_ids:
+                    target_classes = matched_ids
+
+            # Direct Native Prediction matching test_detetection.py exactly
             predict_kwargs = {
                 "source": f,
                 "conf": min(0.06, min_class_conf),
@@ -520,6 +529,8 @@ class DetectorWorker:
                 "imgsz": m_imgsz,
                 "verbose": False
             }
+            if target_classes is not None:
+                predict_kwargs["classes"] = target_classes
 
             try:
                 t_infer_start = time.time()
