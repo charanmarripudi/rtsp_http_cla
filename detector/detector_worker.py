@@ -658,6 +658,10 @@ class DetectorWorker:
                 'cls': cls_name,
                 'cx': cx,
                 'cy': cy,
+                'box': b_xyxy,
+                'color': color_val,
+                'label': f"{cls_name} {conf_val:.2f}",
+                'conf': conf_val,
                 't': now_cycle,
                 'vx': vx,
                 'vy': vy
@@ -674,6 +678,32 @@ class DetectorWorker:
                 'vy': vy
             })
             cur_cls.add(cls_name)
+
+        # Track persistence: if an object had a single-frame detection drop, keep displaying it smoothly
+        if prev_boxes:
+            for pb in prev_boxes:
+                if not any(match_class(pb.get('cls'), nb.get('cls')) for nb in new_prev_boxes):
+                    if (now_cycle - pb.get('t', now_cycle)) <= 1.5:
+                        dt = now_cycle - pb.get('t', now_cycle)
+                        dx = int(pb.get('vx', 0.0) * dt)
+                        dy = int(pb.get('vy', 0.0) * dt)
+                        x1 = max(0, min(self.width - 1, pb['box'][0] + dx))
+                        y1 = max(0, min(self.height - 1, pb['box'][1] + dy))
+                        x2 = max(0, min(self.width - 1, pb['box'][2] + dx))
+                        y2 = max(0, min(self.height - 1, pb['box'][3] + dy))
+                        persisted_box = [x1, y1, x2, y2]
+                        render_boxes.append({
+                            'box': persisted_box,
+                            'label': pb.get('label', pb['cls']),
+                            'color': pb.get('color', (0, 255, 255)),
+                            'cls': pb['cls'],
+                            'conf': pb.get('conf', 0.2),
+                            't': pb['t'],
+                            'vx': pb.get('vx', 0.0),
+                            'vy': pb.get('vy', 0.0)
+                        })
+                        new_prev_boxes.append(pb)
+                        cur_cls.add(pb['cls'])
             
         self._prev_inference_boxes = new_prev_boxes
         display_boxes = render_boxes
