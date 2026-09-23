@@ -1,0 +1,16 @@
+{
+  "algo": {
+    "device_id": "algo",
+    "device_ip": "192.168.96.72",
+    "location_id": "loc-1779880759",
+    "last_communicated_time": "2026-06-03T04:42:21.269174Z",
+    "device_status": "online"
+  },
+  "RPI-001": {
+    "device_id": "RPI-001",
+    "device_ip": "192.168.96.72",
+    "location_id": "loc-1780038850556",
+    "last_communicated_time": "2026-06-03T04:40:07.515518Z",
+    "device_status": "online"
+  }
+}

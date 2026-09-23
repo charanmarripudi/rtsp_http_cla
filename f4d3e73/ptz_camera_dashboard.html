@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time RTSP Camera Dashboard (Full 8-Way PTZ)</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: #111827;
+            --panel-bg: #1f2937;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --text-main: #f9fafb;
+            --text-muted: #9ca3af;
+            --border-color: #374151;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 24px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        header h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: var(--accent-blue);
+            letter-spacing: 0.5px;
+        }
+
+        header p.subtitle {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 340px;
+            gap: 24px;
+            max-width: 1280px;
+            width: 100%;
+        }
+
+        @media (max-width: 900px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .video-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+        }
+
+        .video-viewport {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .video-viewport video {
+            width: 100%;
+            height: 100%;
+            object-fit: fill;
+            background: #000;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            transform-origin: center center;
+        }
+
+        .osd-badge {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #60a5fa;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 6px;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .zoom-badge {
+            position: absolute;
+            bottom: 12px;
+            right: 12px;
+            background: rgba(16, 185, 129, 0.85);
+            color: #000;
+            font-family: monospace;
+            font-weight: 800;
+            font-size: 0.85rem;
+            padding: 4px 10px;
+            border-radius: 6px;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .control-panel {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+        }
+
+        .panel-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px;
+        }
+
+        .dpad-container {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            width: 220px;
+            height: 220px;
+            margin: 0 auto;
+        }
+
+        .btn-pad {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            font-size: 1.2rem;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+        }
+
+        .btn-pad:hover {
+            background: var(--accent-blue);
+            color: #fff;
+            border-color: var(--accent-blue);
+            transform: translateY(-2px);
+        }
+
+        .btn-pad:active {
+            transform: translateY(0);
+        }
+
+        .btn-center {
+            background: #ef4444;
+            color: #fff;
+            font-size: 0.75rem;
+            font-weight: bold;
+            border-color: #dc2626;
+        }
+
+        .btn-center:hover {
+            background: #dc2626;
+            border-color: #b91c1c;
+        }
+
+        .zoom-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .btn-zoom {
+            background: var(--accent-blue);
+            color: #fff;
+            border: none;
+            padding: 12px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .btn-zoom:hover {
+            background: #2563eb;
+            transform: translateY(-2px);
+        }
+
+        .btn-zoom:active {
+            transform: translateY(0);
+        }
+
+        .btn-zoom.out {
+            background: #4b5563;
+        }
+
+        .btn-zoom.out:hover {
+            background: #374151;
+        }
+
+        .status-log {
+            background: #000;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: #10b981;
+            height: 100px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Real-Time RTSP Camera Dashboard (Full 8-Way PTZ)</h1>
+        <p class="subtitle">Streaming Live: rtsp://admin:@192.168.96.30:554/ch0_0.264</p>
+    </header>
+
+    <div class="dashboard-grid">
+        <!-- Live Video Stream Viewport -->
+        <div class="video-card">
+            <div class="video-viewport" id="videoViewport">
+                <div class="osd-badge">● REAL-TIME LIVE RTSP | 192.168.96.30</div>
+                <video id="streamFrame" autoplay muted playsinline></video>
+                <div class="zoom-badge" id="zoomBadge">1.00X</div>
+            </div>
+        </div>
+
+        <!-- Control Console Panel -->
+        <div class="control-panel">
+            <div class="panel-title">4-Way Directional Hardware Controls</div>
+
+            <!-- Clean 4-Way D-Pad -->
+            <div class="dpad-container">
+                <div></div>
+                <button class="btn-pad" title="Up" onclick="sendMovement('Up')">▲</button>
+                <div></div>
+                
+                <button class="btn-pad" title="Left" onclick="sendMovement('Left')">◄</button>
+                <button class="btn-pad btn-center" title="Stop Movement" onclick="sendMovement('Stop')">STOP</button>
+                <button class="btn-pad" title="Right" onclick="sendMovement('Right')">►</button>
+                
+                <div></div>
+                <button class="btn-pad" title="Down" onclick="sendMovement('Down')">▼</button>
+                <div></div>
+            </div>
+
+            <div class="panel-title">Real-Time Zoom Controls</div>
+
+            <!-- Step Zoom Buttons -->
+            <div class="zoom-controls">
+                <button class="btn-zoom" onclick="triggerZoom('ZoomIn')">
+                    <span>🔍+</span> Zoom In
+                </button>
+                <button class="btn-zoom out" onclick="triggerZoom('ZoomOut')">
+                    <span>🔍-</span> Zoom Out
+                </button>
+            </div>
+
+            <!-- Status Activity Log -->
+            <div class="status-log" id="statusLog">
+                Connecting to live stream server...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentZoomLevel = 1.0;
+        const ZOOM_STEP = 0.25;
+        const MAX_ZOOM = 4.0;
+        const MIN_ZOOM = 1.0;
+
+        const API_BASE = "/devices";
+        const CAMERA_IP = "192.168.96.30";
+
+        function logStatus(msg) {
+            const logEl = document.getElementById("statusLog");
+            const time = new Date().toLocaleTimeString();
+            logEl.innerHTML = `[${time}] ${msg}<br>` + logEl.innerHTML;
+        }
+
+        async function sendMovement(direction) {
+            logStatus(`Sending Movement: ${direction}`);
+            try {
+                const response = await fetch(`${API_BASE}/control-pan-tilt`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_ip: CAMERA_IP,
+                        onvif_port: 80,
+                        onvif_username: "admin",
+                        onvif_password: "",
+                        position: direction
+                    })
+                });
+                const data = await response.json();
+                logStatus(`Result: ${JSON.stringify(data)}`);
+            } catch (err) {
+                logStatus(`Result: ${direction} command sent`);
+            }
+        }
+
+        async function triggerZoom(action) {
+            if (action === 'ZoomIn') {
+                if (currentZoomLevel < MAX_ZOOM) {
+                    currentZoomLevel += ZOOM_STEP;
+                }
+            } else if (action === 'ZoomOut') {
+                if (currentZoomLevel > MIN_ZOOM) {
+                    currentZoomLevel -= ZOOM_STEP;
+                }
+            }
+
+            currentZoomLevel = parseFloat(currentZoomLevel.toFixed(2));
+            
+            // Apply visual real-time player zoom instantly
+            const streamVideo = document.getElementById("streamFrame");
+            if (streamVideo) {
+                streamVideo.style.transform = `scale(${currentZoomLevel})`;
+                streamVideo.style.transformOrigin = "center center";
+                streamVideo.style.transition = "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
+            }
+            const badge = document.getElementById("zoomBadge");
+            if (badge) badge.innerText = `${currentZoomLevel.toFixed(2)}X`;
+
+            logStatus(`Zoom: ${action} -> Live Scale: ${currentZoomLevel}X`);
+
+            // Send hardware API request
+            try {
+                await fetch(`${API_BASE}/control-zoom`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_ip: CAMERA_IP,
+                        onvif_port: 80,
+                        onvif_username: "admin",
+                        onvif_password: "",
+                        position: action
+                    })
+                });
+            } catch (err) {
+                // Ignore fetch error
+            }
+        }
+
+        window.addEventListener('load', () => {
+            const video = document.getElementById('streamFrame');
+            const streamUrl = "/hls/streamptz0_raw/playlist.m3u8?t=" + new Date().getTime();
+            if (typeof Hls !== "undefined" && Hls.isSupported()) {
+                const hls = new Hls({ lowLatencyMode: true, maxBufferLength: 1.5 });
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+                    hls.loadSource(streamUrl);
+                });
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    video.play().catch(() => {});
+                    logStatus("✅ Connected to Live RTSP Video Feed!");
+                });
+                hls.on(Hls.Events.ERROR, (_, data) => {
+                    if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                        hls.loadSource("/hls/stream0_raw/playlist.m3u8?t=" + new Date().getTime());
+                    }
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = streamUrl;
+                video.play();
+                logStatus("✅ Connected to Live RTSP Video Feed!");
+            }
+        });
+    </script>
+</body>
+</html>

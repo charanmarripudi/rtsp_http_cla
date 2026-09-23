@@ -1,0 +1,15 @@
+
+[Unit]
+Description=Raspberry Pi Heartbeat Agent
+After=network.target
+
+[Service]
+Type=simple
+User=algofusion  # Replace with your actual RPI user
+WorkingDirectory=/path/to/your/rtsp_http_cla  # Replace with the actual path
+ExecStart=/usr/bin/python3 /path/to/your/rtsp_http_cla/agents/rpi_heartbeat_agent.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

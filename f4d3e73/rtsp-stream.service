@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────
+#  systemd service — RTSP → HLS + HTTP server
+#  Install:
+#    sudo cp rtsp-stream.service /etc/systemd/system/
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable rtsp-stream
+#    sudo systemctl start rtsp-stream
+#
+#  Status:  sudo systemctl status rtsp-stream
+#  Logs:    journalctl -u rtsp-stream -f
+#  Stop:    sudo systemctl stop rtsp-stream
+# ─────────────────────────────────────────────────────────────
+
+[Unit]
+Description=RTSP to HLS Live Stream
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# ── Change this to your actual username and project path ──
+User=algofusion
+WorkingDirectory=/home/algofusion/rtsp_http
+ExecStartPre=/bin/bash -c 'mkdir -p hls && rm -f hls/*.ts hls/*.m3u8'
+ExecStart=/bin/bash /home/algofusion/rtsp_http/start_stream.sh
+
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Nice to prevent zombie processes
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,149 @@
+[
+  {
+    "id": "loc-1780036311336",
+    "location": "Location 17",
+    "device_id": "",
+    "device_ip": "192.168.96.21",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1780038850556",
+    "location": "Location 20",
+    "device_id": "",
+    "device_ip": "192.168.96.26",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1780038127",
+    "location": "leh depot",
+    "device_id": "7675",
+    "device_ip": "192.168.216",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779965106740",
+    "location": "Location 14",
+    "device_id": "",
+    "device_ip": "",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779875689",
+    "location": "Akola Depot",
+    "device_id": "1234",
+    "device_ip": "192.168.96.12",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779875721",
+    "location": "mathura",
+    "device_id": "3241",
+    "device_ip": "123.456.789.345",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779875782",
+    "location": "MEERUT DEPOT",
+    "device_id": "1987",
+    "device_ip": "234.345.765",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779875872",
+    "location": "Irupanam Terminal",
+    "device_id": "4563",
+    "device_ip": "234.345.765.6785",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779942904",
+    "location": "Delhi Terminal",
+    "device_id": "algo",
+    "device_ip": "192.168.96.39",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779875965",
+    "location": "HAZIRA",
+    "device_id": "1128",
+    "device_ip": "123.456.789.345",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779875984",
+    "location": "HPCL RIWARI",
+    "device_id": "7834",
+    "device_ip": "192.168.96.28",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779876093",
+    "location": "Srinagar Depot",
+    "device_id": "6745",
+    "device_ip": "123.098.76",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779878578",
+    "location": "Jablapur depot",
+    "device_id": "6732",
+    "device_ip": "192.168.96.10",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779880759",
+    "location": "akola depot",
+    "device_id": "algo",
+    "device_ip": "192.168.96.78",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779965250173",
+    "location": "Location 15",
+    "device_id": "alg7",
+    "device_ip": "192.168.96.78",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779885037",
+    "location": "location 11",
+    "device_id": "alg8",
+    "device_ip": "192.168.96.11",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1779975956008",
+    "location": "Location 16",
+    "device_id": "algo",
+    "device_ip": "192.168.96.78",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1780037922",
+    "location": "Balsore Depot",
+    "device_id": "5123",
+    "device_ip": "192.168.96.78",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1780038097",
+    "location": "banglore terminal",
+    "device_id": "7823",
+    "device_ip": "192.168.96.78",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1780052846419",
+    "location": "kavali",
+    "device_id": "",
+    "device_ip": "192.168.96.78",
+    "device_status": "offline"
+  },
+  {
+    "id": "loc-1780297751792",
+    "location": "nellore",
+    "device_id": "",
+    "device_ip": "192.168.96.78",
+    "device_status": "offline"
+  }
+]

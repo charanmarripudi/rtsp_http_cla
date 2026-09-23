@@ -1,0 +1,3437 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RTSP Camera Dashboard</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@600;800&display=swap"
+    rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #0a0c0e;
+      --surface: #111417;
+      --border: #1e2228;
+      --accent: #00e5a0;
+      --accent-dim: rgba(0, 229, 160, .12);
+      --danger: #ff4155;
+      --text: #e8eaed;
+      --muted: #5c6370;
+      --radius: 12px;
+      --mono: 'JetBrains Mono', monospace;
+      --display: 'Syne', sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 28px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    header h1 {
+      font-family: var(--display);
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: .04em;
+      color: var(--accent);
+      text-transform: uppercase;
+    }
+
+    #system-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .72rem;
+      color: var(--muted);
+    }
+
+    #status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: background .4s;
+    }
+
+    #status-dot.ok {
+      background: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+    }
+
+    #status-dot.err {
+      background: var(--danger);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 18px;
+      padding: 22px;
+    }
+
+    .box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      transition: border-color .25s;
+    }
+
+    .box:hover {
+      border-color: #2a3040;
+    }
+
+    .box.maximized-card {
+      position: fixed !important;
+      inset: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      max-width: 100vw !important;
+      z-index: 99999 !important;
+      background: var(--bg) !important;
+      display: flex !important;
+      flex-direction: column !important;
+      padding: 24px !important;
+      box-sizing: border-box !important;
+      margin: 0 !important;
+    }
+    .box.maximized-card .video-wrap {
+      flex: 1 !important;
+      height: auto !important;
+      max-height: calc(100vh - 120px) !important;
+    }
+
+    .mode-badge {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      font-size: .63rem;
+      font-weight: 600;
+      letter-spacing: .08em;
+      padding: 3px 10px;
+      border-radius: 4px;
+      pointer-events: none;
+      max-width: calc(100% - 20px);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mode-badge.raw {
+      background: rgba(255, 255, 255, .08);
+      color: var(--muted);
+    }
+
+    .mode-badge.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .6
+      }
+    }
+
+    .video-wrap {
+      position: relative;
+      background: #000;
+      aspect-ratio: 16/9;
+      overflow: hidden;
+    }
+
+    .fullscreen-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.6);
+      color: var(--accent, #00f0ff);
+      border: 1px solid rgba(0, 240, 255, 0.4);
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .fullscreen-btn:hover {
+      background: rgba(0, 240, 255, 0.25);
+      border-color: var(--accent, #00f0ff);
+      transform: scale(1.1);
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: fill;
+      display: block;
+    }
+
+    .cam-label {
+      position: absolute;
+      bottom: 8px;
+      right: 10px;
+      font-size: .65rem;
+      color: rgba(255, 255, 255, .4);
+      z-index: 5;
+    }
+
+    .controls {
+      padding: 14px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* Multi-select */
+    select.model {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .78rem;
+      padding: 4px 6px;
+      border-radius: 7px;
+      cursor: pointer;
+      outline: none;
+      transition: border-color .2s;
+      min-height: 64px;
+    }
+
+    select.model:focus {
+      border-color: var(--accent);
+    }
+
+    select.model option {
+      padding: 4px 6px;
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    select.model option:checked {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .select-hint {
+      font-size: .63rem;
+      color: var(--muted);
+      text-align: right;
+      margin-top: -6px;
+    }
+
+    /* Threshold sliders */
+    .thresholds {
+      background: rgba(255, 255, 255, .03);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .thresh-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .thresh-row label {
+      font-size: .7rem;
+      color: var(--muted);
+      min-width: 74px;
+      display: flex;
+      justify-content: space-between;
+      gap: 4px;
+    }
+
+    .thresh-row label span {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    input[type="range"] {
+      flex: 1;
+      height: 3px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      background: var(--border);
+      border-radius: 2px;
+      outline: none;
+    }
+
+    .btn-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    button {
+      font-family: var(--mono);
+      font-size: .78rem;
+      font-weight: 600;
+      letter-spacing: .06em;
+      padding: 9px 0;
+      border: none;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: opacity .2s, transform .12s;
+    }
+
+    button:active {
+      transform: scale(.97);
+    }
+
+    button:disabled {
+      opacity: .4;
+      cursor: not-allowed;
+    }
+
+    .start {
+      background: var(--accent);
+      color: #000;
+    }
+
+    .stop {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--danger);
+    }
+
+    .stop:hover:not(:disabled) {
+      background: rgba(255, 65, 85, .1);
+    }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+      z-index: 999;
+      font-size: .85rem;
+      color: var(--muted);
+      transition: opacity .4s;
+    }
+
+    #loading .spin {
+      width: 32px;
+      height: 32px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    #loading.gone {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* ── ALERTS SIDEBAR ─────────────────────────────────────────── */
+    .main-layout {
+      display: flex;
+      min-height: calc(100vh - 65px);
+    }
+
+    .grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 18px;
+      padding: 22px;
+    }
+
+    .alert-sidebar {
+      width: 300px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 65px);
+      position: sticky;
+      top: 65px;
+    }
+
+    .alert-header {
+      padding: 18px;
+      border-bottom: 1px solid var(--border);
+      font-family: var(--display);
+      font-size: .8rem;
+      font-weight: 800;
+      color: var(--accent);
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    #alert-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .alert-card {
+      flex-shrink: 0;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: .68rem;
+      transition: transform .2s, border-color .2s;
+      cursor: pointer;
+    }
+
+    .alert-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent) !important;
+    }
+
+    .alert-info {
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+      pointer-events: none;
+    }
+
+    .alert-meta {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+
+    .alert-event {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .alert-thumb {
+      width: 100%;
+      aspect-ratio: 16/9;
+      object-fit: cover;
+      cursor: pointer;
+      display: block;
+    }
+
+    /* ── CONFIG & WIDGETS LAYOUT ── */
+    .config-layout {
+      max-width: 1200px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+      gap: 20px;
+    }
+
+    .location-widgets {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 18px;
+    }
+
+    .location-summary {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-left: auto;
+      color: var(--muted);
+      font-size: .7rem;
+    }
+
+    .location-chip {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 4px 8px;
+      background: rgba(255, 255, 255, .03);
+    }
+
+    .location-table {
+      display: grid;
+      gap: 10px;
+    }
+
+    .location-row {
+      display: grid;
+      grid-template-columns: minmax(90px, .7fr) minmax(120px, 1fr) minmax(120px, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      background: rgba(0, 0, 0, .15);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      font-size: .72rem;
+    }
+
+    .location-row.header {
+      background: transparent;
+      color: var(--muted);
+      border-color: transparent;
+      padding-top: 0;
+      padding-bottom: 0;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      font-size: .62rem;
+    }
+
+    .camera-live-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .assignment-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 170px;
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 10px;
+      min-height: 78px;
+    }
+
+    .thresholds.compact {
+      padding: 8px;
+      gap: 8px;
+    }
+
+    .thresholds.compact .thresh-row {
+      gap: 6px;
+    }
+
+    .thresholds.compact .thresh-row label {
+      min-width: 62px;
+      font-size: .64rem;
+    }
+
+    .widget-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      height: fit-content;
+      transition: all .25s ease;
+    }
+
+    .widget-card:hover {
+      border-color: #2a3040;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    }
+
+    .widget-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, .01);
+    }
+
+    .widget-header.clickable {
+      cursor: pointer;
+    }
+
+    .widget-header.clickable:hover {
+      background: rgba(255, 255, 255, .03);
+    }
+
+    .widget-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .widget-title h3 {
+      font-family: var(--display);
+      font-size: .95rem;
+      font-weight: 800;
+      letter-spacing: .03em;
+      color: var(--accent);
+    }
+
+    .widget-header .expand-arrow {
+      font-size: .8rem;
+      color: var(--muted);
+      transition: transform .3s ease;
+    }
+
+    .widget-card.expanded .expand-arrow {
+      transform: rotate(180deg);
+    }
+
+    .widget-body {
+      padding: 22px;
+    }
+
+    .widget-card.collapsed .widget-body {
+      display: none;
+    }
+
+    .cameras-list-container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .camera-edit-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(0, 0, 0, .15);
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .camera-edit-row span.cam-num {
+      font-size: .8rem;
+      color: var(--muted);
+      font-weight: 600;
+      min-width: 50px;
+    }
+
+    .camera-edit-row input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .78rem;
+      padding: 8px 12px;
+      border-radius: 6px;
+      outline: none;
+      transition: border-color .2s;
+    }
+
+    .camera-edit-row input:focus {
+      border-color: var(--accent);
+    }
+
+    .camera-edit-row button.btn-remove {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid rgba(255, 65, 85, .3);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: .72rem;
+      font-family: var(--mono);
+      cursor: pointer;
+    }
+
+    .camera-edit-row button.btn-remove:hover {
+      background: rgba(255, 65, 85, .1);
+      border-color: var(--danger);
+    }
+
+    .camera-config-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .camera-config-fields {
+      display: grid;
+      grid-template-columns: 120px minmax(160px, .7fr) minmax(240px, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      background: rgba(0, 0, 0, .15);
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .camera-config-fields .cam-num {
+      font-size: .8rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .camera-config-fields input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .78rem;
+      padding: 8px 12px;
+      border-radius: 6px;
+      outline: none;
+      transition: border-color .2s;
+    }
+
+    .location-config-fields {
+      display: grid;
+      grid-template-columns: 100px 1.2fr 1fr 1fr 80px auto;
+      gap: 10px;
+      align-items: center;
+      background: rgba(0, 0, 0, .15);
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+
+    .location-config-fields span {
+      font-size: .8rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .location-config-fields input,
+    .location-config-fields select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .78rem;
+      padding: 8px 12px;
+      border-radius: 6px;
+      outline: none;
+    }
+
+    .camera-config-fields input:focus {
+      border-color: var(--accent);
+    }
+
+    .location-config-fields .btn-remove,
+    .camera-config-fields .btn-remove,
+    .location-row .btn-remove {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid rgba(255, 65, 85, .3);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: .72rem;
+      font-family: var(--mono);
+      cursor: pointer;
+    }
+
+    .location-config-fields .btn-remove:hover,
+    .camera-config-fields .btn-remove:hover,
+    .location-row .btn-remove:hover {
+      background: rgba(255, 65, 85, .1);
+      border-color: var(--danger);
+    }
+
+    .widget-actions {
+      display: flex;
+      justify-content: flex-start;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .widget-actions button {
+      flex: 1;
+      padding: 8px 14px;
+      font-size: .74rem;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #000;
+      padding: 8px 16px;
+      font-family: var(--mono);
+      font-size: .74rem;
+      font-weight: 600;
+      border-radius: 7px;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 16px;
+      font-family: var(--mono);
+      font-size: .74rem;
+      font-weight: 600;
+      border-radius: 7px;
+      cursor: pointer;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, .05);
+      border-color: var(--muted);
+    }
+
+    .btn-danger {
+      background: rgba(255, 65, 85, .12);
+      color: var(--danger);
+      border: 1px solid rgba(255, 65, 85, .35);
+      padding: 8px 16px;
+      font-family: var(--mono);
+      font-size: .74rem;
+      font-weight: 600;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all .2s ease;
+    }
+
+    .btn-danger:hover {
+      background: rgba(255, 65, 85, .25);
+      border-color: var(--danger);
+    }
+
+    /* Metric Row Styling */
+    .health-metrics {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .metric-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      font-size: .75rem;
+    }
+
+    .metric-row>span {
+      min-width: 100px;
+      color: var(--muted);
+    }
+
+    .bar-container {
+      flex: 1;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .bar {
+      height: 100%;
+      border-radius: 3px;
+    }
+
+    .metric-row .value {
+      min-width: 90px;
+      text-align: right;
+      font-weight: 600;
+    }
+
+    /* Item list styling */
+    .item-list-widget {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .item-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(0, 0, 0, .15);
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: .72rem;
+    }
+
+    .item-row .status-indicator {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: .6rem;
+      font-weight: 600;
+    }
+
+    .item-row .status-indicator.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .item-row .status-indicator.offline {
+      background: rgba(255, 65, 85, .12);
+      color: var(--danger);
+    }
+
+    /* Model checkbox grid */
+    .model-assign-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, .1);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    .model-assign-row .assign-label {
+      width: 100%;
+      font-size: .65rem;
+      color: var(--muted);
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .model-chip {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      font-size: .68rem;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all .2s;
+      user-select: none;
+    }
+
+    .model-chip:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    .model-chip input[type="checkbox"] {
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .model-chip.checked {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Tabs CSS */
+    .nav-tabs {
+      display: flex;
+      gap: 8px;
+      background: rgba(0, 0, 0, .2);
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .tab-btn {
+      font-family: var(--mono);
+      font-size: .78rem;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      transition: all .2s ease;
+      cursor: pointer;
+    }
+
+    .tab-btn:hover {
+      color: var(--text);
+    }
+
+    .tab-btn.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    @media (max-width: 760px) {
+      .main-layout {
+        flex-direction: column;
+      }
+
+      .alert-sidebar {
+        width: 100%;
+        height: auto;
+        position: static;
+        border-left: 0;
+        border-top: 1px solid var(--border);
+      }
+
+      .camera-config-fields,
+      .location-config-fields,
+      .location-row,
+      .assignment-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .location-summary {
+        display: none;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .vlab-grid-responsive {
+        grid-template-columns: 1fr !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="loading">
+    <div class="spin"></div>
+    <span>Loading streams & models…</span>
+  </div>
+
+  <header>
+    <h1>RTSP Dashboard</h1>
+    <div class="nav-tabs">
+      <button class="tab-btn active" data-tab="manage">Locations</button>
+      <button class="tab-btn" data-tab="dashboard">Location Cameras</button>
+      <button class="tab-btn" data-tab="ptz">🎮 PTZ Camera</button>
+      <button class="tab-btn" data-tab="videolab">🧪 AI Video Lab</button>
+    </div>
+    <div id="system-status">
+      <div id="status-dot"></div>
+      <span id="status-label">connecting…</span>
+    </div>
+  </header>
+
+  <div class="config-layout tab-content" id="tab-manage" style="padding: 22px;">
+    <div class="widget-card"
+      style="max-width: 800px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);">
+      <div class="widget-header">
+        <div class="widget-title">
+          <h3>Add Locations & Devices</h3>
+        </div>
+      </div>
+      <div class="widget-body">
+        <p style="font-size: 0.78rem; color: var(--muted); margin-bottom: 20px;">
+          Add each site location and its device details. Cameras and models are configured inside the location widgets
+          on the next tab.
+        </p>
+        <div class="cameras-list-container">
+          <div id="locations-edit-list">
+            <div style="color:var(--muted); font-size:.7rem;">Loading locations...</div>
+          </div>
+          <div class="widget-actions">
+            <button class="btn-secondary" id="btn-add-location">+ Add Location</button>
+            <button class="btn-primary" id="btn-save-locations">Save Locations</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab 2: Dashboard (Widgets) -->
+  <div class="main-layout tab-content" id="tab-dashboard" style="display: none;">
+    <div class="widgets-area"
+      style="flex: 1; padding: 22px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto;">
+
+      <div class="widget-card" style="border: 1px solid var(--border); border-radius: var(--radius);">
+        <div class="widget-header">
+          <div class="widget-title">
+            <h3 id="dashboard-title">Location Widgets</h3>
+          </div>
+          <span style="font-size: 0.7rem; color: var(--muted);">Click a location to add cameras and assign models</span>
+        </div>
+        <div class="widget-body">
+          <div class="location-widgets" id="location-widgets">
+            <div style="color:var(--muted); font-size:.7rem;">Loading saved cameras...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="config-grid">
+        <div class="widget-card" style="border: 1px solid var(--border); border-radius: var(--radius);">
+          <div class="widget-header">
+            <div class="widget-title">
+              <h3>Devices</h3>
+            </div>
+            <button class="btn-secondary" id="btn-refresh-devices" style="padding: 4px 10px; font-size: .65rem;">↻
+              Refresh</button>
+          </div>
+          <div class="widget-body">
+            <div id="devices-list-widget">
+              <div style="color:var(--muted); font-size:.7rem;">Loading devices...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right Side: Alerts Sidebar -->
+    <aside class="alert-sidebar">
+      <div class="alert-header">Detection Alerts</div>
+      <div id="alert-list">
+        <div style="color:var(--muted); font-size:.7rem; text-align:center; padding-top:20px;">Watching for alerts…
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Tab 3: PTZ Camera Controller -->
+  <div class="config-layout tab-content" id="tab-ptz" style="display: none; padding: 22px;">
+    <div style="display: grid; grid-template-columns: 1fr 380px; gap: 20px; max-width: 1400px; margin: 0 auto;">
+      
+      <!-- Video Card -->
+      <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column;">
+        <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <h3 id="ptzCameraTitle" style="font-size: 0.9rem;">AMBICAM PTZ 1</h3>
+            <select id="ptzCameraSelect" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; font-size: 0.75rem; border-radius: 6px; outline: none; cursor: pointer;"></select>
+            <div style="display: flex; gap: 3px; background: rgba(0,0,0,0.3); padding: 2px; border-radius: 6px; border: 1px solid var(--border);">
+              <button class="ptz-stream-btn active" data-stream="main" style="background: var(--accent); color: #000; border: none; padding: 3px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; cursor: pointer;">HD 1080p</button>
+              <button class="ptz-stream-btn" data-stream="sub" style="background: transparent; color: var(--muted); border: none; padding: 3px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; cursor: pointer;">SD Fast</button>
+            </div>
+          </div>
+          <span id="ptzCameraIpLabel" style="font-family: var(--mono); font-size: 0.72rem; color: var(--muted);">192.168.96.30:80 (ONVIF)</span>
+        </div>
+        <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 8px;">
+          <video id="ptzLiveVideo" autoplay muted playsinline style="width: 100%; height: 100%; object-fit: fill; background: #000; transform-origin: center center; transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);"></video>
+          <div id="zoomBadge" style="position: absolute; bottom: 12px; right: 12px; background: rgba(0, 255, 170, 0.85); color: #000; font-family: monospace; font-weight: 800; font-size: 0.8rem; padding: 4px 10px; border-radius: 6px; z-index: 10; pointer-events: none;">1.00X</div>
+        </div>
+        <div style="display: flex; gap: 16px; padding: 10px 16px; font-size: 0.75rem; color: var(--muted); border-top: 1px solid var(--border); background: rgba(0,0,0,0.2); align-items: center;">
+          <div>Pan: <strong id="ptzTelemetryPan" style="color: var(--accent);">0.00</strong></div>
+          <div>Tilt: <strong id="ptzTelemetryTilt" style="color: var(--accent);">0.00</strong></div>
+          <div>Zoom: <strong id="ptzTelemetryZoom" style="color: var(--accent);">0.00</strong></div>
+          <button class="btn-secondary" style="padding: 2px 10px; font-size: 0.7rem;" onclick="window.reloadPtzStream()">🔄 Reload Feed</button>
+          <button class="btn-secondary" style="margin-left: auto; padding: 2px 10px; font-size: 0.7rem;" onclick="window.showPtzApiModal()">⚡ API Docs</button>
+        </div>
+
+        <!-- Manage PTZ Cameras Panel (Inline Location-Style Config) -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-top: 16px;">
+          <div class="widget-header" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="font-size: 0.85rem; font-weight: 600; color: var(--text);">📹 Manage ONVIF PTZ Cameras</h3>
+            <span style="font-size: 0.72rem; color: var(--muted);">RTSP Stream & Label Configuration</span>
+          </div>
+          <div id="ptz-cameras-edit-list"></div>
+          <div style="display: flex; gap: 10px; margin-top: 12px;">
+            <button class="btn-secondary" id="ptz-btn-add-row" style="padding: 6px 14px; font-size: 0.78rem;">+ Add Camera</button>
+            <button class="btn-primary" id="ptz-btn-save-list" style="padding: 6px 18px; font-size: 0.78rem; font-weight: 600; background: var(--accent); color: #000; border: none; border-radius: 6px; cursor: pointer;">Save Cameras</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls Sidebar -->
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        
+        <!-- Direction Control Card -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;">
+          <div class="widget-header" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="font-size: 0.85rem;">Direction & Zoom</h3>
+            <span id="ptzSpeedVal" style="color: var(--accent); font-size: 0.75rem; font-family: var(--mono); font-weight: 600;">50% Speed</span>
+          </div>
+
+          <!-- Mode Switch -->
+          <div style="display: flex; background: rgba(0,0,0,0.3); padding: 3px; border-radius: 6px; margin-bottom: 14px;">
+            <button class="ptz-mode-btn active" data-mode="continuous" style="flex:1; background:var(--accent); color:#000; border:none; padding:5px 8px; border-radius:4px; font-size:0.72rem; font-weight:600; cursor:pointer;">Hold to Move</button>
+            <button class="ptz-mode-btn" data-mode="step" style="flex:1; background:transparent; color:var(--muted); border:none; padding:5px 8px; border-radius:4px; font-size:0.72rem; font-weight:600; cursor:pointer;">Single Click (Nudge)</button>
+          </div>
+
+          <!-- 4-Way D-Pad -->
+          <div style="display: flex; justify-content: center; margin: 10px 0;">
+            <div style="display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(3, 56px); gap: 6px;">
+              <div></div>
+              <button class="ptz-dpad-btn btn-secondary" data-dir="up" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;" title="Up">▲</button>
+              <div></div>
+
+              <button class="ptz-dpad-btn btn-secondary" data-dir="left" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;" title="Left">◀</button>
+              <button class="btn-danger" id="ptzBtnStop" style="display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:bold; cursor:pointer;" title="Stop">STOP</button>
+              <button class="ptz-dpad-btn btn-secondary" data-dir="right" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;" title="Right">▶</button>
+
+              <div></div>
+              <button class="ptz-dpad-btn btn-secondary" data-dir="down" style="display:flex; align-items:center; justify-content:center; font-size:1.1rem; cursor:pointer;" title="Down">▼</button>
+              <div></div>
+            </div>
+          </div>
+
+          <!-- Zoom -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px;">
+            <button class="btn-secondary" id="ptzBtnZoomIn" style="padding: 8px; cursor: pointer;">🔍 Zoom In</button>
+            <button class="btn-secondary" id="ptzBtnZoomOut" style="padding: 8px; cursor: pointer;">🔍 Zoom Out</button>
+          </div>
+
+          <!-- Speed Slider -->
+          <div style="margin-top: 14px;">
+            <div style="display:flex; justify-content:space-between; font-size:0.72rem; color:var(--muted); margin-bottom:4px;">
+              <span>Speed</span>
+              <span>10% - 100%</span>
+            </div>
+            <input type="range" id="ptzSpeedSlider" min="0.1" max="1.0" step="0.05" value="0.5" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
+          </div>
+        </div>
+
+        <!-- Presets Card -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;">
+          <div class="widget-header" style="margin-bottom: 10px;">
+            <h3 style="font-size: 0.85rem;">Saved Presets</h3>
+          </div>
+          <div id="ptzPresetList" style="display:flex; flex-direction:column; gap:6px; max-height:140px; overflow-y:auto; margin-bottom:10px;">
+            <div style="color:var(--muted); font-size:.72rem; text-align:center;">Loading presets...</div>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <input type="text" id="ptzPresetNameInput" placeholder="Preset name" style="flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:0.75rem; padding:6px 10px; border-radius:6px; outline:none;">
+            <button class="btn-primary" id="ptzBtnAddPreset" style="padding:6px 12px; font-size:0.72rem;">Save</button>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Tab 4: AI Video Testing & Verification Lab -->
+  <div class="config-layout tab-content" id="tab-videolab" style="display: none; padding: 22px;">
+    <div style="max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px;">
+      
+      <!-- Top Banner / Title -->
+      <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+        <div>
+          <h2 style="font-family: var(--display); font-size: 1.15rem; color: var(--accent); display: flex; align-items: center; gap: 8px;">
+            <span>🧪</span> Edge AI Video Testing Lab
+          </h2>
+          <p style="font-size: 0.75rem; color: var(--muted); margin-top: 4px;">
+            Upload recorded test videos to evaluate detection accuracy, tune Conf/IoU/imgsz thresholds in real-time, and download web-ready annotated MP4 videos.
+          </p>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <span style="font-size: 0.72rem; color: var(--muted); background: rgba(0,0,0,0.3); padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border);">
+            ⚡ Codec: <strong style="color: var(--text);">H.264 MP4 (Web-Ready)</strong>
+          </span>
+        </div>
+      </div>
+
+      <!-- Main 2-Column Lab Grid -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;" class="vlab-grid-responsive">
+        
+        <!-- Left Column: Video Upload & Preview -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 16px;">
+          <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="font-size: 0.88rem; font-weight: 600;">1. Select & Upload Video</h3>
+            <span id="vlab-upload-status" style="font-size: 0.72rem; color: var(--muted);">Ready for upload</span>
+          </div>
+
+          <!-- Dropzone -->
+          <div id="vlab-dropzone" onclick="document.getElementById('vlab-file-input').click()" style="border: 2px dashed var(--border); border-radius: 10px; padding: 32px 16px; text-align: center; cursor: pointer; transition: all 0.25s ease; background: rgba(0,0,0,0.15);">
+            <div style="font-size: 2.2rem; margin-bottom: 8px;">📁</div>
+            <div style="font-size: 0.82rem; font-weight: 600; color: var(--text); margin-bottom: 4px;">
+              Click to browse or Drag & Drop video file here
+            </div>
+            <div style="font-size: 0.70rem; color: var(--muted);">
+              Supports .mp4, .mov, .avi, .mkv, .webm (Up to 250 MB)
+            </div>
+            <input type="file" id="vlab-file-input" accept="video/*" style="display: none;" onchange="vlabHandleFileInput(this)">
+          </div>
+
+          <!-- Uploaded Video Details Banner -->
+          <div id="vlab-file-details" style="display: none; background: rgba(0, 229, 160, 0.05); border: 1px solid rgba(0, 229, 160, 0.2); border-radius: 8px; padding: 10px 14px; font-size: 0.74rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <span style="font-weight: 600; color: var(--accent);" id="vlab-filename-label">video.mp4</span>
+              <span style="color: var(--muted);" id="vlab-filesize-label">12.4 MB</span>
+            </div>
+            <div style="display: flex; gap: 12px; color: var(--muted); font-size: 0.70rem;">
+              <span>Resolution: <strong id="vlab-resolution-label" style="color:var(--text);">-</strong></span>
+              <span>Duration: <strong id="vlab-duration-label" style="color:var(--text);">-</strong></span>
+            </div>
+          </div>
+
+          <!-- Raw Video Player Preview -->
+          <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;">
+            <video id="vlab-raw-video" controls playsinline style="width: 100%; height: 100%; object-fit: contain; display: none;"></video>
+            <div id="vlab-raw-placeholder" style="color: var(--muted); font-size: 0.75rem; text-align: center; padding: 20px;">
+              🎬 Raw video preview will appear here after selection
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Model Selection & AI Threshold Tuning -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 16px;">
+          <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="font-size: 0.88rem; font-weight: 600;">2. AI Model & Detection Parameters</h3>
+            <span style="font-size: 0.72rem; color: var(--accent);">YOLO Edge Engine</span>
+          </div>
+
+          <!-- Model Selector -->
+          <div>
+            <label style="font-size: 0.72rem; color: var(--muted); display: block; margin-bottom: 6px;">SELECT YOLO MODEL WEIGHTS:</label>
+            <select id="vlab-model-select" onchange="vlabLoadModelClasses(this.value)" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; font-size: 0.80rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono);">
+              <option value="">Loading available models...</option>
+            </select>
+          </div>
+
+          <!-- Class Selection Pills -->
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label style="font-size: 0.72rem; color: var(--muted);">ENABLED DETECTION CLASSES:</label>
+              <div style="display: flex; gap: 6px;">
+                <button type="button" id="vlab-select-all-classes" onclick="document.querySelectorAll('#vlab-classes-container input[type=checkbox]').forEach(cb => cb.checked = true)" class="btn-secondary" style="padding: 2px 8px; font-size: 0.65rem;">All</button>
+                <button type="button" id="vlab-deselect-all-classes" onclick="document.querySelectorAll('#vlab-classes-container input[type=checkbox]').forEach(cb => cb.checked = false)" class="btn-secondary" style="padding: 2px 8px; font-size: 0.65rem;">None</button>
+              </div>
+            </div>
+            <div id="vlab-classes-container" style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 120px; overflow-y: auto; padding: 8px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px;">
+              <span style="font-size: 0.70rem; color: var(--muted);">Select a model to view classes...</span>
+            </div>
+          </div>
+
+          <!-- Sliders: Confidence & IoU -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+            <div style="background: rgba(0,0,0,0.2); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label style="font-size: 0.70rem; color: var(--muted);">CONFIDENCE (Conf):</label>
+                <strong id="vlab-conf-val" style="color: var(--accent); font-size: 0.75rem;">0.35</strong>
+              </div>
+              <input type="range" id="vlab-conf-slider" min="0.05" max="0.95" step="0.01" value="0.35" oninput="document.getElementById('vlab-conf-val').innerText = parseFloat(this.value).toFixed(2)" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
+            </div>
+
+            <div style="background: rgba(0,0,0,0.2); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label style="font-size: 0.70rem; color: var(--muted);">IoU NMS THRESHOLD:</label>
+                <strong id="vlab-iou-val" style="color: var(--accent); font-size: 0.75rem;">0.45</strong>
+              </div>
+              <input type="range" id="vlab-iou-slider" min="0.10" max="0.90" step="0.01" value="0.45" oninput="document.getElementById('vlab-iou-val').innerText = parseFloat(this.value).toFixed(2)" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
+            </div>
+          </div>
+
+          <!-- Resolution & Frame Skip Settings -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+            <div>
+              <label style="font-size: 0.70rem; color: var(--muted); display: block; margin-bottom: 6px;">IMAGE RESOLUTION (imgsz):</label>
+              <div style="display: flex; gap: 4px;" id="vlab-imgsz-buttons">
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="320" onclick="vlabSetImgsz(320, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;" title="Ultra Fast (~300ms)">320</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="416" onclick="vlabSetImgsz(416, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;" title="Fast (~600ms)">416</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="480" onclick="vlabSetImgsz(480, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;">480</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="512" onclick="vlabSetImgsz(512, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;">512</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn active" data-sz="640" onclick="vlabSetImgsz(640, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem; background: var(--accent-dim); border-color: var(--accent); color: var(--accent);" title="High Accuracy (~1.5s)">640</button>
+              </div>
+            </div>
+
+            <div>
+              <label style="font-size: 0.70rem; color: var(--muted); display: block; margin-bottom: 6px;">SPEED / FRAME PROCESSING:</label>
+              <select id="vlab-frameskip-select" onchange="if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; font-size: 0.75rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono);">
+                <option value="1">1:1 Exact Sync (Every Frame)</option>
+                <option value="2">2× Fast Step (Every 2nd Frame)</option>
+                <option value="4">4× Fast Step (Every 4th Frame)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Action Buttons: Live Stream vs Batch Export -->
+          <div style="margin-top: auto; padding-top: 8px; display: flex; flex-direction: column; gap: 8px;">
+            <button id="vlab-live-btn" onclick="vlabStartLiveStream()" class="btn-primary" style="width: 100%; padding: 12px; font-size: 0.88rem; font-weight: 700; background: var(--accent); color: #000; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; box-shadow: 0 0 15px rgba(0,229,160,0.3);">
+              <span>⚡</span> Start Live AI Stream (Instant Real-Time)
+            </button>
+            <button id="vlab-batch-btn" onclick="vlabStartDetectionJob()" class="btn-secondary" style="width: 100%; padding: 8px; font-size: 0.75rem; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
+              <span>📦</span> Export Full MP4 Video (Offline Batch Render)
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Live Stream Player Section (Instant Real-Time MJPEG) -->
+      <div id="vlab-live-card" class="widget-card" style="display: none; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 20px; flex-direction: column; gap: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);">
+        <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 1.5s infinite;"></span>
+            <h3 style="font-size: 0.95rem; font-weight: 700; color: var(--accent);">📺 Live AI Video Detection Stream</h3>
+            <span id="vlab-live-badge" style="font-size: 0.70rem; background: rgba(0,229,160,0.15); color: var(--accent); padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(0,229,160,0.3); font-family: var(--mono);">LIVE FEED</span>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button onclick="vlabStartLiveStream()" class="btn-secondary" style="padding: 5px 12px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
+              <span>🔄</span> Restart
+            </button>
+            <button onclick="vlabStopLiveStream()" class="btn-secondary" style="color: var(--danger); border-color: rgba(255, 65, 85, 0.4); padding: 5px 12px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
+              <span>⏹️</span> Stop Stream
+            </button>
+          </div>
+        </div>
+
+        <!-- Live MJPEG Stream Player -->
+        <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;">
+          <img id="vlab-live-player" src="" alt="Live AI Detection Stream" style="width: 100%; height: 100%; object-fit: contain; display: block;">
+          <div id="vlab-live-placeholder" style="display: none; color: var(--muted); font-size: 0.8rem; text-align: center;">
+            Stream stopped. Click "Start Live AI Stream" to resume.
+          </div>
+        </div>
+
+        <!-- Real-Time Info Banner -->
+        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; font-size: 0.72rem; color: var(--muted);">
+          <div>💡 <strong>Interactive Tuning:</strong> Adjust sliders or toggle classes above to update detections instantaneously!</div>
+          <div id="vlab-live-status-txt" style="font-family: var(--mono); color: var(--accent);">Active</div>
+        </div>
+      </div>
+
+      <!-- Processing Progress Section (Shown while offline batch running) -->
+      <div id="vlab-progress-card" class="widget-card" style="display: none; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="spin" style="width: 16px; height: 16px; border-width: 2px;"></div>
+            <strong style="color: var(--accent); font-size: 0.85rem;">Processing Video with YOLO (Offline Render)...</strong>
+          </div>
+          <button id="vlab-cancel-btn" onclick="vlabCancelJob()" class="btn-secondary" style="color: var(--danger); border-color: rgba(255, 65, 85, 0.4); padding: 4px 12px; font-size: 0.72rem;">Cancel Job</button>
+        </div>
+
+        <!-- Progress Bar -->
+        <div style="background: rgba(0,0,0,0.4); border-radius: 8px; height: 14px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 12px;">
+          <div id="vlab-progress-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--accent), #00b4d8); transition: width 0.3s ease; box-shadow: 0 0 10px var(--accent);"></div>
+        </div>
+
+        <!-- Telemetry Stats -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; font-size: 0.72rem; color: var(--muted);">
+          <div>Progress: <strong id="vlab-prog-pct" style="color:var(--text);">0%</strong></div>
+          <div>Frame: <strong id="vlab-prog-frame" style="color:var(--text);">0 / 0</strong></div>
+          <div>Speed: <strong id="vlab-prog-fps" style="color:var(--accent);">0.0 FPS</strong></div>
+          <div>Elapsed: <strong id="vlab-prog-elapsed" style="color:var(--text);">0.0s</strong></div>
+          <div>ETA: <strong id="vlab-prog-eta" style="color:var(--text);">Calculating...</strong></div>
+        </div>
+      </div>
+
+      <!-- Results & Detection Video Player Section -->
+      <div id="vlab-results-card" class="widget-card" style="display: none; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 18px;">
+        <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 1.1rem;">🎬</span>
+            <h3 style="font-size: 0.92rem; font-weight: 700; color: var(--accent);">Annotated Detection Video Result</h3>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <a id="vlab-download-btn" href="#" download class="btn-primary" style="padding: 6px 14px; font-size: 0.75rem; text-decoration: none; display: flex; align-items: center; gap: 6px; background: var(--accent); color: #000;">
+              <span>⬇️</span> Download Detection MP4
+            </a>
+          </div>
+        </div>
+
+        <!-- Annotated Video Player -->
+        <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;">
+          <video id="vlab-result-video" controls playsinline style="width: 100%; height: 100%; object-fit: contain; background: #000;"></video>
+        </div>
+
+        <!-- Analytics Summary -->
+        <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 8px; padding: 14px;">
+          <h4 style="font-size: 0.78rem; color: var(--muted); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em;">Detection Analytics Matrix</h4>
+          
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px;">
+            <div style="background: var(--bg); padding: 10px; border-radius: 6px; border: 1px solid var(--border); text-align: center;">
+              <div style="font-size: 0.68rem; color: var(--muted);">TOTAL DETECTIONS</div>
+              <div id="vlab-res-total-dets" style="font-size: 1.1rem; font-weight: 800; color: var(--accent); margin-top: 2px;">0</div>
+            </div>
+            <div style="background: var(--bg); padding: 10px; border-radius: 6px; border: 1px solid var(--border); text-align: center;">
+              <div style="font-size: 0.68rem; color: var(--muted);">PROCESSED FRAMES</div>
+              <div id="vlab-res-frames" style="font-size: 1.1rem; font-weight: 800; color: var(--text); margin-top: 2px;">0</div>
+            </div>
+            <div style="background: var(--bg); padding: 10px; border-radius: 6px; border: 1px solid var(--border); text-align: center;">
+              <div style="font-size: 0.68rem; color: var(--muted);">PROCESSING TIME</div>
+              <div id="vlab-res-time" style="font-size: 1.1rem; font-weight: 800; color: var(--text); margin-top: 2px;">0.0s</div>
+            </div>
+            <div style="background: var(--bg); padding: 10px; border-radius: 6px; border: 1px solid var(--border); text-align: center;">
+              <div style="font-size: 0.68rem; color: var(--muted);">AVERAGE SPEED</div>
+              <div id="vlab-res-fps" style="font-size: 1.1rem; font-weight: 800; color: var(--accent); margin-top: 2px;">0.0 FPS</div>
+            </div>
+          </div>
+
+          <!-- Class Counts Breakdown Pills -->
+          <div>
+            <div style="font-size: 0.70rem; color: var(--muted); margin-bottom: 6px;">DETECTIONS BY CLASS:</div>
+            <div id="vlab-res-class-pills" style="display: flex; flex-wrap: wrap; gap: 6px;">
+              <span style="font-size: 0.72rem; color: var(--muted);">No detections registered</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
+
+
+  <!-- PTZ API Modal -->
+  <div id="ptzApiModal" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; z-index:99999; backdrop-filter:blur(6px);">
+    <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:580px; max-width:90vw; padding:20px; position:relative; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <button onclick="window.closePtzApiModal()" style="position:absolute; top:14px; right:14px; background:transparent; border:none; color:var(--muted); font-size:1.2rem; cursor:pointer;">✕</button>
+      <h3 style="color:var(--accent); font-size:1rem; margin-bottom:6px;">⚡ REST API Endpoints for Frontend UI</h3>
+      <p style="font-size:0.75rem; color:var(--muted); margin-bottom:12px;">Full CORS enabled. Call these from React, Vue, Angular, or Vanilla JS:</p>
+      
+      <div style="font-size:0.75rem; font-weight:600; margin-top:8px;">1. Continuous Move (On Button Down):</div>
+      <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0 8px; overflow-x:auto;">fetch("/api/ptz/move", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ direction: "left", speed: 0.5, ip: "192.168.96.30", port: 8888 })
+});</pre>
+
+      <div style="font-size:0.75rem; font-weight:600;">2. Stop Move (On Button Up):</div>
+      <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0 8px;">fetch("/api/ptz/stop", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ ip: "192.168.96.30", port: 80 })
+});</pre>
+
+      <div style="font-size:0.75rem; font-weight:600;">3. Step Nudge (On Single Click):</div>
+      <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0;">fetch("/api/ptz/step", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ direction: "up", speed: 0.5, duration: 0.35, ip: "192.168.96.30", port: 80 })
+});</pre>
+    </div>
+  </div>
+
+  <script src="/static/js/detection.js?v=7.0"></script>
+  <script src="/static/js/location_dashboard.js?v=6.0"></script>
+  <script src="/static/js/ptz_controller.js?v=5.0_dynamic"></script>
+
+  <script>
+    var streamsArray = [];
+    window.addEventListener("DOMContentLoaded", async () => {
+      if (window.initLocationDashboard) {
+        await window.initLocationDashboard();
+        return;
+      }
+
+      // ── CONFIG ──────────────────────────────────────────────────
+      // Use the current browser URL instead of a hardcoded one
+      const BASE = window.location.origin;
+
+      const locationWidgets = document.getElementById("location-widgets");
+      const dot = document.getElementById("status-dot");
+      const label = document.getElementById("status-label");
+      const loader = document.getElementById("loading");
+
+      let streams = [];
+      window.isOfflineMode = false;
+      try {
+        const r = await fetch(`/api/streams?t=${Date.now()}`, { cache: "no-store" });
+        if (!r.ok) throw new Error("HTTP error " + r.status);
+        streams = await r.json();
+        dot.className = "ok";
+        label.textContent = (Array.isArray(streams) ? streams.length : 0) + " camera(s) configured";
+
+        // Server is online. Sync localStorage with current server streams configuration
+        if (Array.isArray(streams)) {
+          localStorage.setItem("offline_streams", JSON.stringify(streams));
+          if (streams.length === 0) {
+            localStorage.removeItem("offline_streams");
+            localStorage.removeItem("offline_camera_models");
+            for (let i = 0; i < 20; i++) {
+              localStorage.removeItem(`offline_detecting_${i}`);
+              localStorage.removeItem(`offline_active_models_${i}`);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Initial stream fetch failed, using offline fallback mode:", e);
+        window.isOfflineMode = true;
+        dot.className = "warn";
+        label.textContent = "Offline Mode (Using localStorage)";
+
+        const localStreams = localStorage.getItem("offline_streams");
+        if (localStreams) {
+          try {
+            const parsed = JSON.parse(localStreams);
+            // Map payload format (list of {rtsp}) to view format
+            streams = parsed.map((item, idx) => ({
+              id: idx,
+              label: `Camera ${idx + 1}`,
+              location: item.location || `Location ${idx + 1}`,
+              rtsp: item.rtsp,
+              hls_live: `/hls/camera/${idx}/playlist.m3u8`,
+              hls_raw: `/hls/stream${idx}_raw/playlist.m3u8`,
+              hls_detected: `/hls/stream${idx}_detected/playlist.m3u8`
+            }));
+          } catch (err) {
+            console.error("Failed to parse offline streams:", err);
+          }
+        }
+
+        if (!Array.isArray(streams) || streams.length === 0) {
+          streams = [
+            {
+              id: 0,
+              label: "Camera 1",
+              location: "Bangalore",
+              rtsp: "rtsp://admin:Alg0M0nit%4070%23@192.168.96.65:554/stream1",
+              hls_live: "/hls/camera/0/playlist.m3u8",
+              hls_raw: "/hls/stream0_raw/playlist.m3u8",
+              hls_detected: "/hls/stream0_detected/playlist.m3u8"
+            }
+          ];
+        }
+      }
+
+      streamsArray = Array.isArray(streams) ? streams : [];
+
+      loader.classList.add("gone");
+
+      // ── VIDEO FRESHNESS & SLEEP DETECTION ──────────────────────
+      let lastHeartbeat = Date.now();
+      setInterval(() => {
+        const now = Date.now();
+        if (now - lastHeartbeat > 10000) { // Computer woke up from sleep
+          console.log("Wake up detected - refreshing stream...");
+          window.location.reload(); // Force full refresh to clear old HLS cache
+        }
+        lastHeartbeat = now;
+      }, 2000);
+
+      // Periodic Auto-refresh (every 30 minutes) to clear HLS buffer/memory leak
+      setInterval(() => {
+        const dashboardTab = document.getElementById("tab-dashboard");
+        const isDashboardActive = dashboardTab && dashboardTab.style.display !== "none";
+        
+        // Only refresh if the user is on the dashboard tab and tab is visible (not editing settings)
+        if (isDashboardActive && document.visibilityState === "visible") {
+          console.log("Periodic 30-min auto-refresh triggered...");
+          window.location.reload();
+        }
+      }, 30 * 60 * 1000); // 30 minutes in milliseconds
+
+      // ── ALERT POLLING (Smart Update) ───────────────────────────
+      const alertList = document.getElementById("alert-list");
+      let lastAlertTime = "";
+
+      function createMockAlertImage(camIdx, labelText) {
+        const canvas = document.createElement("canvas");
+        canvas.width = 320;
+        canvas.height = 180;
+        const ctx = canvas.getContext("2d");
+
+        // Draw background
+        ctx.fillStyle = "#111625";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Grid lines
+        ctx.strokeStyle = "#1f293d";
+        ctx.lineWidth = 1;
+        for (let x = 0; x < canvas.width; x += 30) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, canvas.height);
+          ctx.stroke();
+        }
+        for (let y = 0; y < canvas.height; y += 30) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(canvas.width, y);
+          ctx.stroke();
+        }
+
+        // Bounding box
+        ctx.strokeStyle = "#00ff66";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(80, 50, 160, 90);
+
+        // Label
+        ctx.fillStyle = "#00ff66";
+        ctx.fillRect(80, 30, 160, 20);
+        ctx.fillStyle = "#000000";
+        ctx.font = "bold 10px sans-serif";
+        ctx.fillText(labelText, 85, 44);
+
+        // Camera text
+        ctx.fillStyle = "rgba(255,255,255,0.4)";
+        ctx.font = "9px Courier New";
+        ctx.fillText(`CAM_${parseInt(camIdx) + 1}_ALERT_SNAP`, 10, 15);
+
+        return canvas.toDataURL("image/jpeg");
+      }
+
+      async function pollAlerts() {
+        if (window.isOfflineMode) {
+          let offlineAlerts = [];
+          try {
+            offlineAlerts = JSON.parse(localStorage.getItem("offline_alerts") || "[]");
+          } catch (_) { }
+
+          if (offlineAlerts.length === 0) {
+            offlineAlerts = [
+              {
+                camera: "0",
+                event: "ppe_new: 95%",
+                time: new Date(Date.now() - 30000).toISOString().replace('T', ' ').substring(0, 19),
+                image: createMockAlertImage("0", "ppe_new: 95%")
+              }
+            ];
+            localStorage.setItem("offline_alerts", JSON.stringify(offlineAlerts));
+          }
+
+          // Periodically add new alert (simulated)
+          const now = Date.now();
+          const lastAlertTime = parseInt(localStorage.getItem("offline_last_alert_time") || "0");
+          if (now - lastAlertTime > 12000 && document.visibilityState === "visible") {
+            // Find which cameras have offline active models
+            const activeCams = [];
+            for (let i = 0; i < streamsArray.length; i++) {
+              if (localStorage.getItem(`offline_detecting_${i}`) === "true") {
+                activeCams.push(i);
+              }
+            }
+
+            if (activeCams.length > 0) {
+              const randomCamIdx = activeCams[Math.floor(Math.random() * activeCams.length)];
+              const activeModels = JSON.parse(localStorage.getItem(`offline_active_models_${randomCamIdx}`) || "[]");
+              if (activeModels.length > 0) {
+                const modelName = activeModels[0].replace('.pt', '');
+                const newAlert = {
+                  camera: String(randomCamIdx),
+                  event: `${modelName}: 92%`,
+                  time: new Date().toISOString().replace('T', ' ').substring(0, 19),
+                  image: createMockAlertImage(String(randomCamIdx), `${modelName}: 92%`)
+                };
+                offlineAlerts.push(newAlert);
+                if (offlineAlerts.length > 20) offlineAlerts.shift();
+                localStorage.setItem("offline_alerts", JSON.stringify(offlineAlerts));
+                localStorage.setItem("offline_last_alert_time", String(now));
+              }
+            }
+          }
+
+          // Render
+          alertList.innerHTML = "";
+          const recentAlerts = [...offlineAlerts].reverse();
+          recentAlerts.forEach((a, idx) => {
+            const card = document.createElement("div");
+            card.className = "alert-card";
+            if (idx === 0) {
+              card.style.border = "1px solid var(--accent)";
+              card.style.boxShadow = "0 0 10px var(--accent-dim)";
+            }
+            card.onclick = () => {
+              const w = window.open();
+              w.document.write(`<img src="${a.image}" style="max-width:100%; height:auto; display:block; margin:20px auto; background:#000;">`);
+            };
+            card.innerHTML = `
+          <div class="alert-info">
+            <div class="alert-meta">
+              <span>CAM ${parseInt(a.camera) + 1}</span>
+              <span>${a.time.split(' ')[1]}</span>
+            </div>
+            <div class="alert-event">${a.event}</div>
+          </div>
+          <img src="${a.image}" class="alert-thumb" loading="lazy">
+        `;
+            alertList.appendChild(card);
+          });
+          return;
+        }
+
+        try {
+          const r = await fetch("/api/alerts");
+          const alerts = await r.json();
+          if (!alerts || !alerts.length) {
+            alertList.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding-top:20px;">Watching for alerts…</div>';
+            return;
+          }
+
+          // 1. Only refresh if the newest alert is different from what we have
+          const latest = alerts[0]; // Backend returns newest first
+          if (latest.time === lastAlertTime) return;
+          lastAlertTime = latest.time;
+
+          // 2. Clear and rebuild only when a new alert actually arrives
+          alertList.innerHTML = "";
+
+          // 3. Show all alerts in the order provided (newest first)
+          alerts.forEach((a, idx) => {
+            const card = document.createElement("div");
+            card.className = "alert-card";
+
+            // Highlight the newest one
+            if (idx === 0) {
+              card.style.border = "1px solid var(--accent)";
+              card.style.boxShadow = "0 0 10px var(--accent-dim)";
+            }
+
+            const imgUrl = `${BASE}/hls/alerts/${a.image}`;
+            card.onclick = () => window.open(imgUrl);
+
+            card.innerHTML = `
+          <div class="alert-info">
+            <div class="alert-meta">
+              <span>CAM ${a.camera}</span>
+              <span>${a.time.split(' ')[1]}</span>
+            </div>
+            <div class="alert-event">${a.event}</div>
+          </div>
+          <img src="${imgUrl}" class="alert-thumb" loading="lazy">
+        `;
+            alertList.appendChild(card);
+          });
+        } catch (e) { console.error("Alert poll failed", e); }
+      }
+
+      setInterval(pollAlerts, 3000);
+      pollAlerts();
+
+      // ── TAB SWITCHING LOGIC ──
+      const tabBtns = document.querySelectorAll(".tab-btn");
+      const tabContents = document.querySelectorAll(".tab-content");
+
+      window.switchTab = function(tabId) {
+        localStorage.setItem("active_dashboard_tab", tabId);
+        document.querySelectorAll(".tab-btn").forEach(b => {
+          if (b.getAttribute("data-tab") === tabId) b.classList.add("active");
+          else b.classList.remove("active");
+        });
+
+        document.querySelectorAll(".tab-content").forEach(tc => {
+          if (tc.id === `tab-${tabId}`) {
+            tc.style.display = tabId === 'dashboard' ? 'flex' : 'block';
+          } else {
+            tc.style.display = 'none';
+          }
+        });
+
+        if (tabId === 'dashboard') {
+          loadDevicesWidget();
+          renderLocationWidgets();
+          notifyDetectionReady();
+        } else if (tabId === 'ptz') {
+          setTimeout(() => {
+            if (window.initPtzController) window.initPtzController();
+          }, 50);
+        } else if (tabId === 'videolab') {
+          setTimeout(() => {
+            if (window.vlabLoadModels) window.vlabLoadModels();
+          }, 50);
+        }
+      };
+      const switchTab = window.switchTab;
+
+      tabBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+          const tabId = btn.getAttribute("data-tab");
+          switchTab(tabId);
+        });
+      });
+
+      // Restore last active tab on load (default to 'locations')
+      const savedTab = localStorage.getItem("active_dashboard_tab") || "locations";
+      switchTab(savedTab);
+
+      // ── CAMERA LIST CONFIG LOGIC ──
+      const camerasEditList = document.getElementById("cameras-edit-list");
+
+      // ── LOAD ALL AVAILABLE MODELS (for checkbox assignment) ──
+      let allModels = [];
+      try {
+        const mr = await fetch("/api/models");
+        if (!mr.ok) throw new Error("HTTP error " + mr.status);
+        const md = await mr.json();
+        allModels = md.models || [];
+      } catch (e) {
+        console.error("Failed to load models from API, using default list:", e);
+        allModels = [
+          "ppe_new.pt",
+          "nik_ppe_best.pt",
+          "hf_ppe_detection.pt",
+          "keremberke_ppe_gear.pt",
+          "hansung_ppe_violations.pt",
+          "firehose.pt",
+          "sand_ext_chocks.pt",
+          "fire_smoke.pt",
+          "construction.pt",
+          "tape.pt",
+          "tyre.pt",
+          "spillage.pt"
+        ];
+      }
+
+      // ── PRE-FETCH ALL MODEL CLASSES INTO A SYNCHRONOUS CACHE ──
+      // This runs once at startup so renderCamerasConfig can use it synchronously
+      // inside forEach without needing async/await, which caused silent failures.
+      const modelClassesCache = {}; // { "ppe_new.pt": ["Hard-Hat", ...], ... }
+      const MODEL_ACCENT_COLORS = ["#00ffaa", "#f5a623", "#a78bfa", "#38bdf8", "#fb7185"];
+      await Promise.all(allModels.map(async (m, i) => {
+        try {
+          const r = await fetch(`/api/model-classes?model=${encodeURIComponent(m)}`);
+          const d = await r.json();
+          if (d.classes && d.classes.length > 0) {
+            modelClassesCache[m] = { classes: d.classes, color: MODEL_ACCENT_COLORS[i % MODEL_ACCENT_COLORS.length] };
+          }
+        } catch(e) { /* skip models that fail */ }
+      }));
+
+      // ── LOAD SAVED CAMERA-MODEL ASSIGNMENTS ──
+      let cameraModelsMap = {};
+      try {
+        const cmr = await fetch("/api/camera-models");
+        if (!cmr.ok) throw new Error("HTTP error " + cmr.status);
+        cameraModelsMap = await cmr.json();
+      } catch (e) {
+        console.error("Failed to load camera-models from API, using localStorage:", e);
+        const localModels = localStorage.getItem("offline_camera_models");
+        if (localModels) {
+          try {
+            cameraModelsMap = JSON.parse(localModels);
+          } catch (err) {
+            cameraModelsMap = {};
+          }
+        }
+        if (!cameraModelsMap || typeof cameraModelsMap !== "object") {
+          cameraModelsMap = {};
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function notifyDetectionReady() {
+        window.dispatchEvent(new CustomEvent("rtsp-dashboard-ready"));
+      }
+
+      function buildCameraBox(s, i) {
+        const assignedModels = cameraModelsMap[String(i)] || [];
+        const assignedLabels = assignedModels.length
+          ? assignedModels.map(m => `<span class="model-chip checked">${escapeHtml(m.replace(".pt", ""))}</span>`).join("")
+          : '<span style="font-size: 0.65rem; color: var(--muted); font-style: italic;">No models assigned</span>';
+
+        const box = document.createElement("div");
+        box.className = "box";
+        box.id = `cam-box-${i}`;
+        box.setAttribute("data-camera-id", String(s.id ?? i));
+        box.innerHTML = `
+          <div class="video-wrap" style="position: relative;">
+            <div class="mode-badge raw" id="badge-${i}">RAW</div>
+            <button class="maximize-btn" onclick="toggleCardMaximize(${i})" title="Maximize Stream" style="position: absolute; top: 10px; right: 10px; z-index: 20; background: rgba(0,0,0,0.65); border: 1px solid rgba(255,255,255,0.25); color: #fff; border-radius: 4px; padding: 4px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 4px; backdrop-filter: blur(4px); transition: all 0.2s; user-select: none;">
+              ⛶ Maximize
+            </button>
+            <video id="v${i}" autoplay muted playsinline webkit-playsinline data-src="${escapeHtml(s.hls_live)}" ondblclick="toggleCardMaximize(${i})"></video>
+            <svg class="roi-draw-canvas" id="roi-canvas-${i}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; user-select: none; z-index: 15; pointer-events: none; background: transparent;">
+              <rect id="roi-rect-${i}" x="0" y="0" width="0" height="0" style="fill: none; stroke: #00ffaa; stroke-width: 2.5;"></rect>
+              <g id="roi-badge-${i}" style="display: none;">
+                <rect id="roi-badge-bg-${i}" x="0" y="0" width="0" height="0" rx="3" style="fill: #00ffaa;"></rect>
+                <text id="roi-badge-text-${i}" x="0" y="0" style="fill: #000; font-family: monospace; font-size: 11px; font-weight: 700; dominant-baseline: middle;"></text>
+              </g>
+            </svg>
+            <div class="cam-label">${escapeHtml(s.label)} - ${escapeHtml(s.location || `Location ${i + 1}`)}</div>
+          </div>
+          <div class="controls">
+            <div class="assignment-panel">
+              <div class="assigned-models-container" id="assigned-models-${i}">
+                <span style="font-size: 0.65rem; color: var(--muted); display: block; margin-bottom: 4px; font-weight: 600; letter-spacing: 0.5px;">ASSIGNED MODELS</span>
+                <div class="assigned-chips-list" id="chips-${i}" style="display: flex; flex-wrap: wrap; gap: 4px;">
+                  ${assignedLabels}
+                </div>
+              </div>
+              <div class="thresholds compact">
+                <div class="thresh-row">
+                  <label>Conf <span class="conf-val">0.25</span></label>
+                  <input class="conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.25">
+                </div>
+                <div class="thresh-row">
+                  <label>IoU <span class="iou-val">0.45</span></label>
+                  <input class="iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="0.45">
+                </div>
+              </div>
+            </div>
+            <div class="btn-row" style="margin-top: 10px; display: flex; gap: 8px;">
+              <button class="start" style="flex: 1;">Start</button>
+              <button class="stop" style="flex: 1;">Stop</button>
+              <button class="draw-roi-btn" id="roi-btn-${i}" onclick="handleRoiButtonClick(${i})" style="flex: 1; background: rgba(0, 240, 255, 0.1); border: 1px solid var(--accent); color: var(--accent); border-radius: 6px; padding: 6px 10px; font-size: 0.72rem; cursor: pointer; transition: all 0.2s; font-weight: 600; font-family: var(--mono);">Draw ROI</button>
+            </div>
+          </div>`;
+        return box;
+      }
+
+      function renderLocationWidgets() {
+        if (!locationWidgets) return;
+        locationWidgets.innerHTML = "";
+
+        if (streamsArray.length === 0) {
+          locationWidgets.innerHTML = `
+            <div style="grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 32px; border: 1px dashed var(--border); border-radius: 8px; background: rgba(255,255,255,0.01); color: var(--muted); text-align: center;">
+              <span style="font-size: 0.85rem; font-weight: 600; color: var(--text);">No Cameras Configured</span>
+              <span style="font-size: 0.72rem; color: var(--muted); margin-top: 6px; max-width: 360px; line-height: 1.4;">Go to Manage Cameras, add RTSP URLs, add location names, assign models, then save.</span>
+            </div>`;
+          return;
+        }
+
+        streamsArray.forEach((s, idx) => {
+          const location = s.location || `Location ${idx + 1}`;
+          const assigned = cameraModelsMap[String(idx)] || [];
+          const card = document.createElement("div");
+          card.className = "widget-card collapsed";
+          card.setAttribute("data-location-widget", String(idx));
+          card.innerHTML = `
+            <div class="widget-header clickable">
+              <div class="widget-title">
+                <h3>Widget ${idx + 1}</h3>
+              </div>
+              <div class="location-summary">
+                <span class="location-chip">${escapeHtml(location)}</span>
+                <span>${assigned.length} model(s)</span>
+              </div>
+              <span class="expand-arrow">▼</span>
+            </div>
+            <div class="widget-body">
+              <div class="location-table">
+                <div class="location-row header">
+                  <span>Camera</span>
+                  <span>Location</span>
+                  <span>Assigned Models</span>
+                  <span>Action</span>
+                </div>
+                <div class="location-row">
+                  <span>${escapeHtml(s.label || `Camera ${idx + 1}`)}</span>
+                  <span>${escapeHtml(location)}</span>
+                  <span>${assigned.length ? escapeHtml(assigned.map(m => m.replace(".pt", "")).join(", ")) : "No models assigned"}</span>
+                  <button class="btn-remove" data-remove-camera="${idx}">Remove</button>
+                </div>
+              </div>
+              <div class="camera-live-grid"></div>
+            </div>`;
+
+          const liveGrid = card.querySelector(".camera-live-grid");
+          liveGrid.appendChild(buildCameraBox(s, idx));
+
+          card.querySelector(".widget-header").addEventListener("click", () => {
+            card.classList.toggle("collapsed");
+            card.classList.toggle("expanded", !card.classList.contains("collapsed"));
+            notifyDetectionReady();
+          });
+
+          card.querySelector("[data-remove-camera]").addEventListener("click", (event) => {
+            event.stopPropagation();
+            removeCameraAt(idx);
+          });
+
+          locationWidgets.appendChild(card);
+        });
+      }
+
+      async function removeCameraAt(index) {
+        const streamToRemove = streamsArray[index];
+        if (streamToRemove) {
+          const streamId = streamToRemove.id !== undefined ? streamToRemove.id : index;
+          const rtspUrl = streamToRemove.rtsp || "";
+          const locId = streamToRemove.location_id || "";
+          const locName = streamToRemove.location || "";
+          try {
+            await fetch(`/api/streams?id=${encodeURIComponent(streamId)}&index=${encodeURIComponent(index)}&rtsp=${encodeURIComponent(rtspUrl)}&location_id=${encodeURIComponent(locId)}&location=${encodeURIComponent(locName)}`, {
+              method: "DELETE"
+            });
+          } catch (err) {
+            console.error("Error deleting stream from server:", err);
+          }
+        }
+        streamsArray.splice(index, 1);
+        const newMap = {};
+        for (let i = 0; i <= streamsArray.length; i++) {
+          if (i < index) {
+            newMap[String(i)] = cameraModelsMap[String(i)] || [];
+          } else if (i > index) {
+            newMap[String(i - 1)] = cameraModelsMap[String(i)] || [];
+          }
+        }
+        cameraModelsMap = newMap;
+        if (window.dashboardInstance) {
+          window.dashboardInstance.streams = streamsArray;
+          window.dashboardInstance.cameraModels = cameraModelsMap;
+        }
+        localStorage.setItem("offline_streams", JSON.stringify(streamsArray));
+        localStorage.setItem("offline_camera_models", JSON.stringify(cameraModelsMap));
+        renderCamerasConfig();
+        renderLocationWidgets();
+      }
+
+      async function saveCurrentConfiguration(shouldReload) {
+        // Build fresh cameraModelsMap directly from checked model & class checkboxes in the UI (Plug & Play)
+        const newCameraModelsMap = {};
+        streamsArray.forEach((s, idx) => {
+            const key = String(idx);
+            newCameraModelsMap[key] = [];
+
+            // 1. Parent non-PPE model checkboxes
+            const parentCbs = document.querySelectorAll(`.parent-model-checkbox[data-cam="${idx}"]:checked`);
+            parentCbs.forEach(cb => {
+                const m = cb.value;
+                if (!newCameraModelsMap[key].includes(m)) {
+                    newCameraModelsMap[key].push(m);
+                }
+            });
+
+            // 2. PPE class checkboxes
+            const classCbs = document.querySelectorAll(`.class-checkbox[data-cam="${idx}"]:checked`);
+            const enabledClassesPerModel = {};
+            classCbs.forEach(cb => {
+                const m = cb.getAttribute("data-model");
+                const cls = cb.value;
+                if (m) {
+                    if (!newCameraModelsMap[key].includes(m)) {
+                        newCameraModelsMap[key].push(m);
+                    }
+                    enabledClassesPerModel[m] = enabledClassesPerModel[m] || [];
+                    if (!enabledClassesPerModel[m].includes(cls)) {
+                        enabledClassesPerModel[m].push(cls);
+                    }
+                }
+            });
+
+            // Synchronize stream model_configs strictly with checked classes
+            s.model_configs = s.model_configs || {};
+            const cleanModelConfigs = {};
+
+            if (s.model_configs.roi_polygon) {
+                cleanModelConfigs.roi_polygon = s.model_configs.roi_polygon;
+            }
+
+            newCameraModelsMap[key].forEach(m => {
+                const cleanName = m.replace(".pt", "");
+                const existingCfg = s.model_configs[m] || s.model_configs[cleanName] || {};
+                const activeClasses = enabledClassesPerModel[m] || [];
+                
+                const updatedCfg = Object.assign({}, existingCfg, {
+                    enabled_classes: activeClasses
+                });
+                cleanModelConfigs[m] = updatedCfg;
+                cleanModelConfigs[cleanName] = updatedCfg;
+            });
+
+            s.model_configs = cleanModelConfigs;
+        });
+
+        // Update global cameraModelsMap with strictly selected models
+        if (document.querySelectorAll(".parent-model-checkbox, .class-checkbox").length > 0) {
+            cameraModelsMap = newCameraModelsMap;
+        }
+
+        const payload = streamsArray
+          .map((item, idx) => ({
+            id: item.id !== undefined ? item.id : idx,
+            rtsp: (item.rtsp || "").trim(),
+            location: (item.location || `Location ${idx + 1}`).trim(),
+            location_id: item.location_id || "",
+            device_id: item.device_id || "",
+            device_ip: item.device_ip || "",
+            device_status: item.device_status || "offline",
+            conf: item.conf !== undefined && item.conf !== null ? parseFloat(item.conf) : 0.40,
+            iou: item.iou !== undefined && item.iou !== null ? parseFloat(item.iou) : 0.45,
+            model_configs: item.model_configs || {}
+          }))
+          .filter(item => item.rtsp !== "");
+
+        try {
+          const res = await fetch("/api/streams", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+
+          const resModels = await fetch("/api/camera-models", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(cameraModelsMap)
+          });
+
+          if (!res.ok || !resModels.ok) {
+            const errText = !res.ok ? await res.text() : await resModels.text();
+            throw new Error(errText);
+          }
+
+          localStorage.setItem("offline_streams", JSON.stringify(payload));
+          localStorage.setItem("offline_camera_models", JSON.stringify(cameraModelsMap));
+          if (shouldReload) {
+            setTimeout(() => {
+              window.location.reload();
+            }, 500);
+          }
+        } catch (e) {
+          console.warn("API save failed, using local storage fallback:", e);
+          localStorage.setItem("offline_streams", JSON.stringify(payload));
+          localStorage.setItem("offline_camera_models", JSON.stringify(cameraModelsMap));
+          if (shouldReload) {
+            setTimeout(() => {
+              window.location.reload();
+            }, 800);
+          }
+        }
+      }
+
+      // Syncing state helper
+      function updateCheckboxState(camIdx, modelName, isChecked) {
+        const key = String(camIdx);
+        if (!cameraModelsMap[key]) {
+          cameraModelsMap[key] = [];
+        }
+        if (isChecked) {
+          if (!cameraModelsMap[key].includes(modelName)) {
+            cameraModelsMap[key].push(modelName);
+          }
+        } else {
+          cameraModelsMap[key] = cameraModelsMap[key].filter(m => m !== modelName);
+        }
+      }
+
+      function renderCamerasConfig() {
+        camerasEditList.innerHTML = "";
+        if (streamsArray.length === 0) {
+          camerasEditList.innerHTML = '<div style="color:var(--muted); font-size:.7rem;">No cameras configured. Click "+ Add Camera" to start.</div>';
+          return;
+        }
+
+        streamsArray.forEach((s, idx) => {
+          const assignedModels = cameraModelsMap[String(idx)] || [];
+
+          const wrapper = document.createElement("div");
+          wrapper.className = "camera-config-wrapper";
+
+          // Row 1: RTSP input + remove
+          const row = document.createElement("div");
+          row.className = "camera-config-fields";
+          row.innerHTML = `
+        <span class="cam-num">Widget ${idx + 1}</span>
+        <input type="text" value="${escapeHtml(s.location || `Location ${idx + 1}`)}" placeholder="Location e.g. Bangalore" data-index="${idx}" class="camera-location-input">
+        <input type="text" value="${escapeHtml(s.rtsp || '')}" placeholder="rtsp://your-camera-url" data-index="${idx}" class="camera-rtsp-input">
+        <button class="btn-remove" data-index="${idx}">Remove</button>
+      `;
+          wrapper.appendChild(row);
+
+          // Listen for RTSP URL changes in real-time
+          const input = row.querySelector(".camera-rtsp-input");
+          const locationInput = row.querySelector(".camera-location-input");
+          locationInput.addEventListener("input", (e) => {
+            if (streamsArray[idx]) {
+              streamsArray[idx].location = e.target.value;
+            }
+          });
+          input.addEventListener("input", (e) => {
+            if (streamsArray[idx]) {
+              streamsArray[idx].rtsp = e.target.value;
+            }
+          });
+
+          // Row 2: Model and Class checkboxes (Flat List)
+          if (allModels.length > 0) {
+            const modelRow = document.createElement("div");
+            modelRow.className = "model-assign-row";
+            modelRow.style.cssText = "display: flex; flex-direction: column; gap: 8px; width: 100%; box-sizing: border-box;";
+            modelRow.setAttribute("data-cam-index", idx);
+            modelRow.innerHTML = '<span class="assign-label" style="width: 100%; font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px;">Assign Models & Classes</span>';
+            
+            const listContainer = document.createElement("div");
+            listContainer.style.cssText = "display: flex; flex-wrap: wrap; gap: 8px; width: 100%; box-sizing: border-box; margin-top: 6px;";
+            
+            const streamMeta = streamsArray[idx] || {};
+            streamMeta.model_configs = streamMeta.model_configs || {};
+
+            // ── 1. Parent checkboxes for general (non-PPE) models ──
+            const ppeModelNames = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"];
+            allModels.forEach(m => {
+              if (ppeModelNames.includes(m)) return;
+              const checked = assignedModels.includes(m) ? 'checked' : '';
+              const cleanName = m.replace(".pt", "");
+              const lbl = document.createElement("label");
+              lbl.className = checked ? 'model-chip checked' : 'model-chip';
+              lbl.style.cssText = "margin: 0; display: inline-flex; cursor: pointer;";
+              lbl.innerHTML = `
+                <input type="checkbox" class="parent-model-checkbox" value="${m}" ${checked} data-cam="${idx}" style="cursor:pointer;accent-color:#00ffaa;margin:0;margin-right:4px;">
+                <span>${cleanName}</span>
+              `;
+              listContainer.appendChild(lbl);
+              const cb = lbl.querySelector(".parent-model-checkbox");
+              cb.onchange = () => {
+                lbl.classList.toggle('checked', cb.checked);
+              };
+            });
+
+            // ── 2. PPE-NEW class checkboxes ──
+            function renderPpeSection(modelFile, labelText, accentColor, classList) {
+              const cleanName = modelFile.replace(".pt", "");
+              const cfg = streamMeta.model_configs[modelFile] || streamMeta.model_configs[cleanName] || {};
+              const enabled = cfg.enabled_classes || [];
+
+              const hdr = document.createElement("div");
+              hdr.style.cssText = `width:100%;font-size:0.62rem;color:${accentColor};font-weight:700;letter-spacing:0.5px;margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.1);`;
+              hdr.textContent = labelText;
+              listContainer.appendChild(hdr);
+
+              classList.forEach(cls => {
+                const isChecked = enabled.includes(cls);
+                const lbl = document.createElement("label");
+                lbl.className = isChecked ? "model-chip checked" : "model-chip";
+                lbl.style.cssText = "margin:0;display:inline-flex;cursor:pointer;";
+                lbl.innerHTML = `<input type="checkbox" class="class-checkbox" value="${cls}" ${isChecked ? "checked" : ""} data-cam="${idx}" data-model="${modelFile}" style="cursor:pointer;accent-color:${accentColor};margin:0;margin-right:4px;"><span style="color:${isChecked ? accentColor : ''}">${cls}</span>`;
+                listContainer.appendChild(lbl);
+
+                const cb = lbl.querySelector(".class-checkbox");
+                cb.onchange = () => {
+                  lbl.classList.toggle("checked", cb.checked);
+                  const sp = cb.nextElementSibling;
+                  if (sp) sp.style.color = cb.checked ? accentColor : "";
+                };
+              });
+            }
+
+            renderPpeSection("ppe_new.pt", "PPE-NEW CLASSES", "#00ffaa", [
+              "Cap-Lamp","Gloves","Gum-Boots","Hard-Hat","Mask","NO-Mask",
+              "No-Cap-Lamp","No-Gloves","No-Gum-Boots","No-Hard-Hat",
+              "No-Saftey-Belt","No-Saftey-Vest","Saftey-Belt","Saftey-Vest"
+            ]);
+
+            renderPpeSection("nik_ppe_best.pt", "NIK-PPE CLASSES", "#f5a623", [
+              "Fall-Detected","Gloves","Goggles","Helmet","Mask","NO-Mask",
+              "No_Gloves","No_Goggles","No_Harness","No_boots","No_helmet",
+              "No_safety_vest","Safety Vest","boots","harness"
+            ]);
+
+            renderPpeSection("hf_ppe_detection.pt", "HF PPE DETECTION CLASSES", "#a78bfa", [
+              "helmet","human","no-helmet","vest"
+            ]);
+
+            renderPpeSection("keremberke_ppe_gear.pt", "KEREMBERKE GEAR CLASSES", "#38bdf8", [
+              "glove","goggles","helmet","mask","no_glove","no_goggles","no_helmet","no_mask","no_shoes","shoes"
+            ]);
+
+            renderPpeSection("hansung_ppe_violations.pt", "HANSUNG VIOLATIONS CLASSES", "#fb7185", [
+              "Hardhat","Mask","NO-Hardhat","NO-Mask","NO-Safety Vest","Person","Safety Cone","Safety Vest","machinery","vehicle"
+            ]);
+
+            modelRow.appendChild(listContainer);
+            wrapper.appendChild(modelRow);
+          }
+
+          camerasEditList.appendChild(wrapper);
+        });
+
+        // Bind remove button clicks
+        camerasEditList.querySelectorAll(".btn-remove").forEach(btn => {
+          btn.onclick = () => {
+            const index = parseInt(btn.getAttribute("data-index"));
+            removeCameraAt(index);
+          };
+        });
+      }
+
+      // Populate config cameras with loaded streams
+      renderCamerasConfig();
+
+      // Add camera
+      document.getElementById("btn-add-camera").onclick = () => {
+        streamsArray.push({ rtsp: "", location: `Location ${streamsArray.length + 1}` });
+        renderCamerasConfig();
+        renderLocationWidgets();
+      };
+
+      // Save cameras list + model assignments
+      document.getElementById("btn-save-cameras").onclick = async () => {
+        const btn = document.getElementById("btn-save-cameras");
+        btn.disabled = true;
+        btn.textContent = "Saving...";
+
+        await saveCurrentConfiguration(true);
+      };
+
+      renderLocationWidgets();
+      notifyDetectionReady();
+
+      // ── LOAD OTHER WIDGETS DYNAMICALLY ──
+      async function loadModelsWidget() {
+        const listContainer = document.getElementById("models-list-widget");
+
+        // Gather all unique assigned models across all configured cameras
+        const assignedSet = new Set();
+        Object.values(cameraModelsMap).forEach(modelsList => {
+          if (Array.isArray(modelsList)) {
+            modelsList.forEach(m => assignedSet.add(m));
+          }
+        });
+        const assignedList = Array.from(assignedSet);
+
+        if (assignedList.length === 0) {
+          listContainer.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding: 10px 0;">No models assigned to any camera. Go to Manage Cameras.</div>';
+          return;
+        }
+
+        listContainer.innerHTML = '<div class="item-list-widget">' +
+          assignedList.map(m => `
+        <div class="item-row">
+          <span>${m.replace(".pt", "")}</span>
+          <span class="status-indicator active">ASSIGNED</span>
+        </div>
+      `).join('') + '</div>';
+      }
+
+      async function loadPipelinesWidget() {
+        const listContainer = document.getElementById("pipelines-list-widget");
+        if (window.isOfflineMode) {
+          const active = [];
+          const modelMap = {};
+          for (let i = 0; i < streamsArray.length; i++) {
+            if (localStorage.getItem(`offline_detecting_${i}`) === "true") {
+              active.push(String(i));
+              modelMap[String(i)] = JSON.parse(localStorage.getItem(`offline_active_models_${i}`) || "[]");
+            }
+          }
+
+          if (active.length === 0) {
+            listContainer.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding: 10px 0;">No active AI detection pipelines</div>';
+          } else {
+            listContainer.innerHTML = '<div class="item-list-widget">' +
+              active.map(cam => {
+                const modelsUsed = modelMap[cam] || [];
+                return `
+              <div class="item-row">
+                <span>Camera ${parseInt(cam) + 1}</span>
+                <span class="status-indicator active">RUNNING (${modelsUsed.map(m => m.replace('.pt', '')).join(', ')})</span>
+              </div>
+            `;
+              }).join('') + '</div>';
+          }
+          return;
+        }
+        try {
+          const r = await fetch("/api/status");
+          const d = await r.json();
+          const active = d.active || [];
+          const modelMap = d.models || {};
+
+          if (active.length === 0) {
+            listContainer.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding: 10px 0;">No active AI detection pipelines</div>';
+          } else {
+            listContainer.innerHTML = '<div class="item-list-widget">' +
+              active.map(cam => {
+                const modelsUsed = modelMap[cam] || [];
+                return `
+              <div class="item-row">
+                <span>Camera ${parseInt(cam) + 1}</span>
+                <span class="status-indicator active">RUNNING (${modelsUsed.map(m => m.replace('.pt', '')).join(', ')})</span>
+              </div>
+            `;
+              }).join('') + '</div>';
+          }
+        } catch (e) {
+          listContainer.innerHTML = '<div style="color:var(--danger); font-size:.7rem;">Failed to load status.</div>';
+        }
+      }
+
+      // ── DEVICES WIDGET ──
+      async function loadDevicesWidget() {
+        const listContainer = document.getElementById("devices-list-widget");
+        if (!listContainer) return;
+        listContainer.innerHTML = '<div style="color:var(--muted); font-size:.7rem;">Checking devices...</div>';
+
+        if (window.isOfflineMode) {
+          const devices = streamsArray.map((s, idx) => {
+            let ip = "192.168.96.65";
+            try {
+              const match = s.rtsp.match(/@([^:/]+)(?::(\d+))?/);
+              if (match) {
+                ip = match[1];
+              }
+            } catch (_) { }
+            const isDetecting = localStorage.getItem(`offline_detecting_${idx}`) === "true";
+            return {
+              device_id: String(idx),
+              device_name: s.label || `Camera ${idx + 1}`,
+              device_ip: ip,
+              rtsp_url: s.rtsp,
+              device_status: "online",
+              stream_active: isDetecting,
+              last_checked: new Date().toISOString()
+            };
+          });
+
+          listContainer.innerHTML = '<div class="item-list-widget">' +
+            devices.map(dev => {
+              return `
+            <div class="item-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-weight: 600;">${dev.device_name}</span>
+                <span class="status-indicator active">ONLINE</span>
+              </div>
+              <div style="display: flex; gap: 16px; font-size: .62rem; color: var(--muted);">
+                <span>ID: <span style="color: var(--text);">${dev.device_id}</span></span>
+                <span>IP: <span style="color: var(--text);">${dev.device_ip || 'N/A'}</span></span>
+                <span>Stream: <span style="color: ${dev.stream_active ? 'var(--accent)' : 'var(--muted)'}">${dev.stream_active ? 'ACTIVE (AI)' : 'ACTIVE (RAW)'}</span></span>
+              </div>
+            </div>
+          `;
+            }).join('') + '</div>';
+          return;
+        }
+
+        try {
+          const r = await fetch("/api/devices");
+          const d = await r.json();
+          const devices = d.devices || [];
+
+          if (devices.length === 0) {
+            listContainer.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding: 10px 0;">No devices configured</div>';
+          } else {
+            listContainer.innerHTML = '<div class="item-list-widget">' +
+              devices.map(dev => {
+                const isOnline = dev.device_status === 'online';
+                const statusClass = isOnline ? 'active' : 'offline';
+                const statusText = isOnline ? 'ONLINE' : 'OFFLINE';
+                return `
+              <div class="item-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="font-weight: 600;">${dev.device_name}</span>
+                  <span class="status-indicator ${statusClass}">${statusText}</span>
+                </div>
+                <div style="display: flex; gap: 16px; font-size: .62rem; color: var(--muted);">
+                  <span>ID: <span style="color: var(--text);">${dev.device_id}</span></span>
+                  <span>IP: <span style="color: var(--text);">${dev.device_ip || 'N/A'}</span></span>
+                  <span>Stream: <span style="color: ${dev.stream_active ? 'var(--accent)' : 'var(--muted)'}">${dev.stream_active ? 'ACTIVE' : 'IDLE'}</span></span>
+                </div>
+              </div>
+            `;
+              }).join('') + '</div>';
+          }
+        } catch (e) {
+          listContainer.innerHTML = '<div style="color:var(--danger); font-size:.7rem;">Failed to load devices.</div>';
+        }
+      }
+
+      // Refresh button for devices
+      const refreshDevicesBtn = document.getElementById("btn-refresh-devices");
+      if (refreshDevicesBtn) {
+        refreshDevicesBtn.onclick = () => loadDevicesWidget();
+      }
+      // Dispatch ready event to draw saved ROIs
+      window.dispatchEvent(new CustomEvent("rtsp-dashboard-ready"));
+    });
+
+    let roiDrawStates = {};
+
+    window.handleRoiButtonClick = async function(cid) {
+      const btn = document.getElementById(`roi-btn-${cid}`);
+      const canvas = document.getElementById(`roi-canvas-${cid}`);
+      const video = document.getElementById(`v${cid}`);
+      const stream = streamsArray[Number(cid)];
+      if (!btn || !canvas || !video || !stream) return;
+
+      const box = document.getElementById(`cam-box-${cid}`);
+      const stopBtn = box ? box.querySelector(".stop") : null;
+
+      const isDrawingModeActive = canvas.style.pointerEvents === "auto";
+
+      const restoreStopButton = () => {
+        if (stopBtn && stopBtn.originalOnclick) {
+          stopBtn.textContent = stopBtn.getAttribute("data-orig-text") || "Stop";
+          stopBtn.onclick = stopBtn.originalOnclick;
+          stopBtn.style.borderColor = "";
+          stopBtn.style.color = "";
+        }
+      };
+
+      if (!isDrawingModeActive) {
+        // TURN ON DRAWING MODE
+        canvas.style.pointerEvents = "auto";
+        canvas.style.background = "transparent";
+        btn.textContent = "Save ROI";
+        btn.style.background = "var(--accent)";
+        btn.style.color = "#000";
+        
+        // Hide video controls to avoid click blocking
+        video.removeAttribute("controls");
+        
+        // Temporarily change Stop button to Clear ROI
+        if (stopBtn) {
+          stopBtn.setAttribute("data-orig-text", stopBtn.textContent);
+          stopBtn.originalOnclick = stopBtn.onclick;
+          stopBtn.textContent = "Clear ROI";
+          stopBtn.style.borderColor = "var(--danger)";
+          stopBtn.style.color = "var(--danger)";
+          
+          stopBtn.onclick = async (e) => {
+            e.stopPropagation();
+            
+            // Clear state and SVG
+            roiDrawStates[cid] = {
+              isDrawing: false,
+              startX: 0, startY: 0, startPctX: 0, startPctY: 0,
+              vertices: []
+            };
+            window.renderInlineRoi(cid);
+            
+            // Update metadata locally and on server
+            stream.model_configs = stream.model_configs || {};
+            stream.model_configs.roi_polygon = [];
+            localStorage.setItem("offline_streams", JSON.stringify(streamsArray));
+            
+            try {
+              await fetch("/api/update-thresholds", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  camera: cid,
+                  model_configs: stream.model_configs
+                })
+              });
+            } catch(err) {}
+            
+            // Exit drawing mode
+            canvas.style.pointerEvents = "none";
+            canvas.style.background = "transparent";
+            btn.textContent = "Draw ROI";
+            btn.style.background = "rgba(0, 240, 255, 0.1)";
+            btn.style.color = "var(--accent)";
+            video.setAttribute("controls", "");
+            
+            restoreStopButton();
+          };
+        }
+
+        // Initialize state
+        roiDrawStates[cid] = {
+          isDrawing: false,
+          startX: 0,
+          startY: 0,
+          startPctX: 0,
+          startPctY: 0,
+          vertices: stream.model_configs?.roi_polygon || []
+        };
+        
+        // Render existing ROI on start
+        window.renderInlineRoi(cid);
+        
+        // Bind events if not already done
+        if (!canvas.hasAttribute("data-bound")) {
+          canvas.setAttribute("data-bound", "true");
+          setupInlineRoiEvents(cid, canvas);
+        }
+      } else {
+        // SAVE AND TURN OFF DRAWING MODE
+        canvas.style.pointerEvents = "none";
+        canvas.style.background = "transparent";
+        btn.textContent = "Draw ROI";
+        btn.style.background = "rgba(0, 240, 255, 0.1)";
+        btn.style.color = "var(--accent)";
+        
+        // Restore video controls
+        video.setAttribute("controls", "");
+        
+        // Save to stream metadata
+        const state = roiDrawStates[cid];
+        if (state) {
+          stream.model_configs = stream.model_configs || {};
+          stream.model_configs.roi_polygon = state.vertices;
+          
+          localStorage.setItem("offline_streams", JSON.stringify(streamsArray));
+          
+          try {
+            const res = await fetch("/api/update-thresholds", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                camera: cid,
+                model_configs: stream.model_configs
+              })
+            });
+            if (res.ok) {
+              console.log(`ROI saved successfully for camera ${cid}`);
+            }
+          } catch (err) {
+            console.error("Error saving ROI:", err);
+          }
+        }
+        restoreStopButton();
+      }
+    };
+
+    function setupInlineRoiEvents(cid, canvas) {
+      const rectEl = document.getElementById(`roi-rect-${cid}`);
+      
+      canvas.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        const state = roiDrawStates[cid];
+        if (!state) return;
+        
+        const rect = canvas.getBoundingClientRect();
+        state.startX = e.clientX - rect.left;
+        state.startY = e.clientY - rect.top;
+        state.startPctX = state.startX / rect.width;
+        state.startPctY = state.startY / rect.height;
+        state.isDrawing = true;
+        
+        rectEl.setAttribute("x", String(state.startX));
+        rectEl.setAttribute("y", String(state.startY));
+        rectEl.setAttribute("width", "0");
+        rectEl.setAttribute("height", "0");
+        rectEl.style.display = "block";
+      });
+
+      canvas.addEventListener("mousemove", (e) => {
+        const state = roiDrawStates[cid];
+        if (!state || !state.isDrawing) return;
+        
+        const rect = canvas.getBoundingClientRect();
+        const currentX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const currentY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+        
+        const x = Math.min(state.startX, currentX);
+        const y = Math.min(state.startY, currentY);
+        const w = Math.abs(currentX - state.startX);
+        const h = Math.abs(currentY - state.startY);
+        
+        rectEl.setAttribute("x", String(x));
+        rectEl.setAttribute("y", String(y));
+        rectEl.setAttribute("width", String(w));
+        rectEl.setAttribute("height", String(h));
+
+        // Distance calculation & badge display (commented out for now, preserved for future use):
+        /*
+        const minY = Math.min(state.startPctY, currentY / rect.height);
+        const maxY = Math.max(state.startPctY, currentY / rect.height);
+        const distNear = (2.5 / Math.pow(Math.max(0.08, maxY - 0.05), 0.95)).toFixed(1);
+        const distFar = (2.5 / Math.pow(Math.max(0.08, minY - 0.05), 0.95)).toFixed(1);
+        const badgeG = document.getElementById(`roi-badge-${cid}`);
+        const badgeBg = document.getElementById(`roi-badge-bg-${cid}`);
+        const badgeText = document.getElementById(`roi-badge-text-${cid}`);
+        if (badgeG && badgeBg && badgeText) {
+          const txt = `ROI: ${distNear}m - ${distFar}m`;
+          badgeText.textContent = txt;
+          const bgW = txt.length * 7.2 + 10;
+          const cx = (x + (x + w)) / 2;
+          const badgeX = Math.max(0, cx - bgW / 2);
+          badgeBg.setAttribute("x", String(badgeX));
+          badgeBg.setAttribute("y", String(Math.max(0, y - 22)));
+          badgeBg.setAttribute("width", String(bgW));
+          badgeBg.setAttribute("height", "16");
+          badgeText.setAttribute("x", String(badgeX + 5));
+          badgeText.setAttribute("y", String(Math.max(8, y - 13)));
+          badgeG.style.display = "block";
+        }
+        */
+      });
+
+      window.addEventListener("mouseup", async (e) => {
+        const state = roiDrawStates[cid];
+        if (!state || !state.isDrawing) return;
+        
+        state.isDrawing = false;
+        const rect = canvas.getBoundingClientRect();
+        const currentX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const currentY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+        
+        const nx1 = parseFloat(Math.min(state.startPctX, currentX / rect.width).toFixed(4));
+        const ny1 = parseFloat(Math.min(state.startPctY, currentY / rect.height).toFixed(4));
+        const nx2 = parseFloat(Math.max(state.startPctX, currentX / rect.width).toFixed(4));
+        const ny2 = parseFloat(Math.max(state.startPctY, currentY / rect.height).toFixed(4));
+        
+        // Only update vertices if the user actually dragged a valid box (> 2% width & height)
+        if (nx2 - nx1 >= 0.02 && ny2 - ny1 >= 0.02) {
+          state.vertices = [[nx1, ny1], [nx2, ny2]];
+          renderInlineRoi(cid);
+          
+          // Auto-save immediately to stream metadata and backend
+          stream.model_configs = stream.model_configs || {};
+          stream.model_configs.roi_polygon = state.vertices;
+          localStorage.setItem("offline_streams", JSON.stringify(streamsArray));
+          
+          try {
+            await fetch("/api/update-thresholds", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                camera: cid,
+                model_configs: stream.model_configs
+              })
+            });
+            console.log(`ROI automatically synced to server for camera ${cid}:`, state.vertices);
+          } catch (err) {
+            console.error("Error auto-syncing ROI:", err);
+          }
+        } else {
+          // Keep existing vertices if they just tapped
+          renderInlineRoi(cid);
+        }
+      });
+    }
+
+    window.roiDrawStates = roiDrawStates;
+
+    window.toggleCardMaximize = function(cid) {
+      const box = document.getElementById(`cam-box-${cid}`);
+      if (!box) return;
+      const isMax = box.classList.toggle("maximized-card");
+      
+      const btn = box.querySelector(".maximize-btn");
+      if (btn) {
+        btn.innerHTML = isMax ? "✕ Close Fullscreen" : "⛶ Maximize";
+        btn.style.background = isMax ? "rgba(255, 65, 85, 0.85)" : "rgba(0,0,0,0.65)";
+        btn.style.borderColor = isMax ? "rgba(255, 65, 85, 0.5)" : "rgba(255,255,255,0.25)";
+      }
+      
+      // Recalculate and render the SVG ROI rectangle since card dimensions changed!
+      setTimeout(() => {
+        window.renderInlineRoi(cid);
+      }, 150);
+    };
+
+    // Close maximized stream card on pressing Escape key
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") {
+        const maxBox = document.querySelector(".box.maximized-card");
+        if (maxBox) {
+          const cid = maxBox.getAttribute("data-camera-id");
+          if (cid !== null && cid !== undefined) {
+            window.toggleCardMaximize(cid);
+          }
+        }
+      }
+    });
+
+    window.renderInlineRoi = function(cid) {
+      const state = roiDrawStates[cid];
+      const canvas = document.getElementById(`roi-canvas-${cid}`);
+      const rectEl = document.getElementById(`roi-rect-${cid}`);
+      const badgeG = document.getElementById(`roi-badge-${cid}`);
+      const badgeBg = document.getElementById(`roi-badge-bg-${cid}`);
+      const badgeText = document.getElementById(`roi-badge-text-${cid}`);
+      if (!state || !canvas || !rectEl) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      
+      if (state.vertices && state.vertices.length === 2) {
+        const minX = Math.min(state.vertices[0][0], state.vertices[1][0]);
+        const minY = Math.min(state.vertices[0][1], state.vertices[1][1]);
+        const maxX = Math.max(state.vertices[0][0], state.vertices[1][0]);
+        const maxY = Math.max(state.vertices[0][1], state.vertices[1][1]);
+
+        const rx1 = minX * rect.width;
+        const ry1 = minY * rect.height;
+        const rx2 = maxX * rect.width;
+        const ry2 = maxY * rect.height;
+        
+        rectEl.setAttribute("x", String(rx1));
+        rectEl.setAttribute("y", String(ry1));
+        rectEl.setAttribute("width", String(rx2 - rx1));
+        rectEl.setAttribute("height", String(ry2 - ry1));
+        rectEl.style.display = "block";
+
+        // Distance calculation & badge display (commented out for now, preserved for future use):
+        /*
+        if (badgeG && badgeBg && badgeText) {
+          const distNear = (2.5 / Math.pow(Math.max(0.08, maxY - 0.05), 0.95)).toFixed(1);
+          const distFar = (2.5 / Math.pow(Math.max(0.08, minY - 0.05), 0.95)).toFixed(1);
+          const txt = `ROI: ${distNear}m - ${distFar}m`;
+          badgeText.textContent = txt;
+          const bgW = txt.length * 7.2 + 10;
+          const cx = (rx1 + rx2) / 2;
+          const badgeX = Math.max(0, cx - bgW / 2);
+          badgeBg.setAttribute("x", String(badgeX));
+          badgeBg.setAttribute("y", String(Math.max(0, ry1 - 22)));
+          badgeBg.setAttribute("width", String(bgW));
+          badgeBg.setAttribute("height", "16");
+          badgeText.setAttribute("x", String(badgeX + 5));
+          badgeText.setAttribute("y", String(Math.max(8, ry1 - 13)));
+          badgeG.style.display = "block";
+        }
+        */
+      } else {
+        rectEl.style.display = "none";
+        if (badgeG) badgeG.style.display = "none";
+      }
+    };
+
+    // Auto-render saved ROIs for all loaded camera cards on resize
+    window.addEventListener("resize", () => {
+      Object.keys(roiDrawStates).forEach(cid => {
+        window.renderInlineRoi(cid);
+      });
+    });
+
+    // Auto-render saved ROIs for all camera cards after dashboard rendering completes
+    window.addEventListener("rtsp-dashboard-ready", () => {
+      setTimeout(() => {
+        if (typeof streamsArray !== "undefined" && Array.isArray(streamsArray)) {
+          streamsArray.forEach((s, idx) => {
+            if (s.model_configs && s.model_configs.roi_polygon) {
+              roiDrawStates[idx] = {
+                isDrawing: false,
+                startX: 0,
+                startY: 0,
+                startPctX: 0,
+                startPctY: 0,
+                vertices: s.model_configs.roi_polygon
+              };
+              window.renderInlineRoi(idx);
+            }
+          });
+        }
+      }, 600);
+    });
+  </script>
+
+  <!-- ========================================================================= -->
+  <!-- 🧪 AI VIDEO TESTING LAB - STANDALONE CONTROLLER -->
+  <!-- ========================================================================= -->
+  <script>
+    window.vlabUploadedFilename = null;
+    window.vlabActiveJobId = null;
+    window.vlabPollInterval = null;
+    window.vlabSelectedImgsz = 640;
+    window.vlabLiveStreamingActive = false;
+    window.vlabLiveParamDebounceTimer = null;
+
+    window.vlabSetImgsz = function(sz, btnEl) {
+      window.vlabSelectedImgsz = parseInt(sz) || 640;
+      document.querySelectorAll(".vlab-imgsz-btn").forEach(b => {
+        b.classList.remove("active");
+        b.style.background = "";
+        b.style.borderColor = "";
+        b.style.color = "";
+      });
+      if (btnEl) {
+        btnEl.classList.add("active");
+        btnEl.style.background = "var(--accent-dim)";
+        btnEl.style.borderColor = "var(--accent)";
+        btnEl.style.color = "var(--accent)";
+      }
+      if (window.vlabLiveStreamingActive) {
+        window.vlabPushLiveParams();
+      }
+    };
+
+    window.vlabLoadModels = function() {
+      const modelSelect = document.getElementById("vlab-model-select");
+      if (!modelSelect) return;
+      
+      fetch("/api/models")
+        .then(r => r.json())
+        .then(data => {
+          const models = data.models || [];
+          modelSelect.innerHTML = "";
+          if (models.length === 0) {
+            modelSelect.innerHTML = '<option value="">No .pt models found in models/ directory</option>';
+            return;
+          }
+          models.forEach(m => {
+            const opt = document.createElement("option");
+            opt.value = m;
+            opt.textContent = m;
+            if (m.includes("hansung") || m.includes("ppe")) opt.selected = true;
+            modelSelect.appendChild(opt);
+          });
+          window.vlabLoadModelClasses(modelSelect.value);
+        })
+        .catch(e => {
+          console.error("[VideoLab] Failed to load models:", e);
+          modelSelect.innerHTML = '<option value="hansung_ppe_violations.pt">hansung_ppe_violations.pt</option>';
+          window.vlabLoadModelClasses("hansung_ppe_violations.pt");
+        });
+    };
+
+    window.vlabLoadModelClasses = function(modelName) {
+      const container = document.getElementById("vlab-classes-container");
+      if (!container || !modelName) return;
+      
+      container.innerHTML = '<span style="font-size: 0.70rem; color: var(--muted);">Loading classes...</span>';
+      
+      fetch(`/api/model-classes?model=${encodeURIComponent(modelName)}`)
+        .then(r => r.json())
+        .then(data => {
+          const classes = data.classes || [];
+          container.innerHTML = "";
+          if (classes.length === 0) {
+            container.innerHTML = '<span style="font-size: 0.70rem; color: var(--muted);">All classes enabled by default</span>';
+            return;
+          }
+          classes.forEach(c => {
+            const label = document.createElement("label");
+            label.style.cssText = "display: flex; align-items: center; gap: 5px; font-size: 0.72rem; background: rgba(0,0,0,0.3); border: 1px solid var(--border); padding: 3px 8px; border-radius: 4px; cursor: pointer; user-select: none;";
+            
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.value = c;
+            cb.checked = true;
+            cb.style.accentColor = "var(--accent)";
+            cb.onchange = () => {
+              if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();
+            };
+            
+            const span = document.createElement("span");
+            span.textContent = c;
+            
+            label.appendChild(cb);
+            label.appendChild(span);
+            container.appendChild(label);
+          });
+          if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();
+        })
+        .catch(e => {
+          container.innerHTML = '<span style="font-size: 0.70rem; color: var(--danger);">Failed to load classes</span>';
+        });
+    };
+
+    window.vlabHandleFileInput = function(inputEl) {
+      if (inputEl && inputEl.files && inputEl.files.length > 0) {
+        window.vlabProcessFile(inputEl.files[0]);
+      }
+    };
+
+    window.vlabProcessFile = function(file) {
+      if (!file) return;
+      
+      const detailsBox = document.getElementById("vlab-file-details");
+      const filenameLabel = document.getElementById("vlab-filename-label");
+      const filesizeLabel = document.getElementById("vlab-filesize-label");
+      const resLabel = document.getElementById("vlab-resolution-label");
+      const durLabel = document.getElementById("vlab-duration-label");
+      const rawVideo = document.getElementById("vlab-raw-video");
+      const rawPlaceholder = document.getElementById("vlab-raw-placeholder");
+      const uploadStatus = document.getElementById("vlab-upload-status");
+
+      if (filenameLabel) filenameLabel.textContent = file.name;
+      if (filesizeLabel) filesizeLabel.textContent = (file.size / (1024 * 1024)).toFixed(1) + " MB";
+      if (detailsBox) detailsBox.style.display = "block";
+      
+      if (rawVideo) {
+        const localUrl = URL.createObjectURL(file);
+        rawVideo.src = localUrl;
+        rawVideo.style.display = "block";
+        if (rawPlaceholder) rawPlaceholder.style.display = "none";
+        
+        rawVideo.onloadedmetadata = () => {
+          if (resLabel) resLabel.textContent = `${rawVideo.videoWidth}x${rawVideo.videoHeight}`;
+          if (durLabel) durLabel.textContent = `${rawVideo.duration.toFixed(1)}s`;
+        };
+      }
+
+      if (uploadStatus) {
+        uploadStatus.textContent = "Uploading video to server...";
+        uploadStatus.style.color = "var(--accent)";
+      }
+      
+      fetch(`/api/video-test/upload?filename=${encodeURIComponent(file.name)}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-Filename": encodeURIComponent(file.name)
+        },
+        body: file
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.status === "ok") {
+          window.vlabUploadedFilename = res.raw_filename;
+          if (uploadStatus) {
+            uploadStatus.textContent = "Video Ready for AI Detection ✓";
+            uploadStatus.style.color = "var(--accent)";
+          }
+        } else {
+          if (uploadStatus) {
+            uploadStatus.textContent = "Upload Error: " + (res.message || "Failed");
+            uploadStatus.style.color = "var(--danger)";
+          }
+        }
+      })
+      .catch(err => {
+        if (uploadStatus) {
+          uploadStatus.textContent = "Upload Failed: " + err.message;
+          uploadStatus.style.color = "var(--danger)";
+        }
+      });
+    };
+
+    // ==========================================
+    // ⚡ INSTANT LIVE VIDEO DETECTION STREAMING
+    // ==========================================
+    window.vlabStartLiveStream = function() {
+      if (!window.vlabUploadedFilename) {
+        alert("Please select and upload a video file first.");
+        return;
+      }
+
+      const modelSelect = document.getElementById("vlab-model-select");
+      const confSlider = document.getElementById("vlab-conf-slider");
+      const iouSlider = document.getElementById("vlab-iou-slider");
+      
+      const modelName = modelSelect ? modelSelect.value : "";
+      if (!modelName) {
+        alert("Please select a YOLO model.");
+        return;
+      }
+
+      const enabledClasses = [];
+      document.querySelectorAll("#vlab-classes-container input[type='checkbox']:checked").forEach(cb => {
+        enabledClasses.push(cb.value);
+      });
+
+      const frameSkipSelect = document.getElementById("vlab-frameskip-select");
+      const payload = {
+        raw_filename: window.vlabUploadedFilename,
+        model_name: modelName,
+        conf: parseFloat(confSlider.value) || 0.35,
+        iou: parseFloat(iouSlider.value) || 0.45,
+        imgsz: window.vlabSelectedImgsz || 640,
+        enabled_classes: enabledClasses,
+        frame_step: parseInt(frameSkipSelect ? frameSkipSelect.value : 1) || 1
+      };
+
+      const liveCard = document.getElementById("vlab-live-card");
+      const livePlayer = document.getElementById("vlab-live-player");
+      const livePlaceholder = document.getElementById("vlab-live-placeholder");
+      const liveStatusTxt = document.getElementById("vlab-live-status-txt");
+      const progressCard = document.getElementById("vlab-progress-card");
+      const resultsCard = document.getElementById("vlab-results-card");
+
+      if (progressCard) progressCard.style.display = "none";
+      if (resultsCard) resultsCard.style.display = "none";
+      if (liveCard) liveCard.style.display = "flex";
+      if (livePlaceholder) livePlaceholder.style.display = "none";
+      if (livePlayer) livePlayer.style.display = "block";
+      if (liveStatusTxt) liveStatusTxt.textContent = "Connecting to Live YOLO Stream...";
+
+      fetch("/api/video-test/live-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.status === "ok") {
+          window.vlabLiveStreamingActive = true;
+          if (livePlayer) {
+            livePlayer.src = `/api/video-test/live-stream?t=${Date.now()}`;
+          }
+          if (liveStatusTxt) {
+            liveStatusTxt.textContent = `Streaming Active • ${modelName} (${payload.imgsz}px, Conf ${payload.conf})`;
+          }
+        } else {
+          alert("Failed to start Live Video Stream: " + (res.message || "Unknown error"));
+          if (liveStatusTxt) liveStatusTxt.textContent = "Failed to start stream";
+        }
+      })
+      .catch(err => {
+        console.error("[VideoLab] Live stream start error:", err);
+        alert("Live stream network error: " + err.message);
+      });
+    };
+
+    window.vlabStopLiveStream = function() {
+      window.vlabLiveStreamingActive = false;
+      const livePlayer = document.getElementById("vlab-live-player");
+      const livePlaceholder = document.getElementById("vlab-live-placeholder");
+      const liveStatusTxt = document.getElementById("vlab-live-status-txt");
+
+      if (livePlayer) {
+        livePlayer.src = "";
+        livePlayer.style.display = "none";
+      }
+      if (livePlaceholder) livePlaceholder.style.display = "block";
+      if (liveStatusTxt) liveStatusTxt.textContent = "Stream Stopped";
+
+      fetch("/api/video-test/live-stop", { method: "POST" })
+        .catch(e => console.warn("[VideoLab] Live stop error:", e));
+    };
+
+    window.vlabPushLiveParams = function() {
+      if (!window.vlabLiveStreamingActive) return;
+
+      if (window.vlabLiveParamDebounceTimer) {
+        clearTimeout(window.vlabLiveParamDebounceTimer);
+      }
+
+      window.vlabLiveParamDebounceTimer = setTimeout(() => {
+        const modelSelect = document.getElementById("vlab-model-select");
+        const confSlider = document.getElementById("vlab-conf-slider");
+        const iouSlider = document.getElementById("vlab-iou-slider");
+        const frameSkipSelect = document.getElementById("vlab-frameskip-select");
+        
+        const enabledClasses = [];
+        document.querySelectorAll("#vlab-classes-container input[type='checkbox']:checked").forEach(cb => {
+          enabledClasses.push(cb.value);
+        });
+
+        const payload = {
+          conf: parseFloat(confSlider ? confSlider.value : 0.35),
+          iou: parseFloat(iouSlider ? iouSlider.value : 0.45),
+          imgsz: window.vlabSelectedImgsz || 640,
+          enabled_classes: enabledClasses,
+          model_name: modelSelect ? modelSelect.value : null,
+          frame_step: parseInt(frameSkipSelect ? frameSkipSelect.value : 1) || 1
+        };
+
+        fetch("/api/video-test/live-params", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        })
+        .then(r => r.json())
+        .then(res => {
+          const liveStatusTxt = document.getElementById("vlab-live-status-txt");
+          if (liveStatusTxt && res.status === "ok") {
+            liveStatusTxt.textContent = `Updated: Conf ${payload.conf.toFixed(2)}, IoU ${payload.iou.toFixed(2)}, ${payload.imgsz}px, Step ${payload.frame_step}× (${enabledClasses.length} classes)`;
+          }
+        })
+        .catch(e => console.warn("[VideoLab] Live param sync error:", e));
+      }, 50);
+    };
+
+    // Attach dynamic live input listeners to sliders
+    document.addEventListener("DOMContentLoaded", () => {
+      const confSlider = document.getElementById("vlab-conf-slider");
+      const iouSlider = document.getElementById("vlab-iou-slider");
+      
+      if (confSlider) {
+        confSlider.addEventListener("input", () => {
+          const valEl = document.getElementById("vlab-conf-val");
+          if (valEl) valEl.innerText = parseFloat(confSlider.value).toFixed(2);
+          if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();
+        });
+      }
+
+      if (iouSlider) {
+        iouSlider.addEventListener("input", () => {
+          const valEl = document.getElementById("vlab-iou-val");
+          if (valEl) valEl.innerText = parseFloat(iouSlider.value).toFixed(2);
+          if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();
+        });
+      }
+    });
+
+    // ==========================================
+    // 📦 OFFLINE BATCH RENDER & MP4 EXPORT
+    // ==========================================
+    window.vlabStartDetectionJob = function() {
+      if (!window.vlabUploadedFilename) {
+        alert("Please select and upload a video file first.");
+        return;
+      }
+      
+      const modelSelect = document.getElementById("vlab-model-select");
+      const confSlider = document.getElementById("vlab-conf-slider");
+      const iouSlider = document.getElementById("vlab-iou-slider");
+      const frameSkipSelect = document.getElementById("vlab-frameskip-select");
+      
+      const modelName = modelSelect ? modelSelect.value : "";
+      if (!modelName) {
+        alert("Please select a YOLO model.");
+        return;
+      }
+
+      const enabledClasses = [];
+      document.querySelectorAll("#vlab-classes-container input[type='checkbox']:checked").forEach(cb => {
+        enabledClasses.push(cb.value);
+      });
+
+      const payload = {
+        raw_filename: window.vlabUploadedFilename,
+        model_name: modelName,
+        conf: parseFloat(confSlider.value) || 0.35,
+        iou: parseFloat(iouSlider.value) || 0.45,
+        imgsz: window.vlabSelectedImgsz || 640,
+        enabled_classes: enabledClasses,
+        frame_skip: parseInt(frameSkipSelect.value) || 1
+      };
+
+      const startBtn = document.getElementById("vlab-batch-btn");
+      if (startBtn) {
+        startBtn.disabled = true;
+        startBtn.style.opacity = "0.5";
+      }
+
+      const liveCard = document.getElementById("vlab-live-card");
+      const progressCard = document.getElementById("vlab-progress-card");
+      const resultsCard = document.getElementById("vlab-results-card");
+      if (liveCard) liveCard.style.display = "none";
+      if (progressCard) progressCard.style.display = "block";
+      if (resultsCard) resultsCard.style.display = "none";
+
+      fetch("/api/video-test/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (startBtn) {
+          startBtn.disabled = false;
+          startBtn.style.opacity = "1";
+        }
+        
+        if (res.status === "ok" && res.job) {
+          window.vlabActiveJobId = res.job.job_id;
+          window.vlabStartStatusPolling(window.vlabActiveJobId);
+        } else {
+          alert("Failed to start detection job: " + (res.message || "Unknown error"));
+          if (progressCard) progressCard.style.display = "none";
+        }
+      })
+      .catch(err => {
+        if (startBtn) {
+          startBtn.disabled = false;
+          startBtn.style.opacity = "1";
+        }
+        alert("Network error: " + err.message);
+        if (progressCard) progressCard.style.display = "none";
+      });
+    };
+
+    window.vlabStartStatusPolling = function(jobId) {
+      if (window.vlabPollInterval) clearInterval(window.vlabPollInterval);
+      
+      const progressFill = document.getElementById("vlab-progress-fill");
+      const progPct = document.getElementById("vlab-prog-pct");
+      const progFrame = document.getElementById("vlab-prog-frame");
+      const progFps = document.getElementById("vlab-prog-fps");
+      const progElapsed = document.getElementById("vlab-prog-elapsed");
+      const progEta = document.getElementById("vlab-prog-eta");
+
+      window.vlabPollInterval = setInterval(() => {
+        fetch(`/api/video-test/status/${jobId}`)
+          .then(r => r.json())
+          .then(res => {
+            if (res.status !== "ok" || !res.job) return;
+            const job = res.job;
+            
+            const pct = Math.min(100, Math.max(0, job.progress || 0));
+            if (progressFill) progressFill.style.width = pct + "%";
+            if (progPct) progPct.textContent = pct.toFixed(1) + "%";
+            if (progFrame) progFrame.textContent = `${job.current_frame} / ${job.total_frames}`;
+            if (progFps) progFps.textContent = (job.processing_fps || 0).toFixed(1) + " FPS";
+            if (progElapsed) progElapsed.textContent = (job.elapsed_sec || 0).toFixed(1) + "s";
+            if (progEta) progEta.textContent = job.eta_sec > 0 ? `${job.eta_sec.toFixed(1)}s` : "Finishing...";
+
+            if (job.status === "completed") {
+              clearInterval(window.vlabPollInterval);
+              window.vlabPollInterval = null;
+              window.vlabRenderCompletedResults(job);
+            } else if (job.status === "failed") {
+              clearInterval(window.vlabPollInterval);
+              window.vlabPollInterval = null;
+              document.getElementById("vlab-progress-card").style.display = "none";
+              alert("Video AI Detection Failed: " + (job.error || "Unknown error"));
+            } else if (job.status === "cancelled") {
+              clearInterval(window.vlabPollInterval);
+              window.vlabPollInterval = null;
+              document.getElementById("vlab-progress-card").style.display = "none";
+            }
+          })
+          .catch(e => console.error("[VideoLab] Status poll error:", e));
+      }, 500);
+    };
+
+    window.vlabRenderCompletedResults = function(job) {
+      const progressCard = document.getElementById("vlab-progress-card");
+      if (progressCard) progressCard.style.display = "none";
+      const resultsCard = document.getElementById("vlab-results-card");
+      if (resultsCard) resultsCard.style.display = "flex";
+
+      const videoEl = document.getElementById("vlab-result-video");
+      const downloadBtn = document.getElementById("vlab-download-btn");
+      
+      const videoSrc = `/api/video-test/result/${job.job_id}?t=${Date.now()}`;
+      if (videoEl) {
+        videoEl.src = videoSrc;
+        videoEl.load();
+        videoEl.play().catch(() => {});
+      }
+      
+      if (downloadBtn) {
+        downloadBtn.href = videoSrc;
+        downloadBtn.download = job.result_filename;
+      }
+
+      const elDets = document.getElementById("vlab-res-total-dets");
+      const elFrames = document.getElementById("vlab-res-frames");
+      const elTime = document.getElementById("vlab-res-time");
+      const elFps = document.getElementById("vlab-res-fps");
+
+      if (elDets) elDets.textContent = job.detections_total || 0;
+      if (elFrames) elFrames.textContent = job.total_frames || 0;
+      if (elTime) elTime.textContent = (job.elapsed_sec || 0).toFixed(1) + "s";
+      if (elFps) elFps.textContent = (job.processing_fps || 0).toFixed(1) + " FPS";
+
+      const pillsContainer = document.getElementById("vlab-res-class-pills");
+      if (pillsContainer) {
+        pillsContainer.innerHTML = "";
+        const classCounts = job.class_counts || {};
+        const keys = Object.keys(classCounts);
+        
+        if (keys.length === 0) {
+          pillsContainer.innerHTML = '<span style="font-size: 0.72rem; color: var(--muted);">No target objects detected in video</span>';
+        } else {
+          keys.forEach(k => {
+            const count = classCounts[k];
+            const pill = document.createElement("div");
+            const isViolation = k.toLowerCase().startsWith("no-") || k.toLowerCase().startsWith("without-");
+            pill.style.cssText = `background: ${isViolation ? 'rgba(255, 65, 85, 0.15)' : 'rgba(0, 229, 160, 0.15)'}; border: 1px solid ${isViolation ? 'var(--danger)' : 'var(--accent)'}; color: ${isViolation ? '#ff8090' : 'var(--accent)'}; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; display: flex; align-items: center; gap: 6px;`;
+            pill.innerHTML = `<span>${k}</span><strong style="color:#fff; background:rgba(0,0,0,0.4); padding:1px 6px; border-radius:4px;">${count}</strong>`;
+            pillsContainer.appendChild(pill);
+          });
+        }
+      }
+    };
+
+    window.vlabCancelJob = function() {
+      if (window.vlabActiveJobId) {
+        fetch(`/api/video-test/${window.vlabActiveJobId}`, { method: "DELETE" });
+      }
+      if (window.vlabPollInterval) {
+        clearInterval(window.vlabPollInterval);
+        window.vlabPollInterval = null;
+      }
+      const progressCard = document.getElementById("vlab-progress-card");
+      if (progressCard) progressCard.style.display = "none";
+    };
+
+    window.initVideoLab = function() {
+      window.vlabLoadModels();
+    };
+
+    // Auto-load models immediately on script evaluation
+    setTimeout(window.vlabLoadModels, 100);
+    window.addEventListener("load", window.vlabLoadModels);
+  </script>
+
+</body>
+
+</html>
