@@ -370,11 +370,15 @@ class DetectorWorker:
         GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)
 
     def _get_db_conn(self):
-        if not PSYCOPG2_AVAILABLE: return None
+        if not PSYCOPG2_AVAILABLE:
+            print("[ALERT-DB-ERR] psycopg2 module not available in Python environment", flush=True)
+            return None
         if self._db_conn is None or self._db_conn.closed:
             try:
                 self._db_conn = psycopg2.connect(DB_DSN, connect_timeout=5)
-            except: self._db_conn = None
+            except Exception as e:
+                print(f"[ALERT-DB-CONN-ERR] PostgreSQL connection to {DB_DSN} failed: {e}", flush=True)
+                self._db_conn = None
         return self._db_conn
 
     def _create_ffmpeg(self):
