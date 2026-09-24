@@ -1,17 +1,17 @@
 import os
-os.environ["OMP_NUM_THREADS"] = "4"
-os.environ["MKL_NUM_THREADS"] = "4"
-os.environ["OPENBLAS_NUM_THREADS"] = "4"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
-os.environ["NUMEXPR_NUM_THREADS"] = "4"
-os.environ["TORCH_NUM_THREADS"] = "4"
-os.environ["OPENCV_FOR_THREADS_NUM"] = "2"
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
+os.environ["NUMEXPR_NUM_THREADS"] = "2"
+os.environ["TORCH_NUM_THREADS"] = "2"
+os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
 
 import cv2, subprocess, time, threading, queue, json, math
 import numpy as np
 try:
-    cv2.setNumThreads(2)
+    cv2.setNumThreads(1)
     cv2.ocl.setUseOpenCL(False)
 except Exception:
     pass
@@ -38,10 +38,11 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Optimize PyTorch CPU threading to 4 cores for fast matrix math on Raspberry Pi 4 CPU
+# Optimize PyTorch CPU threading to 2 dedicated cores on Raspberry Pi 4 CPU
+# (Leaves remaining cores free for real-time RTSP decoding & FFmpeg HLS streaming)
 try:
     import torch
-    torch.set_num_threads(4)
+    torch.set_num_threads(2)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
 except Exception:
@@ -56,16 +57,11 @@ YOLO_CACHE = {}
 # ──────────────────────────────────────────────────────────────────────────────
 # TUNABLE KNOBS
 # ──────────────────────────────────────────────────────────────────────────────
-# How long (seconds) a persistent track survives without being refreshed by
-# new inference.  Shorter = snappier cleanup of moved objects.
-# Keep this short (2-3 s) so stale boxes don't pile up between scheduler cycles.
-TRACK_MAX_AGE_S = 2.5
+# Shorter track age (1.2s) ensures snappy box movement that tracks moving people
+TRACK_MAX_AGE_S = 1.2
 
-# EMA (Exponential Moving Average) smoothing for bounding box positions.
-# A value of 0.0 = always use fresh raw detection (no smoothing, boxes jump).
-# A value of 0.5 = 50% old position + 50% new detection (strong smoothing).
-# 0.35 is a good balance: stable boxes that still follow fast-moving people.
-BOX_EMA_ALPHA = 0.35
+# 0.20 EMA gives 80% weight to fresh coordinates so boxes stick to moving objects
+BOX_EMA_ALPHA = 0.20
 
 # Minimum IoU overlap to consider two boxes the same detection (same-class NMS)
 NMS_SAME_IOU_THRESH = 0.30
@@ -632,11 +628,18 @@ class DetectorWorker:
                     if isinstance(cc, dict) and "conf" in cc:
                         min_class_conf = min(min_class_conf, float(cc["conf"]))
 
-            # Run YOLO on the raw (original resolution) frame for maximum accuracy.
-            # Use a confidence floor that is at most PREDICT_CONF_FLOOR so ghost boxes
-            # never enter the pipeline in the first place.
+            # Pre-resize using OpenCV C++ NEON to avoid heavy Python letterboxing on 1080p frames
+            if orig_w > m_imgsz or orig_h > m_imgsz:
+                f_infer = cv2.resize(f, (m_imgsz, m_imgsz), interpolation=cv2.INTER_LINEAR)
+                infer_scale_x = float(self.width)  / float(m_imgsz)
+                infer_scale_y = float(self.height) / float(m_imgsz)
+            else:
+                f_infer = f
+                infer_scale_x = scale_x
+                infer_scale_y = scale_y
+
             predict_kwargs = {
-                "source": f,                             # raw frame – best detail
+                "source": f_infer,
                 "conf":   max(PREDICT_CONF_FLOOR, min(min_class_conf, effective_conf)),
                 "iou":    m_iou,
                 "imgsz":  m_imgsz,
@@ -690,13 +693,13 @@ class DetectorWorker:
                         if conf_val < req_conf:
                             continue
 
-                        # Scale coordinates from raw-frame space → output stream resolution
+                        # Scale coordinates from inference space → output stream resolution
                         box_raw = b.xyxy[0].cpu().numpy().tolist()
                         rx1, ry1, rx2, ry2 = box_raw
-                        x1 = max(0, min(self.width  - 1, rx1 * scale_x))
-                        y1 = max(0, min(self.height - 1, ry1 * scale_y))
-                        x2 = max(0, min(self.width  - 1, rx2 * scale_x))
-                        y2 = max(0, min(self.height - 1, ry2 * scale_y))
+                        x1 = max(0, min(self.width  - 1, rx1 * infer_scale_x))
+                        y1 = max(0, min(self.height - 1, ry1 * infer_scale_y))
+                        x2 = max(0, min(self.width  - 1, rx2 * infer_scale_x))
+                        y2 = max(0, min(self.height - 1, ry2 * infer_scale_y))
                         box_xyxy = [x1, y1, x2, y2]
                         
                         bw = max(0, x2 - x1)

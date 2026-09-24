@@ -1,23 +1,23 @@
 import os
-os.environ["OMP_NUM_THREADS"] = "4"
-os.environ["MKL_NUM_THREADS"] = "4"
-os.environ["OPENBLAS_NUM_THREADS"] = "4"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
-os.environ["NUMEXPR_NUM_THREADS"] = "4"
-os.environ["TORCH_NUM_THREADS"] = "4"
-os.environ["OPENCV_FOR_THREADS_NUM"] = "2"
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
+os.environ["NUMEXPR_NUM_THREADS"] = "2"
+os.environ["TORCH_NUM_THREADS"] = "2"
+os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
 
 import cv2
 try:
-    cv2.setNumThreads(2)
+    cv2.setNumThreads(1)
     cv2.ocl.setUseOpenCL(False)
 except Exception:
     pass
 
 import torch
 try:
-    torch.set_num_threads(4)
+    torch.set_num_threads(2)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
 except Exception:
