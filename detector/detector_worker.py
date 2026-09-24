@@ -500,7 +500,7 @@ class DetectorWorker:
             m_conf = self.conf
             m_iou = self.iou
             enabled_classes = None
-            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "480"))
+            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz = default_imgsz
             cfg = get_config_for_model(self.model_configs, m_name)
             if cfg and isinstance(cfg, dict):
@@ -940,10 +940,22 @@ class DetectorWorker:
                                 x2 = max(0, min(f_w - 1, x2))
                                 y2 = max(0, min(f_h - 1, y2))
 
-                                cv2.rectangle(pf, (x1, y1), (x2, y2), t_box['color'], 2)
-                                t_size = cv2.getTextSize(t_box['label'], cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
-                                cv2.rectangle(pf, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), t_box['color'], -1)
-                                cv2.putText(pf, t_box['label'], (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+                                label_text = t_box['label']
+                                color_val = t_box['color']
+                                cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
+                                (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
+                                
+                                if y1 - th - 6 > 0:
+                                    bg_y1 = y1 - th - 6
+                                    bg_y2 = y1
+                                    text_y = y1 - 4
+                                else:
+                                    bg_y1 = y1
+                                    bg_y2 = y1 + th + 6
+                                    text_y = y1 + th + 2
+                                    
+                                cv2.rectangle(pf, (x1, bg_y1), (x1 + tw + 6, bg_y2), color_val, -1)
+                                cv2.putText(pf, label_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 0), 1, cv2.LINE_AA)
                             except: pass
 
                         if ffmpeg.poll() is not None:
