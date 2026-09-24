@@ -6,7 +6,7 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
 os.environ["NUMEXPR_NUM_THREADS"] = "4"
 os.environ["TORCH_NUM_THREADS"] = "4"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "2"
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;5000000"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;5000000|buffer_size;1024000"
 
 import cv2, subprocess, time, threading, queue, json, math
 import numpy as np
