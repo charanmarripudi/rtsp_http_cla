@@ -42,13 +42,13 @@ async function playHLS(video, url, idx, forceReload = false) {
         enableWorker: true,
         lowLatencyMode: false,          // False for standard TS HLS streams -> avoids byte-range stalls
         startPosition: -1,
-        liveSyncDurationCount: 1.0,      // Start immediately on segment 1 for instant playback
-        liveMaxLatencyDurationCount: 3,  // Smooth catchup if network delays
+        liveSyncDurationCount: 2.0,      // Keep 2 full segments buffer to prevent stalling
+        liveMaxLatencyDurationCount: 4,  // Smooth catchup if network delays
         liveDurationInfinity: true,
         liveBackBufferLength: 0,
         backBufferLength: 0,
-        maxBufferLength: 10,
-        maxMaxBufferLength: 15,
+        maxBufferLength: 20,
+        maxMaxBufferLength: 30,
         highBufferWatchdogPeriod: 2,
         manifestLoadingTimeOut: 20000,
         manifestLoadingMaxRetry: 10,
@@ -66,10 +66,10 @@ async function playHLS(video, url, idx, forceReload = false) {
     video._syncInterval = setInterval(() => {
         if (!hls || !hls.liveSyncPosition || video.paused || video.readyState < 3) return;
         const drift = hls.liveSyncPosition - video.currentTime;
-        if (drift > 2.5) {
+        if (drift > 4.5) {
             video.playbackRate = 1.08; // Smoothly catch up without stuttering
-        } else if (drift > 1.2) {
-            video.playbackRate = 1.03;
+        } else if (drift > 3.0) {
+            video.playbackRate = 1.04;
         } else {
             video.playbackRate = 1.0;  // Normal speed
         }

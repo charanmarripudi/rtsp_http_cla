@@ -6,7 +6,7 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
 os.environ["NUMEXPR_NUM_THREADS"] = "4"
 os.environ["TORCH_NUM_THREADS"] = "4"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "2"
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;5000000|buffer_size;1024000"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
 
 import cv2, subprocess, time, threading, queue, json, math
 import numpy as np
@@ -1137,7 +1137,7 @@ class DetectorWorker:
                     print(f"[WORKER-TIMER] Camera {self.cam_id} connecting to RTSP at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...", flush=True)
                     t_conn_start = time.time()
                     cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
 
                     retry_count = 0
                     while not cap.isOpened() and retry_count < 10 and not self._stop_event.is_set():
