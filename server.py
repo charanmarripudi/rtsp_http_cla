@@ -6,7 +6,7 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
 os.environ["NUMEXPR_NUM_THREADS"] = "4"
 os.environ["TORCH_NUM_THREADS"] = "4"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "2"
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
 
 import cv2
 try:
@@ -798,26 +798,26 @@ def start_raw_stream(i, u):
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
         "-rtsp_transport", "tcp",
-        "-probesize", "1.5M", "-analyzeduration", "1.5M",
+        "-probesize", "1M", "-analyzeduration", "1M",
         "-i", normalized_rtsp,
         "-map", "0:v:0",
         "-an",
-        "-vf", "scale=854:480:flags=fast_bilinear,format=yuv420p,setdar=16/9",
+        "-vf", "scale=640:360:flags=fast_bilinear,format=yuv420p",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
         "-profile:v", "baseline", "-level:v", "3.1",
-        "-b:v", "300k", "-maxrate", "400k", "-bufsize", "1M",
-        "-threads", "2",
-        "-r", "12",
-        "-g", "24", "-keyint_min", "24", "-sc_threshold", "0",
+        "-b:v", "220k", "-maxrate", "280k", "-bufsize", "600k",
+        "-threads", "1",
+        "-r", "10",
+        "-g", "20", "-keyint_min", "20", "-sc_threshold", "0",
         "-f", "hls",
         "-hls_time", "2",
-        "-hls_list_size", "8",
+        "-hls_list_size", "6",
         "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(sd, f"segment_{session_id}_%d.ts"),
         os.path.join(sd, "playlist.m3u8")
     ]
     log_fh = open(log_file, "w")
-    print(f"[LOG] Camera {cid} raw stream started at 854x480, 12 FPS, 300k bitrate ({normalized_rtsp})")
+    print(f"[LOG] Camera {cid} raw stream started at 640x360, 10 FPS, 220k bitrate ({normalized_rtsp})")
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     raw_streams_procs[cid] = {"proc": proc, "rtsp": normalized_rtsp, "sd": sd, "start_time": int(time.time()), "symlink": False}
 

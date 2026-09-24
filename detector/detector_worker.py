@@ -6,7 +6,7 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
 os.environ["NUMEXPR_NUM_THREADS"] = "4"
 os.environ["TORCH_NUM_THREADS"] = "4"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "2"
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|sync;ext|max_delay;500000|timeout;5000000"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
 
 import cv2, subprocess, time, threading, queue, json, math
 import numpy as np
@@ -81,9 +81,8 @@ NMS_OPP_IO_MIN_THRESH = 0.30
 # post-filtering, but we apply a stricter per-class gate afterwards.
 PREDICT_CONF_FLOOR = 0.10   # raised from 0.06 → fewer ghost boxes fed into NMS
 
-# Scheduler inter-camera sleep (seconds).  Must be low enough that each camera
-# gets a new inference result within ~1 frame interval (1/fps).
-SCHEDULER_SLEEP_S = 0.01
+# Scheduler inter-camera sleep (seconds). Allows CPU cooldown and prevents thermal throttling.
+SCHEDULER_SLEEP_S = 0.06
 
 # Label rendering
 LABEL_FONT_SCALE   = 0.55
