@@ -53,6 +53,37 @@ from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db, insert_al
 
 YOLO_CACHE = {}
 
+# ──────────────────────────────────────────────────────────────────────────────
+# TUNABLE KNOBS
+# ──────────────────────────────────────────────────────────────────────────────
+# How long (seconds) a persistent track survives without being refreshed by
+# new inference.  Shorter = snappier cleanup of moved objects.
+# Keep this short (2-3 s) so stale boxes don't pile up between scheduler cycles.
+TRACK_MAX_AGE_S = 2.5
+
+# Minimum IoU overlap to consider two boxes the same detection (same-class NMS)
+NMS_SAME_IOU_THRESH = 0.30
+NMS_SAME_IO_MIN_THRESH = 0.50
+
+# Minimum IoU overlap to suppress the weaker side of an opposite-class pair
+# (e.g.  Safety-Vest vs NO-Safety-Vest on the same person)
+NMS_OPP_IOU_THRESH = 0.20
+NMS_OPP_IO_MIN_THRESH = 0.30
+
+# Hard floor for YOLO confidence passed to model.predict().
+# Keeping this at 0.06 lets us catch low-confidence detections for per-class
+# post-filtering, but we apply a stricter per-class gate afterwards.
+PREDICT_CONF_FLOOR = 0.10   # raised from 0.06 → fewer ghost boxes fed into NMS
+
+# Scheduler inter-camera sleep (seconds).  Must be low enough that each camera
+# gets a new inference result within ~1 frame interval (1/fps).
+SCHEDULER_SLEEP_S = 0.01
+
+# Label rendering
+LABEL_FONT_SCALE   = 0.55
+LABEL_THICKNESS    = 1
+LABEL_BOX_PADDING  = 5
+
 def clean_str(s):
     res = re.sub(r'[^a-z0-9]', '', str(s).lower())
     return res.replace("saftey", "safety")
@@ -361,7 +392,7 @@ class InferenceScheduler:
                 except Exception as e:
                     print(f"[SCHEDULER-ERR] Camera {worker.cam_id} inference error: {e}", flush=True)
 
-                time.sleep(0.02)
+                time.sleep(SCHEDULER_SLEEP_S)
 
 GLOBAL_INFERENCE_SCHEDULER = InferenceScheduler()
 
@@ -475,6 +506,51 @@ class DetectorWorker:
         print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 350k (max 450k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL, bufsize=10*1024*1024)
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # NMS HELPERS
+    # ──────────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _box_iou_and_io_min(b1, b2):
+        """Compute IoU and intersection-over-min-area for two [x1,y1,x2,y2] boxes."""
+        x1 = max(b1[0], b2[0]); y1 = max(b1[1], b2[1])
+        x2 = min(b1[2], b2[2]); y2 = min(b1[3], b2[3])
+        if x2 <= x1 or y2 <= y1:
+            return 0.0, 0.0
+        inter  = (x2 - x1) * (y2 - y1)
+        area1  = max(1.0, (b1[2]-b1[0]) * (b1[3]-b1[1]))
+        area2  = max(1.0, (b2[2]-b2[0]) * (b2[3]-b2[1]))
+        union  = area1 + area2 - inter
+        return inter / max(1.0, union), inter / min(area1, area2)
+
+    @staticmethod
+    def _apply_nms(boxes):
+        """
+        Full multi-class NMS pass over a list of (xyxy, color, conf, cls_name) tuples.
+        - Boxes sorted by confidence (high→low).
+        - Same-class duplicates removed when IoU >= NMS_SAME_IOU_THRESH or io_min >= NMS_SAME_IO_MIN_THRESH.
+        - Opposite-class pairs resolved by keeping the higher-confidence box when
+          IoU >= NMS_OPP_IOU_THRESH or io_min >= NMS_OPP_IO_MIN_THRESH.
+        """
+        if not boxes:
+            return []
+        boxes = sorted(boxes, key=lambda x: x[2], reverse=True)
+        kept = []
+        for item in boxes:
+            b1, col1, conf1, cls1 = item
+            suppress = False
+            for k_item in kept:
+                b2, col2, conf2, cls2 = k_item
+                iou, io_min = DetectorWorker._box_iou_and_io_min(b1, b2)
+                is_same = match_class(cls1, cls2)
+                is_opp  = is_opposite_class(cls1, cls2)
+                if is_same and (iou >= NMS_SAME_IOU_THRESH or io_min >= NMS_SAME_IO_MIN_THRESH):
+                    suppress = True; break
+                if is_opp and (iou >= NMS_OPP_IOU_THRESH or io_min >= NMS_OPP_IO_MIN_THRESH):
+                    suppress = True; break
+            if not suppress:
+                kept.append(item)
+        return kept
+
     def run_single_inference_cycle(self):
         """
         Executed by the Centralized InferenceScheduler in the background.
@@ -492,15 +568,17 @@ class DetectorWorker:
         if f is None:
             return
 
+        # ── Resolve output canvas size ──────────────────────────────────────
         orig_h, orig_w = f.shape[:2]
-        scale_x = float(self.width) / max(1.0, float(orig_w))
+        # We run inference on the ORIGINAL raw frame so YOLO gets best quality.
+        # We then scale coordinates to the output stream resolution afterward.
+        scale_x = float(self.width)  / max(1.0, float(orig_w))
         scale_y = float(self.height) / max(1.0, float(orig_h))
 
-        frame_snapshot = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
         f_h, f_w = self.height, self.width
 
         cur_cls, now = set(), time.time()
-        raw_boxes = []
+        raw_boxes = []   # list of (xyxy_in_output_res, color, conf, cls_name)
 
         if not self.models:
             paths = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
@@ -514,17 +592,17 @@ class DetectorWorker:
             m_name = os.path.basename(m_path)
 
             m_conf = self.conf
-            m_iou = self.iou
+            m_iou  = self.iou
             enabled_classes = None
-            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "480"))
-            m_imgsz = default_imgsz
-            cfg = get_config_for_model(self.model_configs, m_name)
-            class_configs = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}
+            default_imgsz   = int(os.getenv("DEFAULT_IMGSZ", "480"))
+            m_imgsz         = default_imgsz
+            cfg             = get_config_for_model(self.model_configs, m_name)
+            class_configs   = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}
             if cfg and isinstance(cfg, dict):
-                m_conf = float(cfg.get("conf", self.conf))
-                m_iou = float(cfg.get("iou", self.iou))
+                m_conf          = float(cfg.get("conf", self.conf))
+                m_iou           = float(cfg.get("iou", self.iou))
                 enabled_classes = cfg.get("enabled_classes")
-                m_imgsz = int(cfg.get("imgsz", default_imgsz))
+                m_imgsz         = int(cfg.get("imgsz", default_imgsz))
 
             if m_imgsz % 32 != 0:
                 m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
@@ -540,12 +618,14 @@ class DetectorWorker:
                     if isinstance(cc, dict) and "conf" in cc:
                         min_class_conf = min(min_class_conf, float(cc["conf"]))
 
-            # Direct Native Prediction matching full-resolution inference
+            # Run YOLO on the raw (original resolution) frame for maximum accuracy.
+            # Use a confidence floor that is at most PREDICT_CONF_FLOOR so ghost boxes
+            # never enter the pipeline in the first place.
             predict_kwargs = {
-                "source": f,
-                "conf": min(0.06, min_class_conf),
-                "iou": m_iou,
-                "imgsz": m_imgsz,
+                "source": f,                             # raw frame – best detail
+                "conf":   max(PREDICT_CONF_FLOOR, min(min_class_conf, effective_conf)),
+                "iou":    m_iou,
+                "imgsz":  m_imgsz,
                 "verbose": False
             }
 
@@ -558,16 +638,15 @@ class DetectorWorker:
                     results = model.predict(**predict_kwargs)
                 infer_ms = int((time.time() - t_infer_start) * 1000)
 
-                mod_dets = []
+                mod_dets   = []
                 all_raw_dets = []
                 for r in results:
                     if r.boxes:
                         for b in r.boxes:
-                            cls_id = int(b.cls[0].item())
+                            cls_id   = int(b.cls[0].item())
                             cls_name = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
                             conf_val = float(b.conf[0].item())
                             all_raw_dets.append(f"{cls_name} {conf_val:.2f}")
-                            
                             if not filter_classes or any(match_class(cls_name, e) for e in filter_classes):
                                 mod_dets.append(f"{cls_name} {conf_val:.2f}")
 
@@ -579,14 +658,15 @@ class DetectorWorker:
             for r in results:
                 if r.boxes:
                     for b in r.boxes:
-                        cls_id = int(b.cls[0].item())
-                        cls = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
+                        cls_id   = int(b.cls[0].item())
+                        cls      = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
                         conf_val = float(b.conf[0].item())
 
                         if filter_classes:
                             if not any(match_class(cls, e) for e in filter_classes):
                                 continue
 
+                        # Per-class confidence gate (hard reject)
                         req_conf = effective_conf
                         if class_configs:
                             for cc_name, cc_val in class_configs.items():
@@ -596,18 +676,18 @@ class DetectorWorker:
                         if conf_val < req_conf:
                             continue
 
-                        # Scale coordinates from raw frame to output stream resolution (Identical to f4d3e73)
+                        # Scale coordinates from raw-frame space → output stream resolution
                         box_raw = b.xyxy[0].cpu().numpy().tolist()
                         rx1, ry1, rx2, ry2 = box_raw
-                        x1 = max(0, min(self.width - 1, rx1 * scale_x))
+                        x1 = max(0, min(self.width  - 1, rx1 * scale_x))
                         y1 = max(0, min(self.height - 1, ry1 * scale_y))
-                        x2 = max(0, min(self.width - 1, rx2 * scale_x))
+                        x2 = max(0, min(self.width  - 1, rx2 * scale_x))
                         y2 = max(0, min(self.height - 1, ry2 * scale_y))
                         box_xyxy = [x1, y1, x2, y2]
                         
                         bw = max(0, x2 - x1)
                         bh = max(0, y2 - y1)
-                        if bw < 3 or bh < 3:
+                        if bw < 5 or bh < 5:
                             continue
                             
                         cx = (x1 + x2) / 2.0
@@ -633,50 +713,12 @@ class DetectorWorker:
                         color_val = get_dynamic_class_color(cls)
                         raw_boxes.append((box_xyxy, color_val, conf_val, cls))
 
-        # Multi-Model Same-Class & Opposite-Class NMS Suppression
-        kept_items = []
-        if raw_boxes:
-            raw_boxes.sort(key=lambda x: x[2], reverse=True)
-            for item in raw_boxes:
-                b1_xyxy, c1_color, conf1_val, cls1_name = item
-                x1_1, y1_1, x2_1, y2_1 = b1_xyxy
-                area1 = max(0, x2_1 - x1_1) * max(0, y2_1 - y1_1)
+        # ── Multi-Model NMS ───────────────────────────────────────────────────
+        kept_items = self._apply_nms(raw_boxes)
 
-                suppress = False
-                for k_item in kept_items:
-                    b2_xyxy, c2_color, conf2_val, cls2_name = k_item
-                    x1_2, y1_2, x2_2, y2_2 = b2_xyxy
-                    area2 = max(0, x2_2 - x1_2) * max(0, y2_2 - y1_2)
-
-                    ix1 = max(x1_1, x1_2)
-                    iy1 = max(y1_1, y1_2)
-                    ix2 = min(x2_1, x2_2)
-                    iy2 = min(y2_1, y2_2)
-
-                    if ix2 > ix1 and iy2 > iy1:
-                        inter = (ix2 - ix1) * (iy2 - iy1)
-                        union = area1 + area2 - inter
-                        iou = inter / max(1.0, union)
-                        min_area = max(1.0, min(area1, area2))
-                        io_min = inter / min_area
-
-                        is_same_cls = match_class(cls1_name, cls2_name)
-                        is_opp_cls = is_opposite_class(cls1_name, cls2_name)
-                        
-                        # 1. Same class duplicate suppression (keeps single highest confidence box)
-                        if is_same_cls and (iou >= 0.25 or io_min >= 0.40):
-                            suppress = True
-                            break
-                        # 2. Opposite class suppression (e.g. Safety Vest vs NO-Safety Vest on same person -> higher conf wins)
-                        if is_opp_cls and (iou >= 0.15 or io_min >= 0.25):
-                            suppress = True
-                            break
-
-                if not suppress:
-                    kept_items.append(item)
-
-        # Persistent Multi-Camera Track Memory (60.0s persistence)
-        # Prevents bounding boxes from disappearing between round-robin scheduler cycles
+        # ── Persistent Track Memory (short window = TRACK_MAX_AGE_S) ─────────
+        # Short persistence avoids "phantom boxes" from people who already moved.
+        # We only carry over an old track when no fresh detection covers it.
         now_t = time.time()
         if not hasattr(self, '_persistent_tracks'):
             self._persistent_tracks = []
@@ -684,44 +726,35 @@ class DetectorWorker:
         fresh_tracks = []
         for b_xyxy, color_val, conf_val, cls_name in kept_items:
             fresh_tracks.append({
-                'box': b_xyxy,
-                'label': f"{cls_name} {conf_val:.2f}",
-                'color': color_val,
-                'cls': cls_name,
-                'conf': conf_val,
+                'box':       b_xyxy,
+                'label':     f"{cls_name} {conf_val:.2f}",
+                'color':     color_val,
+                'cls':       cls_name,
+                'conf':      conf_val,
                 'last_seen': now_t
             })
             cur_cls.add(cls_name)
 
-        # Merge fresh detections with recent persistent detections (up to 60.0s)
+        # Merge: carry old tracks forward ONLY if they are NOT already covered by
+        # a fresh detection and have not expired (TRACK_MAX_AGE_S).
         merged_tracks = list(fresh_tracks)
         for old in self._persistent_tracks:
-            if (now_t - old.get('last_seen', 0.0)) > 60.0:
-                continue
+            age = now_t - old.get('last_seen', 0.0)
+            if age > TRACK_MAX_AGE_S:
+                continue   # expired – drop
 
             ox1, oy1, ox2, oy2 = old['box']
-            o_area = max(0, ox2 - ox1) * max(0, oy2 - oy1)
+            o_area     = max(1.0, (ox2 - ox1) * (oy2 - oy1))
             is_covered = False
 
             for fresh in fresh_tracks:
-                fx1, fy1, fx2, fy2 = fresh['box']
-                f_area = max(0, fx2 - fx1) * max(0, fy2 - fy1)
-
-                ix1 = max(ox1, fx1)
-                iy1 = max(oy1, fy1)
-                ix2 = min(ox2, fx2)
-                iy2 = min(oy2, fy2)
-
-                if ix2 > ix1 and iy2 > iy1:
-                    inter = (ix2 - ix1) * (iy2 - iy1)
-                    union = o_area + f_area - inter
-                    iou = inter / max(1.0, union)
-                    io_min = inter / max(1.0, min(o_area, f_area))
-                    is_same = match_class(old['cls'], fresh['cls'])
-                    is_opp = is_opposite_class(old['cls'], fresh['cls'])
-                    if (is_same and (iou >= 0.25 or io_min >= 0.40)) or (is_opp and (iou >= 0.15 or io_min >= 0.25)):
-                        is_covered = True
-                        break
+                iou_v, io_min_v = DetectorWorker._box_iou_and_io_min(old['box'], fresh['box'])
+                is_same = match_class(old['cls'], fresh['cls'])
+                is_opp  = is_opposite_class(old['cls'], fresh['cls'])
+                if (is_same and (iou_v >= NMS_SAME_IOU_THRESH or io_min_v >= NMS_SAME_IO_MIN_THRESH)) or \
+                   (is_opp  and (iou_v >= NMS_OPP_IOU_THRESH  or io_min_v >= NMS_OPP_IO_MIN_THRESH)):
+                    is_covered = True
+                    break
 
             if not is_covered:
                 merged_tracks.append(old)
@@ -735,13 +768,12 @@ class DetectorWorker:
 
         if not getattr(self, '_first_box_logged', False) and display_boxes:
             self._first_box_logged = True
-            now_t = time.time()
-            t_start = getattr(self, '_start_time', None) or now_t
+            t_start  = getattr(self, '_start_time', None) or now_t
             t_active = getattr(self, '_models_active_time', None) or t_start
-            delay_from_start_ms = int((now_t - t_start) * 1000)
+            delay_from_start_ms  = int((now_t - t_start)  * 1000)
             delay_from_active_ms = int((now_t - t_active) * 1000)
-            detected_labels = [b['label'] for b in display_boxes]
-            all_classes_str = ", ".join(list(cur_cls)) if cur_cls else "ALL"
+            detected_labels     = [b['label'] for b in display_boxes]
+            all_classes_str     = ", ".join(list(cur_cls)) if cur_cls else "ALL"
             detected_classes_str = ", ".join(detected_labels)
             print(f"\n==================================================================", flush=True)
             print(f"[STREAM-TIMING] Camera {self.cam_id} FIRST BOUNDING BOX DETECTED & RENDERED!", flush=True)
@@ -752,19 +784,20 @@ class DetectorWorker:
             print(f" -> Delay from Model Active : {delay_from_active_ms}ms ({delay_from_active_ms/1000.0:.2f}s)", flush=True)
             print(f"==================================================================\n", flush=True)
 
-        # Snapshot for Alerts
-        snap_img = frame_snapshot.copy()
+        # ── Snapshot for Alerts ───────────────────────────────────────────────
+        # Build snapshot on the output-resolution resize of the current frame
+        frame_snapshot = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
         for t_box in display_boxes:
             try:
                 x1, y1, x2, y2 = [int(v) for v in t_box['box']]
-                cv2.rectangle(snap_img, (x1, y1), (x2, y2), t_box['color'], 2)
+                cv2.rectangle(frame_snapshot, (x1, y1), (x2, y2), t_box['color'], 2)
                 t_size = cv2.getTextSize(t_box['label'], cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
-                cv2.rectangle(snap_img, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), t_box['color'], -1)
-                cv2.putText(snap_img, t_box['label'], (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+                cv2.rectangle(frame_snapshot, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), t_box['color'], -1)
+                cv2.putText(frame_snapshot, t_box['label'], (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
             except:
                 pass
 
-        # Persistent Alert Processing: 3.0s continuous trigger + Strict 30.0s repeat cooldown
+        # ── Alert Processing: 3.0s continuous trigger + Strict 30.0s repeat cooldown ──
         if not hasattr(self, '_class_last_alert'):
             self._class_last_alert = {}
 
@@ -784,12 +817,12 @@ class DetectorWorker:
                 self.alert_timers[c]['hits'] = self.alert_timers[c].get('hits', 1) + 1
 
             duration = now - self.alert_timers[c]['start']
-            hits = self.alert_timers[c].get('hits', 1)
+            hits     = self.alert_timers[c].get('hits', 1)
             if duration >= 3.0 or hits >= 2:
                 self._class_last_alert[c] = now
                 self.alert_triggered.add(c)
                 print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, hits={hits} (30s cooldown active)", flush=True)
-                self._save_alert(c, snap_img)
+                self._save_alert(c, frame_snapshot)
 
         # Cleanup expired alert timers (absent for > 25.0s across multi-camera cycles)
         for c in list(self.alert_timers.keys()):
@@ -821,12 +854,12 @@ class DetectorWorker:
             # 1. Append to alerts.json for immediate UI dashboard update
             alerts_json_file = os.path.join(adir, "alerts.json")
             alert_entry = {
-                "id": int(time.time() * 1000),
-                "camera_id": str(self.cam_id),
-                "location": str(self.location),
+                "id":           int(time.time() * 1000),
+                "camera_id":    str(self.cam_id),
+                "location":     str(self.location),
                 "type_of_alert": type_of_alert_str,
-                "image": image_path,
-                "created_at": now_dt.strftime("%Y-%m-%d %H:%M:%S")
+                "image":        image_path,
+                "created_at":   now_dt.strftime("%Y-%m-%d %H:%M:%S")
             }
             try:
                 data = []
@@ -871,7 +904,6 @@ class DetectorWorker:
             print(f"[ALERT-ERR] Failed to save alert: {e}", flush=True)
 
     def _get_connecting_frame(self):
-        import numpy as np
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         cv2.putText(frame, "Connecting to Camera...", 
                    (int(self.width*0.2), int(self.height*0.5)), 
@@ -893,10 +925,108 @@ class DetectorWorker:
                 consecutive_fails = 0
                 with self._frame_lock:
                     self._latest_raw_frame = f
-                    self._last_frame_time = time.time()
+                    self._last_frame_time  = time.time()
                     self._cap_ok = True
             except Exception:
                 time.sleep(0.02)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # DRAWING HELPER
+    # ──────────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _draw_boxes(pf, display_boxes):
+        """
+        Draw all bounding boxes and labels onto pf (in-place).
+
+        Features:
+          • Area-based z-order so small PPE boxes render on top of large person boxes.
+          • Thick border (2 px) + black inner glow (1 px outline trick) for visibility.
+          • Larger, bolder labels with padded background panels.
+          • Vertical label stacking to avoid overlapping label text when two boxes
+            share the same top-left corner region.
+        """
+        if not display_boxes:
+            return
+
+        f_h, f_w = pf.shape[:2]
+
+        # Sort: large boxes first (person/body) → drawn below; small boxes last → drawn on top
+        sorted_boxes = sorted(
+            display_boxes,
+            key=lambda b: max(0, b['box'][2] - b['box'][0]) * max(0, b['box'][3] - b['box'][1]),
+            reverse=True
+        )
+
+        # Track used label regions to stack them vertically
+        used_label_slots = []   # list of (lx1, ly1, lx2, ly2)
+
+        def find_free_label_y(lx1, lx2, preferred_y1, preferred_y2, step=2):
+            """Shift label upward until it doesn't collide with any occupied slot."""
+            ly1, ly2 = preferred_y1, preferred_y2
+            h = ly2 - ly1
+            for _ in range(60):
+                collision = False
+                for (ux1, uy1, ux2, uy2) in used_label_slots:
+                    # Check horizontal overlap
+                    if lx1 < ux2 and lx2 > ux1:
+                        # Check vertical overlap
+                        if ly1 < uy2 and ly2 > uy1:
+                            collision = True
+                            break
+                if not collision:
+                    break
+                ly1 = max(0, ly1 - step)
+                ly2 = ly1 + h
+            return ly1, ly2
+
+        for t_box in sorted_boxes:
+            try:
+                x1, y1, x2, y2 = [int(v) for v in t_box['box']]
+                x1 = max(0, min(f_w - 1, x1))
+                y1 = max(0, min(f_h - 1, y1))
+                x2 = max(0, min(f_w - 1, x2))
+                y2 = max(0, min(f_h - 1, y2))
+
+                label_text = t_box['label']
+                color_val  = t_box['color']
+
+                # Draw box: black shadow first (offset 1px) then coloured border
+                cv2.rectangle(pf, (x1+1, y1+1), (x2+1, y2+1), (0, 0, 0), 2)      # shadow
+                cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)               # main
+
+                # Compute label size
+                (tw, th), baseline = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE, LABEL_THICKNESS)
+                pad = LABEL_BOX_PADDING
+
+                # Preferred position: just above the box top edge
+                pref_bg_y1 = y1 - th - 2*pad
+                pref_bg_y2 = y1
+                pref_bg_x1 = x1
+                pref_bg_x2 = min(f_w - 1, x1 + tw + 2*pad)
+
+                # If the label would go above frame top, place it inside the box instead
+                if pref_bg_y1 < 0:
+                    pref_bg_y1 = y1
+                    pref_bg_y2 = y1 + th + 2*pad
+
+                # Resolve vertical collision by stacking
+                bg_y1, bg_y2 = find_free_label_y(pref_bg_x1, pref_bg_x2, pref_bg_y1, pref_bg_y2)
+                bg_x1, bg_x2 = pref_bg_x1, pref_bg_x2
+                text_y = bg_y1 + th + pad - 1
+
+                # Label background panel
+                cv2.rectangle(pf, (bg_x1, bg_y1), (bg_x2, bg_y2), color_val, -1)
+                # Black text for readability
+                cv2.putText(pf, label_text, (bg_x1 + pad, text_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE,
+                            (0, 0, 0), LABEL_THICKNESS + 1, cv2.LINE_AA)
+                cv2.putText(pf, label_text, (bg_x1 + pad, text_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE,
+                            (255, 255, 255), LABEL_THICKNESS, cv2.LINE_AA)
+
+                used_label_slots.append((bg_x1, bg_y1, bg_x2, bg_y2))
+            except Exception:
+                pass
 
     def run(self):
         ffmpeg, cap = None, None
@@ -955,7 +1085,7 @@ class DetectorWorker:
                     cap_t = threading.Thread(target=self._capture_thread, args=(cap, cap_stop_evt), daemon=True)
                     cap_t.start()
 
-                    f_int = 1.0 / self.fps
+                    f_int          = 1.0 / self.fps
                     next_frame_time = time.time()
 
                     while not self._stop_event.is_set():
@@ -996,34 +1126,7 @@ class DetectorWorker:
                         with self._box_lock:
                             display_boxes = list(self._tracked_boxes)
 
-                        # Sort boxes by area descending so smaller detail boxes (helmets, vests) render crisply on top
-                        display_boxes.sort(key=lambda b: max(0, b['box'][2] - b['box'][0]) * max(0, b['box'][3] - b['box'][1]), reverse=True)
-
-                        for t_box in display_boxes:
-                            try:
-                                x1, y1, x2, y2 = [int(v) for v in t_box['box']]
-                                x1 = max(0, min(f_w - 1, x1))
-                                y1 = max(0, min(f_h - 1, y1))
-                                x2 = max(0, min(f_w - 1, x2))
-                                y2 = max(0, min(f_h - 1, y2))
-
-                                label_text = t_box['label']
-                                color_val = t_box['color']
-                                cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)
-                                (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
-                                
-                                if y1 - th - 6 > 0:
-                                    bg_y1 = y1 - th - 6
-                                    bg_y2 = y1
-                                    text_y = y1 - 4
-                                else:
-                                    bg_y1 = y1
-                                    bg_y2 = y1 + th + 6
-                                    text_y = y1 + th + 2
-                                    
-                                cv2.rectangle(pf, (x1, bg_y1), (x1 + tw + 6, bg_y2), color_val, -1)
-                                cv2.putText(pf, label_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 0), 1, cv2.LINE_AA)
-                            except: pass
+                        DetectorWorker._draw_boxes(pf, display_boxes)
 
                         if ffmpeg.poll() is not None:
                             break
