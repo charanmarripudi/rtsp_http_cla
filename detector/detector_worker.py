@@ -57,11 +57,11 @@ YOLO_CACHE = {}
 # ──────────────────────────────────────────────────────────────────────────────
 # TUNABLE KNOBS
 # ──────────────────────────────────────────────────────────────────────────────
-# Shorter track age (1.2s) ensures snappy box movement that tracks moving people
-TRACK_MAX_AGE_S = 1.2
+# Shorter track age (1.0s) ensures snappy box movement that tracks moving people cleanly
+TRACK_MAX_AGE_S = 1.0
 
-# 0.20 EMA gives 80% weight to fresh coordinates so boxes stick to moving objects
-BOX_EMA_ALPHA = 0.20
+# 0.0 EMA gives 100% instant weight to fresh coordinates so boxes lock tightly to moving objects with zero lag
+BOX_EMA_ALPHA = 0.0
 
 # Minimum IoU overlap to consider two boxes the same detection (same-class NMS)
 NMS_SAME_IOU_THRESH = 0.30
@@ -1142,12 +1142,13 @@ class DetectorWorker:
                     print(f"[WORKER-TIMER] Camera {self.cam_id} connecting to RTSP at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...", flush=True)
                     t_conn_start = time.time()
                     cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
                     retry_count = 0
                     while not cap.isOpened() and retry_count < 10 and not self._stop_event.is_set():
                         time.sleep(0.5)
                         cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                         retry_count += 1
 
                     if self._stop_event.is_set():

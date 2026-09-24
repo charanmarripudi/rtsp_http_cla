@@ -14,13 +14,18 @@
 
 
 
+import os
+# Force TCP transport and optimal buffers to eliminate H.264 packet drop and smearing
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
+
 import time
+import threading
 import cv2
 from ultralytics import YOLO
 
 MODEL_PATH = "/Users/algofusion/Documents/dnc_backend_v2/orchestrator/Delta/Go/rtsp_rpi/models/hansung_ppe_violations.pt"
 
-RTSP_URL = "rtsp://admin:Alg0M0nit%4070%23@192.168.96.41:554/stream1"
+RTSP_URL = "rtsp://192.168.96.72:8554/ppe_stream3"
 
 # Target FPS configuration
 TARGET_FPS = 15
@@ -37,23 +42,48 @@ print(model.names)
 target_classes = []
 
 for class_id, class_name in model.names.items():
-    if class_name in ["NO-Hardhat", "NO-Safety Vest"]:
+    if class_name in ["NO-Hardhat", "NO-Safety Vest", "Hardhat", "Safety Vest"]:
         target_classes.append(class_id)
 
 print("Detecting class IDs:", target_classes)
 
-# Open RTSP
-cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG)
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+# Dedicated Frame Grabber to eliminate stream buffer latency on moving objects
+class RTSPCaptureThread:
+    def __init__(self, url):
+        self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.latest_frame = None
+        self.ret = False
+        self.running = True
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._grab_loop, daemon=True)
+        self.thread.start()
 
-if not cap.isOpened():
-    print("ERROR: Could not open RTSP stream")
-    exit()
+    def _grab_loop(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            if ret:
+                with self.lock:
+                    self.latest_frame = frame
+                    self.ret = True
+            else:
+                time.sleep(0.01)
 
-print(f"RTSP + YOLO detection started at ~{TARGET_FPS} FPS")
-print("Detecting only:")
-print("  - NO-Hardhat")
-print("  - NO-Safety Vest")
+    def read(self):
+        with self.lock:
+            if self.latest_frame is not None:
+                return self.ret, self.latest_frame.copy()
+            return False, None
+
+    def release(self):
+        self.running = False
+        self.thread.join(timeout=1.0)
+        self.cap.release()
+
+cap = RTSPCaptureThread(RTSP_URL)
+time.sleep(1.0) # Wait for initial frames
+
+print(f"RTSP + YOLO detection started (TCP Transport, Zero-Lag Grabber)")
 print("Press Q to quit")
 
 prev_time = time.time()
