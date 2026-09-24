@@ -1,10 +1,10 @@
 import os
-os.environ["OMP_NUM_THREADS"] = "2"
-os.environ["MKL_NUM_THREADS"] = "2"
-os.environ["OPENBLAS_NUM_THREADS"] = "2"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
-os.environ["NUMEXPR_NUM_THREADS"] = "2"
-os.environ["TORCH_NUM_THREADS"] = "2"
+os.environ["OMP_NUM_THREADS"] = "4"
+os.environ["MKL_NUM_THREADS"] = "4"
+os.environ["OPENBLAS_NUM_THREADS"] = "4"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
+os.environ["NUMEXPR_NUM_THREADS"] = "4"
+os.environ["TORCH_NUM_THREADS"] = "4"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "2"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;5000000"
 
@@ -38,10 +38,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Optimize PyTorch CPU threading to 2 cores for Raspberry Pi 4 (leaves 2 cores for RTSP decode & FFmpeg)
+# Optimize PyTorch CPU threading to 4 cores for fast matrix math on Raspberry Pi 4 CPU
 try:
     import torch
-    torch.set_num_threads(2)
+    torch.set_num_threads(4)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
 except Exception:
@@ -168,7 +168,19 @@ def get_yolo_model(model_path):
             if resolved_path not in YOLO_CACHE:
                 try:
                     print(f"[CACHE] Loading model weights into memory: {resolved_path}", flush=True)
-                    YOLO_CACHE[resolved_path] = YOLO(resolved_path)
+                    model = YOLO(resolved_path)
+                    # Warm up model once with a dummy frame to avoid PyTorch first-pass graph compilation latency
+                    try:
+                        dummy_frame = np.zeros((480, 854, 3), dtype=np.uint8)
+                        if 'torch' in globals() and hasattr(torch, 'inference_mode'):
+                            with torch.inference_mode():
+                                model.predict(source=dummy_frame, imgsz=480, verbose=False)
+                        else:
+                            model.predict(source=dummy_frame, imgsz=480, verbose=False)
+                        print(f"[CACHE] Model warmed up successfully: {resolved_path}", flush=True)
+                    except Exception as we:
+                        print(f"[CACHE-WARN] Warmup skipped: {we}", flush=True)
+                    YOLO_CACHE[resolved_path] = model
                 except Exception as e:
                     print(f"[CACHE-ERR] Could not load model weights {resolved_path}: {e}", flush=True)
                     return None
@@ -310,6 +322,7 @@ class InferenceScheduler:
     def register_worker(self, worker):
         with self._lock:
             self._workers[worker.cam_id] = worker
+            worker._needs_immediate_inference = True
             print(f"[SCHEDULER] Registered Camera {worker.cam_id} into Central Inference Scheduler (Total Active: {len(self._workers)})", flush=True)
         self.ensure_running()
 
@@ -329,7 +342,9 @@ class InferenceScheduler:
         print("[SCHEDULER] Centralized Multi-Camera Inference Scheduler active", flush=True)
         while not self._stop_event.is_set():
             with self._lock:
-                active_workers = list(self._workers.values())
+                new_workers = [w for w in self._workers.values() if getattr(w, '_needs_immediate_inference', False)]
+                other_workers = [w for w in self._workers.values() if not getattr(w, '_needs_immediate_inference', False)]
+                active_workers = new_workers + other_workers
 
             if not active_workers:
                 time.sleep(0.05)
@@ -342,10 +357,11 @@ class InferenceScheduler:
                     continue
                 try:
                     worker.run_single_inference_cycle()
+                    worker._needs_immediate_inference = False
                 except Exception as e:
                     print(f"[SCHEDULER-ERR] Camera {worker.cam_id} inference error: {e}", flush=True)
 
-                time.sleep(0.04)
+                time.sleep(0.02)
 
 GLOBAL_INFERENCE_SCHEDULER = InferenceScheduler()
 
@@ -513,6 +529,9 @@ class DetectorWorker:
                 m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
 
             filter_classes = enabled_classes if (enabled_classes is not None) else []
+            if not filter_classes and class_configs:
+                filter_classes = list(class_configs.keys())
+
             effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
 
             class_configs = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}
@@ -651,7 +670,7 @@ class DetectorWorker:
                 if not suppress:
                     kept_items.append(item)
 
-        # Persistent Multi-Camera Track Memory (5.0s persistence)
+        # Persistent Multi-Camera Track Memory (35.0s persistence)
         # Prevents bounding boxes from disappearing between round-robin scheduler cycles
         now_t = time.time()
         if not hasattr(self, '_persistent_tracks'):
@@ -669,10 +688,10 @@ class DetectorWorker:
             })
             cur_cls.add(cls_name)
 
-        # Merge fresh detections with recent persistent detections
+        # Merge fresh detections with recent persistent detections (up to 35.0s)
         merged_tracks = list(fresh_tracks)
         for old in self._persistent_tracks:
-            if (now_t - old.get('last_seen', 0.0)) > 5.0:
+            if (now_t - old.get('last_seen', 0.0)) > 35.0:
                 continue
 
             ox1, oy1, ox2, oy2 = old['box']
