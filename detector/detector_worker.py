@@ -628,18 +628,8 @@ class DetectorWorker:
                     if isinstance(cc, dict) and "conf" in cc:
                         min_class_conf = min(min_class_conf, float(cc["conf"]))
 
-            # Pre-resize using OpenCV C++ NEON to avoid heavy Python letterboxing on 1080p frames
-            if orig_w > m_imgsz or orig_h > m_imgsz:
-                f_infer = cv2.resize(f, (m_imgsz, m_imgsz), interpolation=cv2.INTER_LINEAR)
-                infer_scale_x = float(self.width)  / float(m_imgsz)
-                infer_scale_y = float(self.height) / float(m_imgsz)
-            else:
-                f_infer = f
-                infer_scale_x = scale_x
-                infer_scale_y = scale_y
-
             predict_kwargs = {
-                "source": f_infer,
+                "source": f,
                 "conf":   max(PREDICT_CONF_FLOOR, min(min_class_conf, effective_conf)),
                 "iou":    m_iou,
                 "imgsz":  m_imgsz,
@@ -693,13 +683,13 @@ class DetectorWorker:
                         if conf_val < req_conf:
                             continue
 
-                        # Scale coordinates from inference space → output stream resolution
+                        # Scale coordinates from original raw frame space → output stream resolution
                         box_raw = b.xyxy[0].cpu().numpy().tolist()
                         rx1, ry1, rx2, ry2 = box_raw
-                        x1 = max(0, min(self.width  - 1, rx1 * infer_scale_x))
-                        y1 = max(0, min(self.height - 1, ry1 * infer_scale_y))
-                        x2 = max(0, min(self.width  - 1, rx2 * infer_scale_x))
-                        y2 = max(0, min(self.height - 1, ry2 * infer_scale_y))
+                        x1 = max(0, min(self.width  - 1, rx1 * scale_x))
+                        y1 = max(0, min(self.height - 1, ry1 * scale_y))
+                        x2 = max(0, min(self.width  - 1, rx2 * scale_x))
+                        y2 = max(0, min(self.height - 1, ry2 * scale_y))
                         box_xyxy = [x1, y1, x2, y2]
                         
                         bw = max(0, x2 - x1)
