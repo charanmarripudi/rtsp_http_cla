@@ -418,7 +418,7 @@ class DetectorWorker:
         self.roi_polygon = None
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
-        self.fps, self.width, self.height = 12.0, 854, 480
+        self.fps, self.width, self.height = 10.0, 640, 360
         self._latest_raw_frame = None
         self._tracked_boxes = []
         self._prev_inference_boxes = []
@@ -502,9 +502,9 @@ class DetectorWorker:
             "-r", str(int(self.fps)), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "baseline", "-level:v", "3.1",
-            "-b:v", "350k", "-maxrate", "450k", "-bufsize", "800k",
-            "-g", str(int(self.fps)), 
-            "-keyint_min", str(int(self.fps)), "-sc_threshold", "0",
+            "-b:v", "250k", "-maxrate", "320k", "-bufsize", "600k",
+            "-g", "20", 
+            "-keyint_min", "20", "-sc_threshold", "0",
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
