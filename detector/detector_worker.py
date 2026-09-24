@@ -651,20 +651,58 @@ class DetectorWorker:
                 if not suppress:
                     kept_items.append(item)
 
-        # Direct Frame Box Rendering (Identical to f4d3e73)
-        # Eliminates class jumping, floating boxes, and drifting completely
-        render_boxes = []
+        # Persistent Multi-Camera Track Memory (5.0s persistence)
+        # Prevents bounding boxes from disappearing between round-robin scheduler cycles
+        now_t = time.time()
+        if not hasattr(self, '_persistent_tracks'):
+            self._persistent_tracks = []
+
+        fresh_tracks = []
         for b_xyxy, color_val, conf_val, cls_name in kept_items:
-            render_boxes.append({
+            fresh_tracks.append({
                 'box': b_xyxy,
                 'label': f"{cls_name} {conf_val:.2f}",
                 'color': color_val,
                 'cls': cls_name,
                 'conf': conf_val,
+                'last_seen': now_t
             })
             cur_cls.add(cls_name)
 
-        display_boxes = render_boxes
+        # Merge fresh detections with recent persistent detections
+        merged_tracks = list(fresh_tracks)
+        for old in self._persistent_tracks:
+            if (now_t - old.get('last_seen', 0.0)) > 5.0:
+                continue
+
+            ox1, oy1, ox2, oy2 = old['box']
+            o_area = max(0, ox2 - ox1) * max(0, oy2 - oy1)
+            is_covered = False
+
+            for fresh in fresh_tracks:
+                fx1, fy1, fx2, fy2 = fresh['box']
+                f_area = max(0, fx2 - fx1) * max(0, fy2 - fy1)
+
+                ix1 = max(ox1, fx1)
+                iy1 = max(oy1, fy1)
+                ix2 = min(ox2, fx2)
+                iy2 = min(oy2, fy2)
+
+                if ix2 > ix1 and iy2 > iy1:
+                    inter = (ix2 - ix1) * (iy2 - iy1)
+                    union = o_area + f_area - inter
+                    iou = inter / max(1.0, union)
+                    io_min = inter / max(1.0, min(o_area, f_area))
+                    if match_class(old['cls'], fresh['cls']) and (iou >= 0.35 or io_min >= 0.50):
+                        is_covered = True
+                        break
+
+            if not is_covered:
+                merged_tracks.append(old)
+                cur_cls.add(old['cls'])
+
+        self._persistent_tracks = merged_tracks
+        display_boxes = merged_tracks
 
         with self._box_lock:
             self._tracked_boxes = display_boxes
