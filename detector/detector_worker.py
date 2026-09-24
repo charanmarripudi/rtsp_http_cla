@@ -220,13 +220,23 @@ def get_yolo_model(model_path):
 
 def get_alerts_base_url():
     try:
-        public_url_file = os.path.join(str(BASE_DIR), "hls", "public_url.txt")
-        if os.path.exists(public_url_file):
-            with open(public_url_file) as f:
-                val = f.read().strip()
-                if val and not val.startswith("("):
-                    return val
+        env_url = os.getenv("PUBLIC_URL") or os.getenv("TAILSCALE_URL") or os.getenv("BASE_URL")
+        if env_url and not env_url.startswith("("):
+            return env_url.strip()
+        candidate_paths = [
+            os.path.join(str(BASE_DIR), "hls", "public_url.txt"),
+            os.path.join(str(BASE_DIR), "public_url.txt"),
+            "/home/algo/rtsp_http_cla/hls/public_url.txt",
+            "hls/public_url.txt"
+        ]
+        for cp in candidate_paths:
+            if os.path.exists(cp):
+                with open(cp) as f:
+                    val = f.read().strip()
+                    if val and not val.startswith("(") and ("http://" in val or "https://" in val):
+                        return val
     except: pass
+    return ""
 
 def is_opposite_class(cls1, cls2):
     try:
