@@ -516,9 +516,10 @@ class DetectorWorker:
             m_conf = self.conf
             m_iou = self.iou
             enabled_classes = None
-            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "640"))
+            default_imgsz = int(os.getenv("DEFAULT_IMGSZ", "480"))
             m_imgsz = default_imgsz
             cfg = get_config_for_model(self.model_configs, m_name)
+            class_configs = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}
             if cfg and isinstance(cfg, dict):
                 m_conf = float(cfg.get("conf", self.conf))
                 m_iou = float(cfg.get("iou", self.iou))
@@ -533,8 +534,6 @@ class DetectorWorker:
                 filter_classes = list(class_configs.keys())
 
             effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
-
-            class_configs = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}
             min_class_conf = effective_conf
             if class_configs and isinstance(class_configs, dict):
                 for cc in class_configs.values():
@@ -688,10 +687,10 @@ class DetectorWorker:
             })
             cur_cls.add(cls_name)
 
-        # Merge fresh detections with recent persistent detections (up to 35.0s)
+        # Merge fresh detections with recent persistent detections (up to 60.0s)
         merged_tracks = list(fresh_tracks)
         for old in self._persistent_tracks:
-            if (now_t - old.get('last_seen', 0.0)) > 35.0:
+            if (now_t - old.get('last_seen', 0.0)) > 60.0:
                 continue
 
             ox1, oy1, ox2, oy2 = old['box']
