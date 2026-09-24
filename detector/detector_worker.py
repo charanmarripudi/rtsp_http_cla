@@ -788,12 +788,21 @@ class DetectorWorker:
                     old_b[2] * a + b_xyxy[2] * (1 - a),
                     old_b[3] * a + b_xyxy[3] * (1 - a),
                 ]
+                
+                # Update rolling M-of-N voting history (1 = hit)
+                hist = self._ema_tracks[best_id].get('history', [])
+                hist.append(1)
+                if len(hist) > 5:
+                    hist = hist[-5:]
+
                 self._ema_tracks[best_id].update({
                     'box':       smoothed,
                     'color':     color_val,
                     'conf':      conf_val,
                     'cls':       cls_name,
                     'last_seen': now_t,
+                    'hit_count': self._ema_tracks[best_id].get('hit_count', 0) + 1,
+                    'history':   hist,
                 })
                 matched_ids.add(best_id)
             else:
@@ -801,14 +810,26 @@ class DetectorWorker:
                 new_id = self._ema_next_id
                 self._ema_next_id += 1
                 self._ema_tracks[new_id] = {
-                    'box':       list(b_xyxy),
-                    'color':     color_val,
-                    'conf':      conf_val,
-                    'cls':       cls_name,
-                    'last_seen': now_t,
+                    'box':             list(b_xyxy),
+                    'color':           color_val,
+                    'conf':            conf_val,
+                    'cls':             cls_name,
+                    'last_seen':       now_t,
+                    'first_seen':      now_t,
+                    'hit_count':       1,
+                    'history':         [1],
+                    'last_alert_time': 0.0,
                 }
                 matched_ids.add(new_id)
 
+        # Record a 0 (miss) in history for active tracks not detected in this cycle
+        for tid, trk in self._ema_tracks.items():
+            if tid not in matched_ids:
+                hist = trk.get('history', [])
+                hist.append(0)
+                if len(hist) > 5:
+                    hist = hist[-5:]
+                trk['history'] = hist
 
         # Expire stale tracks
         for tid in list(self._ema_tracks.keys()):
@@ -852,7 +873,6 @@ class DetectorWorker:
             print(f"==================================================================\n", flush=True)
 
         # ── Snapshot for Alerts ───────────────────────────────────────────────
-        # Build snapshot on the output-resolution resize of the current frame
         frame_snapshot = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
         for t_box in display_boxes:
             try:
@@ -864,39 +884,32 @@ class DetectorWorker:
             except:
                 pass
 
-        # ── Alert Processing: 3.0s continuous trigger + Strict 30.0s repeat cooldown ──
-        if not hasattr(self, '_class_last_alert'):
-            self._class_last_alert = {}
+        # ── Robust Alert Processing: M-of-N Temporal Voting + Per-Track Cooldown ──
+        for tid, trk in list(self._ema_tracks.items()):
+            c = trk.get('cls', '')
+            if not c:
+                continue
 
-        for c in cur_cls:
+            # Non-alert baseline classes (persons/machinery) are not violation alerts
             is_neg, core_type, cleaned_cls = extract_negation_and_core(c)
             if cleaned_cls in ("person", "worker", "human", "man", "woman", "machinery", "vehicle"):
                 continue
 
-            last_alert_time = self._class_last_alert.get(c, 0.0)
-            if (now - last_alert_time) < 30.0:
+            # 1. Per-Track Cooldown (30s per unique track instance)
+            last_alert_time = trk.get('last_alert_time', 0.0)
+            if (now_t - last_alert_time) < 30.0:
                 continue
 
-            if c not in self.alert_timers:
-                self.alert_timers[c] = {'start': now, 'last_seen': now, 'hits': 1}
-            else:
-                self.alert_timers[c]['last_seen'] = now
-                self.alert_timers[c]['hits'] = self.alert_timers[c].get('hits', 1) + 1
+            # 2. Track-Age & M-of-N Voting Gate:
+            # Must have at least 2 hits, and >= 2 detections in the last 5 cycles
+            votes = sum(trk.get('history', []))
+            total_hits = trk.get('hit_count', 0)
+            track_age = now_t - trk.get('first_seen', now_t)
 
-            duration = now - self.alert_timers[c]['start']
-            hits     = self.alert_timers[c].get('hits', 1)
-            if duration >= 3.0 or hits >= 2:
-                self._class_last_alert[c] = now
-                self.alert_triggered.add(c)
-                print(f"[ALERT] Triggering alert: cam={self.cam_id}, class={c}, duration={duration:.1f}s, hits={hits} (30s cooldown active)", flush=True)
+            if total_hits >= 2 and (votes >= 2 or track_age >= 1.5):
+                trk['last_alert_time'] = now_t
+                print(f"[ALERT-VOTING] Triggered verified alert: cam={self.cam_id}, class={c}, track_id={tid}, votes={votes}/5, hits={total_hits}, age={track_age:.1f}s", flush=True)
                 self._save_alert(c, frame_snapshot)
-
-        # Cleanup expired alert timers (absent for > 25.0s across multi-camera cycles)
-        for c in list(self.alert_timers.keys()):
-            if now - self.alert_timers[c]['last_seen'] > 25.0:
-                del self.alert_timers[c]
-                if c in self.alert_triggered:
-                    self.alert_triggered.remove(c)
 
     def _save_alert(self, class_name, frame):
         try:
