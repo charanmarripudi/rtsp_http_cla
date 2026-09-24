@@ -1033,14 +1033,27 @@ async def serve_hls(path: str, request: Request = None):
 
     if not os.path.exists(fp): return Response(status_code=404, headers=headers)
     mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
-    headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-        "Access-Control-Allow-Headers": "*",
-        "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
-        "Pragma": "no-cache",
-        "Expires": "0"
-    }
+
+    # .m3u8 playlist must NEVER be cached — it changes every 2 seconds.
+    # .ts segments are immutable once written — allow clients to cache them for
+    # up to 30 seconds so remote viewers (ngrok/cloudflare) don't re-request
+    # completed segments and stop stuttering/buffering.
+    if path.endswith(".ts"):
+        headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Cache-Control": "public, max-age=30",
+        }
+    else:
+        headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
     
     try:
         if path.endswith(".m3u8"):

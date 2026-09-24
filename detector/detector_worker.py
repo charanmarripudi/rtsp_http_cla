@@ -61,6 +61,12 @@ YOLO_CACHE = {}
 # Keep this short (2-3 s) so stale boxes don't pile up between scheduler cycles.
 TRACK_MAX_AGE_S = 2.5
 
+# EMA (Exponential Moving Average) smoothing for bounding box positions.
+# A value of 0.0 = always use fresh raw detection (no smoothing, boxes jump).
+# A value of 0.5 = 50% old position + 50% new detection (strong smoothing).
+# 0.35 is a good balance: stable boxes that still follow fast-moving people.
+BOX_EMA_ALPHA = 0.35
+
 # Minimum IoU overlap to consider two boxes the same detection (same-class NMS)
 NMS_SAME_IOU_THRESH = 0.30
 NMS_SAME_IO_MIN_THRESH = 0.50
@@ -438,6 +444,10 @@ class DetectorWorker:
         self._start_time = time.time()
         self._models_active_time = None
         self._first_box_logged = False
+        # EMA smoothing state: maps a stable track_id → smoothed box coords
+        # Each entry: {'box': [x1,y1,x2,y2], 'cls': str, 'color': tuple, 'conf': float, 'last_seen': float}
+        self._ema_tracks = {}
+        self._ema_next_id = 0
         print(f"[TIMER-START] Camera {self.cam_id} Start request initialized at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
 
     def update_models(self, model_paths, model_configs=None, conf=None, iou=None, location=None):
@@ -460,6 +470,9 @@ class DetectorWorker:
         if hasattr(self, "_box_lock"):
             with self._box_lock:
                 self._tracked_boxes = []
+        # Reset EMA tracks when models change so stale boxes from old model don't linger
+        self._ema_tracks = {}
+        self._ema_next_id = 0
         print(f"[WORKER-DYNAMIC-UPDATE] Camera {getattr(self, 'cam_id', '?')} dynamically updated models to {self.model_paths} in 0ms without restarting RTSP or FFmpeg", flush=True)
 
     def stop(self):
@@ -497,11 +510,13 @@ class DetectorWorker:
             "-b:v", "350k", "-maxrate", "450k", "-bufsize", "800k",
             "-g", str(int(self.fps)), 
             "-keyint_min", str(int(self.fps)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "1", "-hls_list_size", "3",
+            "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
+        # NOTE: hls_list_size=6 keeps 6×2s = 12s of segments for remote viewers to buffer
+        # without stuttering over high-latency tunnels (ngrok/cloudflare).
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
         print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 350k (max 450k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL, bufsize=10*1024*1024)
@@ -716,52 +731,82 @@ class DetectorWorker:
         # ── Multi-Model NMS ───────────────────────────────────────────────────
         kept_items = self._apply_nms(raw_boxes)
 
-        # ── Persistent Track Memory (short window = TRACK_MAX_AGE_S) ─────────
-        # Short persistence avoids "phantom boxes" from people who already moved.
-        # We only carry over an old track when no fresh detection covers it.
+        # ── EMA-Smoothed Persistent Track Memory ─────────────────────────────
+        # Strategy:
+        #   1. For each fresh detection, find the closest existing EMA track of the
+        #      same class (by IoU).  If found → update its position with EMA blend.
+        #      If not found → create a new EMA track at the raw position.
+        #   2. Any EMA track not refreshed within TRACK_MAX_AGE_S is dropped.
+        # Result: boxes slide smoothly to the person's new position instead of
+        # teleporting, eliminating the "jumping" visual artefact.
         now_t = time.time()
-        if not hasattr(self, '_persistent_tracks'):
-            self._persistent_tracks = []
+        if not hasattr(self, '_ema_tracks'):
+            self._ema_tracks = {}
+            self._ema_next_id = 0
 
-        fresh_tracks = []
+        matched_ids = set()
+
         for b_xyxy, color_val, conf_val, cls_name in kept_items:
-            fresh_tracks.append({
-                'box':       b_xyxy,
-                'label':     f"{cls_name} {conf_val:.2f}",
-                'color':     color_val,
-                'cls':       cls_name,
-                'conf':      conf_val,
-                'last_seen': now_t
-            })
-            cur_cls.add(cls_name)
+            best_id, best_iou = None, 0.0
+            for tid, trk in self._ema_tracks.items():
+                if not match_class(trk['cls'], cls_name):
+                    continue
+                iou_v, io_min_v = DetectorWorker._box_iou_and_io_min(trk['box'], b_xyxy)
+                score = max(iou_v, io_min_v * 0.6)
+                if score > best_iou and score >= 0.15:
+                    best_iou = score
+                    best_id  = tid
 
-        # Merge: carry old tracks forward ONLY if they are NOT already covered by
-        # a fresh detection and have not expired (TRACK_MAX_AGE_S).
-        merged_tracks = list(fresh_tracks)
-        for old in self._persistent_tracks:
-            age = now_t - old.get('last_seen', 0.0)
+            if best_id is not None:
+                # EMA-blend existing track toward new detection
+                old_b = self._ema_tracks[best_id]['box']
+                a = BOX_EMA_ALPHA
+                smoothed = [
+                    old_b[0] * a + b_xyxy[0] * (1 - a),
+                    old_b[1] * a + b_xyxy[1] * (1 - a),
+                    old_b[2] * a + b_xyxy[2] * (1 - a),
+                    old_b[3] * a + b_xyxy[3] * (1 - a),
+                ]
+                self._ema_tracks[best_id].update({
+                    'box':       smoothed,
+                    'color':     color_val,
+                    'conf':      conf_val,
+                    'cls':       cls_name,
+                    'last_seen': now_t,
+                })
+                matched_ids.add(best_id)
+            else:
+                # New detection → new EMA track (starts at raw position)
+                new_id = self._ema_next_id
+                self._ema_next_id += 1
+                self._ema_tracks[new_id] = {
+                    'box':       list(b_xyxy),
+                    'color':     color_val,
+                    'conf':      conf_val,
+                    'cls':       cls_name,
+                    'last_seen': now_t,
+                }
+                matched_ids.add(new_id)
+
+        # Expire stale tracks
+        for tid in list(self._ema_tracks.keys()):
+            if now_t - self._ema_tracks[tid].get('last_seen', 0.0) > TRACK_MAX_AGE_S:
+                del self._ema_tracks[tid]
+
+        # Build display list from live EMA tracks
+        display_boxes = []
+        for trk in self._ema_tracks.values():
+            age = now_t - trk.get('last_seen', 0.0)
             if age > TRACK_MAX_AGE_S:
-                continue   # expired – drop
-
-            ox1, oy1, ox2, oy2 = old['box']
-            o_area     = max(1.0, (ox2 - ox1) * (oy2 - oy1))
-            is_covered = False
-
-            for fresh in fresh_tracks:
-                iou_v, io_min_v = DetectorWorker._box_iou_and_io_min(old['box'], fresh['box'])
-                is_same = match_class(old['cls'], fresh['cls'])
-                is_opp  = is_opposite_class(old['cls'], fresh['cls'])
-                if (is_same and (iou_v >= NMS_SAME_IOU_THRESH or io_min_v >= NMS_SAME_IO_MIN_THRESH)) or \
-                   (is_opp  and (iou_v >= NMS_OPP_IOU_THRESH  or io_min_v >= NMS_OPP_IO_MIN_THRESH)):
-                    is_covered = True
-                    break
-
-            if not is_covered:
-                merged_tracks.append(old)
-                cur_cls.add(old['cls'])
-
-        self._persistent_tracks = merged_tracks
-        display_boxes = merged_tracks
+                continue
+            cur_cls.add(trk['cls'])
+            display_boxes.append({
+                'box':   trk['box'],
+                'label': f"{trk['cls']} {trk['conf']:.2f}",
+                'color': trk['color'],
+                'cls':   trk['cls'],
+                'conf':  trk['conf'],
+            })
 
         with self._box_lock:
             self._tracked_boxes = display_boxes
