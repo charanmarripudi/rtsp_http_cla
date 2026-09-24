@@ -633,7 +633,7 @@ class DetectorWorker:
                         color_val = get_dynamic_class_color(cls)
                         raw_boxes.append((box_xyxy, color_val, conf_val, cls))
 
-        # Multi-Model Same-Class NMS
+        # Multi-Model Same-Class & Opposite-Class NMS Suppression
         kept_items = []
         if raw_boxes:
             raw_boxes.sort(key=lambda x: x[2], reverse=True)
@@ -662,14 +662,20 @@ class DetectorWorker:
 
                         is_same_cls = match_class(cls1_name, cls2_name)
                         is_opp_cls = is_opposite_class(cls1_name, cls2_name)
-                        if (is_same_cls and (iou >= 0.35 or io_min >= 0.50)) or (is_opp_cls and (iou >= 0.40 or io_min >= 0.55)):
+                        
+                        # 1. Same class duplicate suppression (keeps single highest confidence box)
+                        if is_same_cls and (iou >= 0.25 or io_min >= 0.40):
+                            suppress = True
+                            break
+                        # 2. Opposite class suppression (e.g. Safety Vest vs NO-Safety Vest on same person -> higher conf wins)
+                        if is_opp_cls and (iou >= 0.15 or io_min >= 0.25):
                             suppress = True
                             break
 
                 if not suppress:
                     kept_items.append(item)
 
-        # Persistent Multi-Camera Track Memory (35.0s persistence)
+        # Persistent Multi-Camera Track Memory (60.0s persistence)
         # Prevents bounding boxes from disappearing between round-robin scheduler cycles
         now_t = time.time()
         if not hasattr(self, '_persistent_tracks'):
@@ -711,7 +717,9 @@ class DetectorWorker:
                     union = o_area + f_area - inter
                     iou = inter / max(1.0, union)
                     io_min = inter / max(1.0, min(o_area, f_area))
-                    if match_class(old['cls'], fresh['cls']) and (iou >= 0.35 or io_min >= 0.50):
+                    is_same = match_class(old['cls'], fresh['cls'])
+                    is_opp = is_opposite_class(old['cls'], fresh['cls'])
+                    if (is_same and (iou >= 0.25 or io_min >= 0.40)) or (is_opp and (iou >= 0.15 or io_min >= 0.25)):
                         is_covered = True
                         break
 
@@ -987,6 +995,9 @@ class DetectorWorker:
                         # Draw latest tracked bounding boxes from Central Inference Scheduler
                         with self._box_lock:
                             display_boxes = list(self._tracked_boxes)
+
+                        # Sort boxes by area descending so smaller detail boxes (helmets, vests) render crisply on top
+                        display_boxes.sort(key=lambda b: max(0, b['box'][2] - b['box'][0]) * max(0, b['box'][3] - b['box'][1]), reverse=True)
 
                         for t_box in display_boxes:
                             try:
