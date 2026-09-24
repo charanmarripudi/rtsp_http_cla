@@ -506,8 +506,8 @@ function startClientSync() {
     pollInterval = setInterval(async () => {
         try {
             const [streams, status] = await Promise.all([
-                fetch("/api/streams").then(r => r.json()),
-                fetch("/api/status").then(r => r.json())
+                fetch("/api/streams?t=" + Date.now(), { cache: "no-store" }).then(r => r.json()),
+                fetch("/api/status?t=" + Date.now(), { cache: "no-store" }).then(r => r.json())
             ]);
             const streamsById = new Map(streams.map(s => [String(s.id), s]));
             document.querySelectorAll(".box").forEach((box) => {
@@ -515,11 +515,10 @@ function startClientSync() {
                 if (window.cameraTransitioning[camId]) return;
                 const meta = streamsById.get(String(camId));
                 if (!meta) return;
-                
+
+                // ── Legacy global sliders (fallback) ──────────────────────────
                 const confSlider = box.querySelector(".conf-slider");
-                const iouSlider = box.querySelector(".iou-slider");
-                
-                // Update sliders only if user is not actively dragging them
+                const iouSlider  = box.querySelector(".iou-slider");
                 if (confSlider && document.activeElement !== confSlider && meta.conf !== undefined) {
                     if (Math.abs(parseFloat(confSlider.value) - parseFloat(meta.conf)) > 0.005) {
                         confSlider.value = meta.conf;
@@ -534,6 +533,55 @@ function startClientSync() {
                         if (span) span.textContent = parseFloat(meta.iou).toFixed(2);
                     }
                 }
+
+                // ── Per-model per-class sliders (model-conf-slider / model-iou-slider) ──
+                // These are the NEW sliders shown in the "Assigned Models" section.
+                // Sync them from the server-side model_configs so that when System A
+                // changes a threshold, System B sees the updated value within ~3 seconds.
+                const modelConfigs = meta.model_configs || {};
+                box.querySelectorAll(".model-card-box").forEach(card => {
+                    const modelName  = card.getAttribute("data-model") || "";
+                    const className  = card.getAttribute("data-class");  // may be null
+                    const normM      = modelName.endsWith(".pt") ? modelName : `${modelName}.pt`;
+                    const cleanM     = normM.replace(".pt", "");
+                    const mCfg       = modelConfigs[normM] || modelConfigs[cleanM] || {};
+
+                    let srvConf = null, srvIou = null;
+                    if (className) {
+                        // Per-class config takes precedence
+                        const cCfg = (mCfg.class_configs && mCfg.class_configs[className]) || {};
+                        srvConf = cCfg.conf !== undefined ? parseFloat(cCfg.conf)
+                                : (mCfg.conf !== undefined ? parseFloat(mCfg.conf)
+                                : (meta.conf !== undefined ? parseFloat(meta.conf) : null));
+                        srvIou  = cCfg.iou  !== undefined ? parseFloat(cCfg.iou)
+                                : (mCfg.iou  !== undefined ? parseFloat(mCfg.iou)
+                                : (meta.iou  !== undefined ? parseFloat(meta.iou) : null));
+                    } else {
+                        srvConf = mCfg.conf !== undefined ? parseFloat(mCfg.conf)
+                                : (meta.conf !== undefined ? parseFloat(meta.conf) : null);
+                        srvIou  = mCfg.iou  !== undefined ? parseFloat(mCfg.iou)
+                                : (meta.iou  !== undefined ? parseFloat(meta.iou) : null);
+                    }
+
+                    const cSlider = card.querySelector(".model-conf-slider");
+                    const iSlider = card.querySelector(".model-iou-slider");
+                    const cSpan   = card.querySelector(".model-conf-val");
+                    const iSpan   = card.querySelector(".model-iou-val");
+
+                    // Only update if user is not actively dragging and value changed
+                    if (cSlider && document.activeElement !== cSlider && srvConf !== null) {
+                        if (Math.abs(parseFloat(cSlider.value) - srvConf) > 0.005) {
+                            cSlider.value = srvConf.toFixed(2);
+                            if (cSpan) cSpan.textContent = srvConf.toFixed(2);
+                        }
+                    }
+                    if (iSlider && document.activeElement !== iSlider && srvIou !== null) {
+                        if (Math.abs(parseFloat(iSlider.value) - srvIou) > 0.005) {
+                            iSlider.value = srvIou.toFixed(2);
+                            if (iSpan) iSpan.textContent = srvIou.toFixed(2);
+                        }
+                    }
+                });
 
                 // Synchronize detection state across different browser tabs without restarting video
                 const isDetecting = status.active && status.active.includes(String(camId));
@@ -564,7 +612,7 @@ function startClientSync() {
                 }
             });
         } catch (_) {}
-    }, 4000);
+    }, 3000);  // Poll every 3s — fast enough for cross-device sync, light enough for Pi
 }
 
 window.RtspDetection = { init };

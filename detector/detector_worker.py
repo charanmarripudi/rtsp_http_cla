@@ -747,15 +747,37 @@ class DetectorWorker:
         matched_ids = set()
 
         for b_xyxy, color_val, conf_val, cls_name in kept_items:
-            best_id, best_iou = None, 0.0
+            # ── Match to closest same-class EMA track ────────────────────────
+            # Use a combined score: IoU for close boxes + centre-distance fallback
+            # for boxes that moved significantly (e.g. bending worker).
+            bx1, by1, bx2, by2 = b_xyxy
+            b_cx = (bx1 + bx2) / 2.0
+            b_cy = (by1 + by2) / 2.0
+            b_w  = max(1.0, bx2 - bx1)
+            b_h  = max(1.0, by2 - by1)
+
+            best_id, best_score = None, 0.0
             for tid, trk in self._ema_tracks.items():
+                if tid in matched_ids:
+                    continue  # already claimed by an earlier detection this cycle
                 if not match_class(trk['cls'], cls_name):
                     continue
                 iou_v, io_min_v = DetectorWorker._box_iou_and_io_min(trk['box'], b_xyxy)
-                score = max(iou_v, io_min_v * 0.6)
-                if score > best_iou and score >= 0.15:
-                    best_iou = score
-                    best_id  = tid
+
+                # Centre-distance score: 1.0 when perfectly aligned, 0.0 when > 1 box-width away
+                tx1, ty1, tx2, ty2 = trk['box']
+                t_cx = (tx1 + tx2) / 2.0
+                t_cy = (ty1 + ty2) / 2.0
+                dist_x = abs(b_cx - t_cx) / max(b_w, (tx2 - tx1), 1.0)
+                dist_y = abs(b_cy - t_cy) / max(b_h, (ty2 - ty1), 1.0)
+                dist_score = max(0.0, 1.0 - (dist_x**2 + dist_y**2) ** 0.5)
+
+                # Combined: prioritise IoU, use distance as tiebreaker / fallback
+                score = max(iou_v * 1.2, io_min_v * 0.8, dist_score * 0.5)
+
+                if score > best_score and score >= 0.10:
+                    best_score = score
+                    best_id    = tid
 
             if best_id is not None:
                 # EMA-blend existing track toward new detection
@@ -787,6 +809,7 @@ class DetectorWorker:
                     'last_seen': now_t,
                 }
                 matched_ids.add(new_id)
+
 
         # Expire stale tracks
         for tid in list(self._ema_tracks.keys()):
