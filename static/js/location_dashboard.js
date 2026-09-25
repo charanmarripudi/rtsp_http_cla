@@ -628,9 +628,24 @@ class LocationDashboard {
 
         let html = "";
 
-        const ppeModels = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"];
+        const specializedModels = [
+            { file: "ppe_new.pt", label: "PPE-NEW CLASSES", color: "#00ffaa", classes: ["Cap-Lamp","Gloves","Gum-Boots","Hard-Hat","Mask","NO-Mask","No-Cap-Lamp","No-Gloves","No-Gum-Boots","No-Hard-Hat","No-Saftey-Belt","No-Saftey-Vest","Saftey-Belt","Saftey-Vest"] },
+            { file: "nik_ppe_best.pt", label: "NIK-PPE CLASSES", color: "#f5a623", classes: ["Fall-Detected","Gloves","Goggles","Helmet","Mask","NO-Mask","No_Gloves","No_Goggles","No_Harness","No_boots","No_helmet","No_safety_vest","Safety Vest","boots","harness"] },
+            { file: "hansung_ppe_violations.pt", label: "HANSUNG VIOLATIONS CLASSES", color: "#fb7185", classes: ["Hardhat","Mask","NO-Hardhat","NO-Mask","NO-Safety Vest","Person","Safety Cone","Safety Vest","machinery","vehicle"] },
+            { file: "construction.pt", label: "CONSTRUCTION PPE CLASSES", color: "#eab308", classes: ["helmet","gloves","vest","boots","goggles","none","Person","no_helmet","no_goggle","no_gloves","no_boots"] },
+            { file: "hf_ppe_detection.pt", label: "HF PPE DETECTION CLASSES", color: "#a78bfa", classes: ["helmet","human","no-helmet","vest"] },
+            { file: "fire_smoke.pt", label: "FIRE & SMOKE CLASSES", color: "#f97316", classes: ["Fire","Smoke"] },
+            { file: "Final_Fire_smoke.pt", label: "FINAL FIRE & SMOKE CLASSES", color: "#ef4444", classes: ["fire","smoke","Gas"] },
+            { file: "150_firehose_best.pt", label: "FIREHOSE DETECTION CLASSES", color: "#ec4899", classes: ["fire_hose","firehose_box"] },
+            { file: "120_spillage_best.pt", label: "SPILLAGE DETECTION CLASSES", color: "#06b6d4", classes: ["spillage"] },
+            { file: "best_tape.pt", label: "REFLECTIVE TAPE CLASSES", color: "#10b981", classes: ["reflective_tape_floor","reflective_tape_person","reflective_tape_vehicles","traffic_tape_bollards","traffic_tape_cone"] },
+            { file: "sand_ext_chocks.pt", label: "SAND EXT CHOCKS CLASSES", color: "#84cc16", classes: ["Fire_Extinguisher","Sand-Bucket","wheel-choke"] },
+            { file: "tyre_final.pt", label: "TYRE INSPECTION CLASSES", color: "#6366f1", classes: ["Defective","Good_tyre"] }
+        ];
+
+        const specFileNames = specializedModels.map(s => s.file);
         this.allModels.forEach(model => {
-            if (ppeModels.includes(model)) return;
+            if (specFileNames.includes(model)) return;
             const checked = assigned.includes(model);
             html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
                 <input type="checkbox" class="parent-model-checkbox" value="${this.escapeHtml(model)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" style="cursor: pointer; accent-color: #00ffaa; margin: 0; margin-right: 4px;">
@@ -638,77 +653,19 @@ class LocationDashboard {
             </label>`;
         });
 
-        const ppeNewClasses = [
-            "Cap-Lamp", "Gloves", "Gum-Boots", "Hard-Hat", "Mask", "NO-Mask",
-            "No-Cap-Lamp", "No-Gloves", "No-Gum-Boots", "No-Hard-Hat",
-            "No-Saftey-Belt", "No-Saftey-Vest", "Saftey-Belt", "Saftey-Vest"
-        ];
-        const ppeNewCfg = (stream && stream.model_configs && (stream.model_configs["ppe_new.pt"] || stream.model_configs["ppe_new"])) || {};
-        const ppeNewEnabled = ppeNewCfg.enabled_classes || [];
+        specializedModels.forEach(spec => {
+            const cleanM = spec.file.replace(".pt", "");
+            const cfg = (stream && stream.model_configs && (stream.model_configs[spec.file] || stream.model_configs[cleanM])) || {};
+            const enabled = cfg.enabled_classes || [];
 
-        html += `<div style="width:100%;font-size:0.62rem;color:#00ffaa;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">PPE-NEW CLASSES</div>`;
-        ppeNewClasses.forEach(cls => {
-            const checked = ppeNewEnabled.includes(cls);
-            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
-                <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="ppe_new.pt" style="cursor: pointer; accent-color: #00ffaa; margin: 0; margin-right: 4px;">
-                <span>${this.escapeHtml(cls)}</span>
-            </label>`;
-        });
-
-        const nikPpeClasses = [
-            "Fall-Detected", "Gloves", "Goggles", "Helmet", "Mask", "NO-Mask",
-            "No_Gloves", "No_Goggles", "No_Harness", "No_boots", "No_helmet",
-            "No_safety_vest", "Safety Vest", "boots", "harness"
-        ];
-        const nikCfg = (stream && stream.model_configs && (stream.model_configs["nik_ppe_best.pt"] || stream.model_configs["nik_ppe_best"])) || {};
-        const nikEnabled = nikCfg.enabled_classes || [];
-
-        html += `<div style="width:100%;font-size:0.62rem;color:#f5a623;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">NIK-PPE CLASSES</div>`;
-        nikPpeClasses.forEach(cls => {
-            const checked = nikEnabled.includes(cls);
-            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
-                <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="nik_ppe_best.pt" style="cursor: pointer; accent-color: #f5a623; margin: 0; margin-right: 4px;">
-                <span style="color:${checked ? '#f5a623' : ''}">${this.escapeHtml(cls)}</span>
-            </label>`;
-        });
-
-        const hfClasses = ["helmet", "human", "no-helmet", "vest"];
-        const hfCfg = (stream && stream.model_configs && (stream.model_configs["hf_ppe_detection.pt"] || stream.model_configs["hf_ppe_detection"])) || {};
-        const hfEnabled = hfCfg.enabled_classes || [];
-
-        html += `<div style="width:100%;font-size:0.62rem;color:#a78bfa;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">HF PPE DETECTION CLASSES</div>`;
-        hfClasses.forEach(cls => {
-            const checked = hfEnabled.includes(cls);
-            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
-                <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="hf_ppe_detection.pt" style="cursor: pointer; accent-color: #a78bfa; margin: 0; margin-right: 4px;">
-                <span style="color:${checked ? '#a78bfa' : ''}">${this.escapeHtml(cls)}</span>
-            </label>`;
-        });
-
-        const kbClasses = ["glove", "goggles", "helmet", "mask", "no_glove", "no_goggles", "no_helmet", "no_mask", "no_shoes", "shoes"];
-        const kbCfg = (stream && stream.model_configs && (stream.model_configs["keremberke_ppe_gear.pt"] || stream.model_configs["keremberke_ppe_gear"])) || {};
-        const kbEnabled = kbCfg.enabled_classes || [];
-
-        html += `<div style="width:100%;font-size:0.62rem;color:#38bdf8;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">KEREMBERKE GEAR CLASSES</div>`;
-        kbClasses.forEach(cls => {
-            const checked = kbEnabled.includes(cls);
-            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
-                <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="keremberke_ppe_gear.pt" style="cursor: pointer; accent-color: #38bdf8; margin: 0; margin-right: 4px;">
-                <span style="color:${checked ? '#38bdf8' : ''}">${this.escapeHtml(cls)}</span>
-            </label>`;
-        });
-
-        const hsClasses = ["Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle"];
-        const hsCfg = (stream && stream.model_configs && (stream.model_configs["hansung_ppe_violations.pt"] || stream.model_configs["hansung_ppe_violations"])) || {};
-        const hsEnabled = hsCfg.enabled_classes || [];
-
-        html += `<div style="width:100%;font-size:0.62rem;color:#fb7185;font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">HANSUNG VIOLATIONS CLASSES</div>`;
-        hsClasses.forEach(cls => {
-            const checked = hsEnabled.includes(cls);
-            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
-                <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="hansung_ppe_violations.pt" style="cursor: pointer; accent-color: #fb7185; margin: 0; margin-right: 4px;">
-                <span style="color:${checked ? '#fb7185' : ''}">${this.escapeHtml(cls)}</span>
-            </label>`;
+            html += `<div style="width:100%;font-size:0.62rem;color:${spec.color};font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">${spec.label}</div>`;
+            spec.classes.forEach(cls => {
+                const checked = enabled.includes(cls);
+                html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
+                    <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="${spec.file}" style="cursor: pointer; accent-color: ${spec.color}; margin: 0; margin-right: 4px;">
+                    <span style="color:${checked ? spec.color : ''}">${this.escapeHtml(cls)}</span>
+                </label>`;
+            });
         });
 
         return html;

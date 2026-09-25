@@ -244,14 +244,18 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                 }
             });
 
-            const ppeModelNames = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"];
+            const specializedModelNames = [
+                "ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt",
+                "hansung_ppe_violations.pt", "construction.pt", "fire_smoke.pt", "Final_Fire_smoke.pt",
+                "150_firehose_best.pt", "120_spillage_best.pt", "best_tape.pt", "sand_ext_chocks.pt", "tyre_final.pt"
+            ];
             uniqueAssigned.forEach(m => {
                 const cleanName = m.replace(".pt", "");
                 const normM = m.endsWith(".pt") ? m : `${m}.pt`;
                 const mCfg = modelConfigs[m] || modelConfigs[cleanName] || {};
                 const enabled = Array.from(new Set(mCfg.enabled_classes || []));
 
-                if (ppeModelNames.includes(normM)) {
+                if (specializedModelNames.includes(normM)) {
                     if (enabled.length > 0) {
                         enabled.forEach(cls => {
                             const existingCard = chipsList.querySelector(`[data-model-clean="${cleanName}"][data-class="${cls}"]`);

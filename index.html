@@ -2267,10 +2267,27 @@
             const streamMeta = streamsArray[idx] || {};
             streamMeta.model_configs = streamMeta.model_configs || {};
 
-            // ── 1. Parent checkboxes for general (non-PPE) models ──
-            const ppeModelNames = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt", "hansung_ppe_violations.pt"];
+            // ── 1. Specialized models with class-level checkboxes ──
+            const specializedModels = [
+              { file: "ppe_new.pt", label: "PPE-NEW CLASSES", color: "#00ffaa", classes: ["Cap-Lamp","Gloves","Gum-Boots","Hard-Hat","Mask","NO-Mask","No-Cap-Lamp","No-Gloves","No-Gum-Boots","No-Hard-Hat","No-Saftey-Belt","No-Saftey-Vest","Saftey-Belt","Saftey-Vest"] },
+              { file: "nik_ppe_best.pt", label: "NIK-PPE CLASSES", color: "#f5a623", classes: ["Fall-Detected","Gloves","Goggles","Helmet","Mask","NO-Mask","No_Gloves","No_Goggles","No_Harness","No_boots","No_helmet","No_safety_vest","Safety Vest","boots","harness"] },
+              { file: "hansung_ppe_violations.pt", label: "HANSUNG VIOLATIONS CLASSES", color: "#fb7185", classes: ["Hardhat","Mask","NO-Hardhat","NO-Mask","NO-Safety Vest","Person","Safety Cone","Safety Vest","machinery","vehicle"] },
+              { file: "construction.pt", label: "CONSTRUCTION PPE CLASSES", color: "#eab308", classes: ["helmet","gloves","vest","boots","goggles","none","Person","no_helmet","no_goggle","no_gloves","no_boots"] },
+              { file: "hf_ppe_detection.pt", label: "HF PPE DETECTION CLASSES", color: "#a78bfa", classes: ["helmet","human","no-helmet","vest"] },
+              { file: "fire_smoke.pt", label: "FIRE & SMOKE CLASSES", color: "#f97316", classes: ["Fire","Smoke"] },
+              { file: "Final_Fire_smoke.pt", label: "FINAL FIRE & SMOKE CLASSES", color: "#ef4444", classes: ["fire","smoke","Gas"] },
+              { file: "150_firehose_best.pt", label: "FIREHOSE DETECTION CLASSES", color: "#ec4899", classes: ["fire_hose","firehose_box"] },
+              { file: "120_spillage_best.pt", label: "SPILLAGE DETECTION CLASSES", color: "#06b6d4", classes: ["spillage"] },
+              { file: "best_tape.pt", label: "REFLECTIVE TAPE CLASSES", color: "#10b981", classes: ["reflective_tape_floor","reflective_tape_person","reflective_tape_vehicles","traffic_tape_bollards","traffic_tape_cone"] },
+              { file: "sand_ext_chocks.pt", label: "SAND EXT CHOCKS CLASSES", color: "#84cc16", classes: ["Fire_Extinguisher","Sand-Bucket","wheel-choke"] },
+              { file: "tyre_final.pt", label: "TYRE INSPECTION CLASSES", color: "#6366f1", classes: ["Defective","Good_tyre"] }
+            ];
+
+            const specFileNames = specializedModels.map(s => s.file);
+
+            // Parent checkboxes for remaining models (e.g. yolov8n.pt)
             allModels.forEach(m => {
-              if (ppeModelNames.includes(m)) return;
+              if (specFileNames.includes(m)) return;
               const checked = assignedModels.includes(m) ? 'checked' : '';
               const cleanName = m.replace(".pt", "");
               const lbl = document.createElement("label");
@@ -2287,7 +2304,7 @@
               };
             });
 
-            // ── 2. PPE-NEW class checkboxes ──
+            // Render class checkboxes for all custom specialized models
             function renderPpeSection(modelFile, labelText, accentColor, classList) {
               const cleanName = modelFile.replace(".pt", "");
               const cfg = streamMeta.model_configs[modelFile] || streamMeta.model_configs[cleanName] || {};
@@ -2315,29 +2332,9 @@
               });
             }
 
-            renderPpeSection("ppe_new.pt", "PPE-NEW CLASSES", "#00ffaa", [
-              "Cap-Lamp","Gloves","Gum-Boots","Hard-Hat","Mask","NO-Mask",
-              "No-Cap-Lamp","No-Gloves","No-Gum-Boots","No-Hard-Hat",
-              "No-Saftey-Belt","No-Saftey-Vest","Saftey-Belt","Saftey-Vest"
-            ]);
-
-            renderPpeSection("nik_ppe_best.pt", "NIK-PPE CLASSES", "#f5a623", [
-              "Fall-Detected","Gloves","Goggles","Helmet","Mask","NO-Mask",
-              "No_Gloves","No_Goggles","No_Harness","No_boots","No_helmet",
-              "No_safety_vest","Safety Vest","boots","harness"
-            ]);
-
-            renderPpeSection("hf_ppe_detection.pt", "HF PPE DETECTION CLASSES", "#a78bfa", [
-              "helmet","human","no-helmet","vest"
-            ]);
-
-            renderPpeSection("keremberke_ppe_gear.pt", "KEREMBERKE GEAR CLASSES", "#38bdf8", [
-              "glove","goggles","helmet","mask","no_glove","no_goggles","no_helmet","no_mask","no_shoes","shoes"
-            ]);
-
-            renderPpeSection("hansung_ppe_violations.pt", "HANSUNG VIOLATIONS CLASSES", "#fb7185", [
-              "Hardhat","Mask","NO-Hardhat","NO-Mask","NO-Safety Vest","Person","Safety Cone","Safety Vest","machinery","vehicle"
-            ]);
+            specializedModels.forEach(spec => {
+              renderPpeSection(spec.file, spec.label, spec.color, spec.classes);
+            });
 
             modelRow.appendChild(listContainer);
             wrapper.appendChild(modelRow);

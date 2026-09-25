@@ -1162,6 +1162,30 @@ MODEL_CLASSES_CACHE = {
     ],
     "hansung_ppe_violations.pt": [
         "Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle"
+    ],
+    "construction.pt": [
+        "helmet", "gloves", "vest", "boots", "goggles", "none", "Person", "no_helmet", "no_goggle", "no_gloves", "no_boots"
+    ],
+    "fire_smoke.pt": [
+        "Fire", "Smoke"
+    ],
+    "Final_Fire_smoke.pt": [
+        "fire", "smoke", "Gas"
+    ],
+    "150_firehose_best.pt": [
+        "fire_hose", "firehose_box"
+    ],
+    "120_spillage_best.pt": [
+        "spillage"
+    ],
+    "best_tape.pt": [
+        "reflective_tape_floor", "reflective_tape_person", "reflective_tape_vehicles", "traffic_tape_bollards", "traffic_tape_cone"
+    ],
+    "sand_ext_chocks.pt": [
+        "Fire_Extinguisher", "Sand-Bucket", "wheel-choke"
+    ],
+    "tyre_final.pt": [
+        "Defective", "Good_tyre"
     ]
 }
 
