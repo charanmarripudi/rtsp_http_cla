@@ -1191,9 +1191,10 @@ class DetectorWorker:
                             raw_frame = self._latest_raw_frame
 
                         if raw_frame is None:
-                            pf = self._get_connecting_frame()
-                        else:
-                            pf = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                            time.sleep(0.02)
+                            continue
+
+                        pf = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
                         f_h, f_w = pf.shape[:2]
 
                         # Draw ROI boundary if configured

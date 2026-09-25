@@ -1095,16 +1095,14 @@ async def update_thresholds(req: Request):
     try:
         d = await req.json()
         cid = str(d.get("camera", ""))
-        conf = float(d.get("conf", 0.40)) if "conf" in d else None
-        iou = float(d.get("iou", 0.45)) if "iou" in d else None
+        conf = float(d.get("conf")) if "conf" in d and d.get("conf") is not None else None
+        iou = float(d.get("iou")) if "iou" in d and d.get("iou") is not None else None
         model_configs = d.get("model_configs")
         target_model = d.get("model")
         
         entries = read_streams_metadata()
         for idx, entry in enumerate(entries):
             if str(entry.get("id", idx)) == cid or str(idx) == cid:
-                if conf is not None: entry["conf"] = conf
-                if iou is not None: entry["iou"] = iou
                 if model_configs and isinstance(model_configs, dict):
                     existing_mc = entry.get("model_configs", {})
                     existing_roi = existing_mc.get("roi_polygon") if isinstance(existing_mc, dict) else None
@@ -1115,27 +1113,33 @@ async def update_thresholds(req: Request):
                     elif incoming_roi == [] or incoming_roi == "CLEAR" or incoming_roi == "":
                         model_configs["roi_polygon"] = []
                     entry["model_configs"] = model_configs
-                elif target_model and conf is not None and iou is not None:
-                    mc = entry.get("model_configs") or {}
-                    clean_m = target_model.replace(".pt", "")
-                    mc[target_model] = {"conf": conf, "iou": iou}
-                    mc[clean_m] = {"conf": conf, "iou": iou}
-                    mc[clean_m + ".pt"] = {"conf": conf, "iou": iou}
-                    entry["model_configs"] = mc
+                else:
+                    if conf is not None: entry["conf"] = conf
+                    if iou is not None: entry["iou"] = iou
+                    if target_model and conf is not None and iou is not None:
+                        mc = entry.get("model_configs") or {}
+                        clean_m = target_model.replace(".pt", "")
+                        mc[target_model] = {"conf": conf, "iou": iou}
+                        mc[clean_m] = {"conf": conf, "iou": iou}
+                        mc[clean_m + ".pt"] = {"conf": conf, "iou": iou}
+                        entry["model_configs"] = mc
         write_json_atomic(STREAMS_JSON, entries)
         with config_cache_lock:
             global _streams_metadata_cache
             _streams_metadata_cache = [dict(e) for e in entries]
         if cid in running:
-            if conf is not None: running[cid]["conf"] = conf
-            if iou is not None: running[cid]["iou"] = iou
             if model_configs:
                 running[cid]["model_configs"] = model_configs
                 proc = running[cid].get("proc")
                 if proc and hasattr(proc, "worker") and proc.worker:
+                    proc.worker.model_configs = model_configs
+            else:
+                if conf is not None: running[cid]["conf"] = conf
+                if iou is not None: running[cid]["iou"] = iou
+                proc = running[cid].get("proc")
+                if proc and hasattr(proc, "worker") and proc.worker:
                     if conf is not None: proc.worker.conf = conf
                     if iou is not None: proc.worker.iou = iou
-                    proc.worker.model_configs = model_configs
         return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "message": str(e)}

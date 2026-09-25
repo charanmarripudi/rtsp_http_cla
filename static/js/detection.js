@@ -138,14 +138,17 @@ async function waitAndSwitch(video, meta, idx, box, badge) {
             if (r.ok) {
                 const text = await r.text();
                 const tsCount = (text.match(/\.ts/g) || []).length;
-                if (tsCount >= 1) {
+                if (tsCount >= 2) {
                     if (!box.classList.contains("detecting")) {
                         window.cameraTransitioning[idx] = false;
                         return;
                     }
                     console.log(`[CLIENT-TIMER] Camera ${idx} segments ready (tsCount: ${tsCount}) at ${new Date().toLocaleTimeString()} (elapsed: ${Date.now() - start}ms). Switching stream...`);
                     playHLS(video, meta.hls_detected, idx, true);
-                    if (badge) badge.textContent = "● AI ACTIVE";
+                    if (badge) {
+                        badge.className = "mode-badge active";
+                        badge.textContent = "● AI ACTIVE";
+                    }
                     fetch("/api/stop-raw", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -303,7 +306,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                     fetch("/api/update-thresholds", {
                                         method: "POST",
                                         headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({ camera: i, model: m, conf: cNum, iou: iNum, model_configs: meta.model_configs })
+                                        body: JSON.stringify({ camera: i, model: m, model_configs: meta.model_configs })
                                     }).catch(() => {});
                                 }, 200);
                             };
@@ -552,14 +555,10 @@ function startClientSync() {
 
                     let srvConf = null, srvIou = null;
                     if (className) {
-                        // Per-class config takes precedence
-                        const cCfg = (mCfg.class_configs && mCfg.class_configs[className]) || {};
-                        srvConf = cCfg.conf !== undefined ? parseFloat(cCfg.conf)
-                                : (mCfg.conf !== undefined ? parseFloat(mCfg.conf)
-                                : (meta.conf !== undefined ? parseFloat(meta.conf) : null));
-                        srvIou  = cCfg.iou  !== undefined ? parseFloat(cCfg.iou)
-                                : (mCfg.iou  !== undefined ? parseFloat(mCfg.iou)
-                                : (meta.iou  !== undefined ? parseFloat(meta.iou) : null));
+                        // Per-class config takes precedence (only sync if specifically configured)
+                        const cCfg = (mCfg.class_configs && mCfg.class_configs[className]);
+                        if (cCfg && cCfg.conf !== undefined) srvConf = parseFloat(cCfg.conf);
+                        if (cCfg && cCfg.iou !== undefined)  srvIou  = parseFloat(cCfg.iou);
                     } else {
                         srvConf = mCfg.conf !== undefined ? parseFloat(mCfg.conf)
                                 : (meta.conf !== undefined ? parseFloat(meta.conf) : null);
