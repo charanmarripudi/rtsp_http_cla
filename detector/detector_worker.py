@@ -904,16 +904,15 @@ class DetectorWorker:
             if (now_t - self.alert_cooldowns.get(c, 0.0)) < 30.0:
                 continue
 
-            # 2. Track-Age & M-of-N Voting Gate:
-            # Must have at least 2 hits, and >= 2 detections in the last 5 cycles
-            votes = sum(trk.get('history', []))
+            # 2. Instant Alert Trigger with 30-Second Cooldown Gate:
+            # Triggers immediately on the very first valid detection (hits >= 1) without delay
             total_hits = trk.get('hit_count', 0)
             track_age = now_t - trk.get('first_seen', now_t)
 
-            if total_hits >= 2 and (votes >= 2 or track_age >= 1.5):
+            if total_hits >= 1:
                 self.alert_cooldowns[c] = now_t
                 trk['last_alert_time'] = now_t
-                print(f"[ALERT-VOTING] Triggered verified alert: cam={self.cam_id}, class={c}, track_id={tid}, votes={votes}/5, hits={total_hits}, age={track_age:.1f}s", flush=True)
+                print(f"[ALERT-TRIGGER] Instant alert generated: cam={self.cam_id}, class={c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
                 self._save_alert(c, frame_snapshot)
 
     def _save_alert(self, class_name, frame):
