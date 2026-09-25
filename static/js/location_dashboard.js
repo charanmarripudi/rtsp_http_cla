@@ -166,9 +166,28 @@ class LocationDashboardStore {
 
     load(data) {
         this.locations = Array.isArray(data.locations) ? data.locations : [];
-        this.streams = data.streams || [];
-        this.allModels = data.models || [];
-        this.cameraModels = data.cameraModels || {};
+        this.streams = Array.isArray(data.streams) ? data.streams : [];
+        this.allModels = Array.isArray(data.models) ? data.models : [];
+        this.cameraModels = (data.cameraModels && typeof data.cameraModels === "object") ? data.cameraModels : {};
+
+        // Auto-recover assigned models from stream.model_configs if cameraModels is empty
+        this.streams.forEach((s, idx) => {
+            const k = String(s.id !== undefined ? s.id : idx);
+            if (!this.cameraModels[k] || this.cameraModels[k].length === 0) {
+                if (s.model_configs && typeof s.model_configs === "object") {
+                    const recovered = [];
+                    Object.keys(s.model_configs).forEach(mKey => {
+                        if (mKey !== "roi_polygon") {
+                            const normM = mKey.endsWith(".pt") ? mKey : `${mKey}.pt`;
+                            if (!recovered.includes(normM)) recovered.push(normM);
+                        }
+                    });
+                    if (recovered.length > 0) {
+                        this.cameraModels[k] = recovered;
+                    }
+                }
+            }
+        });
     }
 
     loadOffline() {
@@ -465,7 +484,7 @@ class LocationDashboard {
         localStorage.setItem("offline_camera_models", JSON.stringify(this.cameraModels));
         try {
             await this.api.saveCameras(payload, this.cameraModels);
-            if (shouldReload) window.location.reload();
+            window.location.reload();
         } catch (err) {
             console.error("Camera save error:", err);
             alert("Error saving cameras: " + err.message);

@@ -2109,7 +2109,11 @@ def get_cm():
     # Initialize entries for all cameras
     for idx, s in enumerate(streams):
         cid = str(s.get("id", idx))
-        c_models = cm.get(cid) or cm.get(idx) or []
+        c_models = list(cm.get(cid) or cm.get(idx) or [])
+        if not c_models and isinstance(s.get("model_configs"), dict):
+            for mk in s["model_configs"].keys():
+                if mk != "roi_polygon":
+                    c_models.append(mk)
         active_models = []
         for m in c_models:
             norm_m = m if m.endswith(".pt") else f"{m}.pt"
