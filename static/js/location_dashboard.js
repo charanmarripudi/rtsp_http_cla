@@ -689,7 +689,7 @@ class LocationDashboard {
     }
 
     addCamera(loc, locIdx) {
-        const nextId = this.streams.reduce((max, item) => Math.max(max, Number(item.id) || 0), -1) + 1;
+        const nextId = this.streams.length;
 
         this.cameraModels[String(nextId)] = [];
 
@@ -706,6 +706,15 @@ class LocationDashboard {
             hls_raw: `/hls/stream${nextId}_raw/playlist.m3u8`,
             hls_detected: `/hls/stream${nextId}_detected/playlist.m3u8`
         });
+
+        // Ensure all streams have contiguous IDs
+        this.streams.forEach((item, idx) => {
+            item.id = idx;
+            item.hls_live = `/hls/camera/${idx}/playlist.m3u8`;
+            item.hls_raw = `/hls/stream${idx}_raw/playlist.m3u8`;
+            item.hls_detected = `/hls/stream${idx}_detected/playlist.m3u8`;
+        });
+
         this.expandedLocs.add(this.locationId(locIdx, loc));
         this.renderLocationWidgets(true);
     }
@@ -727,9 +736,17 @@ class LocationDashboard {
             console.error("Error removing camera stream from server:", err);
         }
 
-        // 2. Remove from local memory state and sync localStorage
+        // 2. Remove from local memory state and re-index contiguous IDs & HLS paths
         if (targetIdx !== -1) {
             this.streams.splice(targetIdx, 1);
+
+            // Re-index remaining streams so frontend IDs strictly match backend contiguous 0, 1, 2...
+            this.streams.forEach((item, idx) => {
+                item.id = idx;
+                item.hls_live = `/hls/camera/${idx}/playlist.m3u8`;
+                item.hls_raw = `/hls/stream${idx}_raw/playlist.m3u8`;
+                item.hls_detected = `/hls/stream${idx}_detected/playlist.m3u8`;
+            });
 
             // Shift cameraModels keys for all indices > targetIdx
             const newMap = {};
@@ -745,6 +762,17 @@ class LocationDashboard {
             this.cameraModels = newMap;
             window.cameraModelsMap = this.cameraModels;
             window.streamsArray = this.streams;
+
+            // Destroy stale HLS player instances
+            if (typeof hlsInstances !== "undefined" && hlsInstances) {
+                Object.keys(hlsInstances).forEach(k => {
+                    try {
+                        hlsInstances[k].detachMedia();
+                        hlsInstances[k].destroy();
+                    } catch (_) {}
+                    delete hlsInstances[k];
+                });
+            }
 
             // Sync localStorage immediately
             const updatedPayload = this.streams.map((item, idx) => this.store.cameraPayload(item, idx));
