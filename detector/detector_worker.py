@@ -898,9 +898,10 @@ class DetectorWorker:
             if cleaned_cls in ("person", "worker", "human", "man", "woman", "machinery", "vehicle"):
                 continue
 
-            # 1. Per-Track Cooldown (30s per unique track instance)
-            last_alert_time = trk.get('last_alert_time', 0.0)
-            if (now_t - last_alert_time) < 30.0:
+            # 1. Strict 30-Second Cooldown per class per camera
+            if not hasattr(self, 'alert_cooldowns'):
+                self.alert_cooldowns = {}
+            if (now_t - self.alert_cooldowns.get(c, 0.0)) < 30.0:
                 continue
 
             # 2. Track-Age & M-of-N Voting Gate:
@@ -910,6 +911,7 @@ class DetectorWorker:
             track_age = now_t - trk.get('first_seen', now_t)
 
             if total_hits >= 2 and (votes >= 2 or track_age >= 1.5):
+                self.alert_cooldowns[c] = now_t
                 trk['last_alert_time'] = now_t
                 print(f"[ALERT-VOTING] Triggered verified alert: cam={self.cam_id}, class={c}, track_id={tid}, votes={votes}/5, hits={total_hits}, age={track_age:.1f}s", flush=True)
                 self._save_alert(c, frame_snapshot)
