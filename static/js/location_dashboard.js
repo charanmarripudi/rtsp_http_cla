@@ -170,25 +170,6 @@ class LocationDashboardStore {
         this.streams = Array.isArray(data.streams) ? data.streams : [];
         this.allModels = Array.isArray(data.models) ? data.models : [];
         this.cameraModels = (data.cameraModels && typeof data.cameraModels === "object") ? data.cameraModels : {};
-
-        // Auto-recover assigned models from stream.model_configs if cameraModels is empty
-        this.streams.forEach((s, idx) => {
-            const k = String(s.id !== undefined ? s.id : idx);
-            if (!this.cameraModels[k] || this.cameraModels[k].length === 0) {
-                if (s.model_configs && typeof s.model_configs === "object") {
-                    const recovered = [];
-                    Object.keys(s.model_configs).forEach(mKey => {
-                        if (mKey !== "roi_polygon") {
-                            const normM = mKey.endsWith(".pt") ? mKey : `${mKey}.pt`;
-                            if (!recovered.includes(normM)) recovered.push(normM);
-                        }
-                    });
-                    if (recovered.length > 0) {
-                        this.cameraModels[k] = recovered;
-                    }
-                }
-            }
-        });
     }
 
     loadOffline() {
@@ -446,10 +427,17 @@ class LocationDashboard {
                         const cSlider = card.querySelector(".model-conf-slider");
                         const iSlider = card.querySelector(".model-iou-slider");
                         if (mName && cSlider && iSlider) {
-                            const cVal = parseFloat(cSlider.value);
-                            const iVal = parseFloat(iSlider.value);
+                            const key = String(item.id !== undefined ? item.id : idx);
+                            const assignedForCam = this.cameraModels[key] || [];
                             const normModel = mName.endsWith(".pt") ? mName : `${mName}.pt`;
                             const cleanName = mName.replace(".pt", "");
+
+                            if (!assignedForCam.includes(normModel) && !assignedForCam.includes(cleanName) && !assignedForCam.includes(mName)) {
+                                return;
+                            }
+
+                            const cVal = parseFloat(cSlider.value);
+                            const iVal = parseFloat(iSlider.value);
 
                             const origClasses = (modelConfigs[normModel] && modelConfigs[normModel].enabled_classes) ||
                                 (modelConfigs[cleanName] && modelConfigs[cleanName].enabled_classes) || [];

@@ -2125,23 +2125,36 @@ def dsta_alias(): return get_status()
 
 @app.get("/api/camera-models")
 def get_cm():
-    cm = json.load(open(CAMERA_MODELS_JSON)) if os.path.exists(CAMERA_MODELS_JSON) else {}
+    cm_exists = os.path.exists(CAMERA_MODELS_JSON)
+    cm = json.load(open(CAMERA_MODELS_JSON)) if cm_exists else {}
     streams = read_streams_metadata()
     clean_cm = {}
     
     # Initialize entries for all cameras
     for idx, s in enumerate(streams):
         cid = str(s.get("id", idx))
-        c_models = list(cm.get(cid) or cm.get(idx) or [])
-        if not c_models and isinstance(s.get("model_configs"), dict):
-            for mk in s["model_configs"].keys():
-                if mk != "roi_polygon":
-                    c_models.append(mk)
+        if cid in cm:
+            c_models = cm[cid]
+        elif idx in cm:
+            c_models = cm[idx]
+        elif cm_exists:
+            c_models = []
+        else:
+            c_models = []
+            if isinstance(s.get("model_configs"), dict):
+                for mk, mv in s["model_configs"].items():
+                    if mk != "roi_polygon":
+                        if isinstance(mv, dict) and mv.get("enabled_classes") and len(mv["enabled_classes"]) > 0:
+                            c_models.append(mk)
+                        elif isinstance(mv, dict) and "enabled_classes" not in mv:
+                            c_models.append(mk)
+
         active_models = []
-        for m in c_models:
-            norm_m = m if m.endswith(".pt") else f"{m}.pt"
-            if norm_m not in active_models:
-                active_models.append(norm_m)
+        if isinstance(c_models, list):
+            for m in c_models:
+                norm_m = m if m.endswith(".pt") else f"{m}.pt"
+                if norm_m not in active_models:
+                    active_models.append(norm_m)
         clean_cm[cid] = active_models
         
     # Include any extra camera IDs from cm
