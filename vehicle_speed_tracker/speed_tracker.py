@@ -186,7 +186,7 @@ class VehicleSpeedTracker:
         # 1. Run YOLO detection with low-CPU imgsz (e.g. 416 or 320 on Pi)
         results = self.model.predict(
             source=frame,
-            conf=self.conf_thresh,
+            conf=max(0.42, self.conf_thresh),
             imgsz=self.imgsz,
             verbose=False
         )
@@ -203,19 +203,31 @@ class VehicleSpeedTracker:
                     bw = x2 - x1
                     bh = y2 - y1
 
-                    # ── FILTER 1: Discard tiny noise (lane dashed markings, dots, pebbles) ──
-                    if bw < 42 or bh < 36 or (bw * bh) < 1800:
+                    # ── FILTER 1: Minimum confidence threshold ──
+                    if score < 0.45:
                         continue
 
-                    # ── FILTER 2: Discard roadside reflector posts (tall thin vertical poles on edges) ──
-                    if (bh / max(1, bw)) > 3.0 and (x1 < w * 0.15 or x2 > w * 0.85):
+                    # ── FILTER 2: Discard tiny noise (lane markings, dots, pebbles) ──
+                    if bw < 45 or bh < 38 or (bw * bh) < 2000:
+                        continue
+
+                    # ── FILTER 3: Discard roadside reflector posts (tall thin vertical poles on edges) ──
+                    if (bh / max(1, bw)) > 2.8 and (x1 < w * 0.18 or x2 > w * 0.82):
+                        continue
+
+                    # ── FILTER 4: Discard non-road tree foliage / off-road detections ──
+                    # Top-right tree foliage area (y2 < 0.40*h and x1 > 0.65*w)
+                    if y2 < h * 0.40 and x1 > w * 0.65:
+                        continue
+                    # Far top left off-road / sky area
+                    if y2 < h * 0.25 and x2 < w * 0.20:
                         continue
 
                     # Filter allowed vehicle classes
                     if not self.allowed_classes or any(c in label for c in self.allowed_classes):
                         raw_detections.append((x1, y1, x2, y2, label, score))
 
-        # ── FILTER 3: Suppress nested sub-boxes (e.g. helmet inside bike, passenger inside car) ──
+        # ── FILTER 5: Suppress nested sub-boxes and overlapping partial detections ──
         detections = []
         for d in raw_detections:
             dx1, dy1, dx2, dy2, dlbl, dscore = d
@@ -226,15 +238,16 @@ class VehicleSpeedTracker:
                     continue
                 ox1, oy1, ox2, oy2, olbl, oscore = od
                 o_area = (ox2 - ox1) * (oy2 - oy1)
-                if o_area > d_area:
-                    # Check overlap containment
-                    ix1, iy1 = max(dx1, ox1), max(dy1, oy1)
-                    ix2, iy2 = min(dx2, ox2), min(dy2, oy2)
-                    if ix1 < ix2 and iy1 < iy2:
-                        inter_area = (ix2 - ix1) * (iy2 - iy1)
-                        if (inter_area / float(d_area)) > 0.60:
-                            is_nested_sub_box = True
-                            break
+                
+                # Check overlap / intersection
+                ix1, iy1 = max(dx1, ox1), max(dy1, oy1)
+                ix2, iy2 = min(dx2, ox2), min(dy2, oy2)
+                if ix1 < ix2 and iy1 < iy2:
+                    inter_area = (ix2 - ix1) * (iy2 - iy1)
+                    # If this box is largely inside another box or shares high overlap
+                    if o_area >= d_area and (inter_area / float(d_area)) > 0.50:
+                        is_nested_sub_box = True
+                        break
             if not is_nested_sub_box:
                 detections.append(d)
 
@@ -258,10 +271,6 @@ class VehicleSpeedTracker:
                     if trk["time_line_a"] is None:
                         trk["time_line_a"] = now_t
                         print(f"[GATE-LINE-A] Vehicle #{track_id} ({label}) crossed Line A at {now_t:.3f}s")
-            elif trk["time_line_a"] is None and cy > la_start[1] and cy < lb_start[1]:
-                # Vehicle was already between Line A and Line B when video/stream started
-                trk["time_line_a"] = max(0.0, now_t - 0.15)
-                print(f"[GATE-LINE-A] Vehicle #{track_id} ({label}) initialized between lines at {now_t:.3f}s")
             if side_a != 0:
                 self.last_side_a[track_id] = side_a
 
@@ -280,17 +289,18 @@ class VehicleSpeedTracker:
             if side_b != 0:
                 self.last_side_b[track_id] = side_b
 
-            # Calculate Speed when both lines have been crossed (Gate -> Gantry or Gantry -> Gate)
+            # 4. Calculate Speed ONLY when BOTH lines have been crossed (Line A -> Line B)
             if trk["time_line_a"] is not None and trk["time_line_b"] is not None and trk["speed_kmh"] is None:
                 delta_t = abs(trk["time_line_b"] - trk["time_line_a"])
-                if delta_t >= 0.05:  # Minimum 50ms to prevent division by zero
+                if delta_t >= 0.35:  # Require realistic physical transit time
                     # Speed (km/h) = (Distance in meters / delta_t in seconds) * 3.6
                     speed_kmh = (self.road_distance_meters / delta_t) * 3.6
                     trk["speed_kmh"] = speed_kmh
 
+                    # Trigger alert ONLY if speed exceeds the limit (e.g. > 10.0 km/h)
                     if speed_kmh > self.speed_limit_kmh:
                         trk["is_speed_violation"] = True
-                        print(f"\n🚨 [SPEED-VIOLATION] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h, Δt: {delta_t:.2f}s)!")
+                        print(f"\n🚨 [SPEED-VIOLATION] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h, Transit Time: {delta_t:.2f}s)!")
                         
                         # Prepare alert record (snapshot saved below after annotation)
                         if not trk["alert_recorded"]:
@@ -311,12 +321,12 @@ class VehicleSpeedTracker:
                                 "timestamp": datetime.now().isoformat()
                             })
                     else:
-                        print(f"✓ [SPEED-NORMAL] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h)")
+                        print(f"✓ [SPEED-NORMAL] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Compliant with {self.speed_limit_kmh} km/h limit)")
 
-        # 4. Render Visual Overlay with BBoxes, Vehicle Type, ID, and Speed HUD
+        # 5. Render Visual Overlay with BBoxes, Vehicle Type, ID, and Speed HUD
         annotated_frame = self._draw_annotations(frame, tracked_objects, la_start, la_end, lb_start, lb_end, now_t)
 
-        # 5. Save violation snapshot images WITH burned-in bboxes, vehicle type, ID, and speed
+        # 6. Save violation snapshot images WITH burned-in bboxes, vehicle type, ID, and speed
         for v in violations_this_frame:
             snap_path = v.get("snapshot")
             if snap_path:
