@@ -7,7 +7,7 @@
 class SpeedDashboard {
     constructor() {
         this.activeCameraId = "0";
-        this.sourceType = "camera"; // "camera", "rtsp", "video"
+        this.sourceType = "rtsp"; // "rtsp", "video"
         this.uploadedVideoPath = "";
         this.pollInterval = null;
         this.hlsPlayer = null;
@@ -19,27 +19,20 @@ class SpeedDashboard {
         this.initialized = true;
 
         this.bindEvents();
-        this.loadCameras();
         this.loadConfig();
         this.startPolling();
+        this.setSourceType("rtsp");
     }
 
     setSourceType(type) {
         this.sourceType = type;
 
-        const btnCam = document.getElementById("speed-src-tab-cam");
         const btnRtsp = document.getElementById("speed-src-tab-rtsp");
         const btnVideo = document.getElementById("speed-src-tab-video");
 
-        const boxCam = document.getElementById("speed-src-container-cam");
         const boxRtsp = document.getElementById("speed-src-container-rtsp");
         const boxVideo = document.getElementById("speed-src-container-video");
 
-        if (btnCam) {
-            btnCam.style.background = type === "camera" ? "rgba(56,189,248,0.15)" : "transparent";
-            btnCam.style.borderColor = type === "camera" ? "#38bdf8" : "var(--border)";
-            btnCam.style.color = type === "camera" ? "#38bdf8" : "var(--muted)";
-        }
         if (btnRtsp) {
             btnRtsp.style.background = type === "rtsp" ? "rgba(56,189,248,0.15)" : "transparent";
             btnRtsp.style.borderColor = type === "rtsp" ? "#38bdf8" : "var(--border)";
@@ -51,7 +44,6 @@ class SpeedDashboard {
             btnVideo.style.color = type === "video" ? "#38bdf8" : "var(--muted)";
         }
 
-        if (boxCam) boxCam.style.display = type === "camera" ? "flex" : "none";
         if (boxRtsp) boxRtsp.style.display = type === "rtsp" ? "flex" : "none";
         if (boxVideo) boxVideo.style.display = type === "video" ? "flex" : "none";
     }

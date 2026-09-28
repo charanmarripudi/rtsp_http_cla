@@ -1,10 +1,10 @@
 import os
-os.environ["OMP_NUM_THREADS"] = "2"
-os.environ["MKL_NUM_THREADS"] = "2"
-os.environ["OPENBLAS_NUM_THREADS"] = "2"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
-os.environ["NUMEXPR_NUM_THREADS"] = "2"
-os.environ["TORCH_NUM_THREADS"] = "2"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["TORCH_NUM_THREADS"] = "1"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
 
@@ -39,11 +39,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Optimize PyTorch CPU threading to 2 dedicated cores on Raspberry Pi 4 CPU
-# (Leaves remaining cores free for real-time RTSP decoding & FFmpeg HLS streaming)
+# Low-CPU single thread for PyTorch on Pi 4 CPU to prevent thermal heating
 try:
     import torch
-    torch.set_num_threads(2)
+    torch.set_num_threads(1)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
 except Exception:
@@ -79,7 +78,7 @@ NMS_OPP_IO_MIN_THRESH = 0.30
 PREDICT_CONF_FLOOR = 0.10   # raised from 0.06 → fewer ghost boxes fed into NMS
 
 # Scheduler inter-camera sleep (seconds). Allows CPU cooldown and prevents thermal throttling.
-SCHEDULER_SLEEP_S = 0.10
+SCHEDULER_SLEEP_S = 0.15
 
 # Label rendering
 LABEL_FONT_SCALE   = 0.55
@@ -631,7 +630,7 @@ class DetectorWorker:
             m_iou  = self.iou
             enabled_classes = None
             is_veh_model    = ("vehicle_speed" in m_name.lower() or "speed" in m_name.lower())
-            default_imgsz   = 384 if is_veh_model else int(os.getenv("DEFAULT_IMGSZ", "640"))
+            default_imgsz   = 320 if is_veh_model else int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz         = default_imgsz
             cfg             = get_config_for_model(self.model_configs, m_name)
             class_configs   = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}

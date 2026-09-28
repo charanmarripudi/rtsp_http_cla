@@ -1547,13 +1547,10 @@
           <!-- Source Type Selector Pills -->
           <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
             <div style="display: flex; gap: 6px;">
-              <button type="button" id="speed-src-tab-cam" onclick="window.speedDashboard.setSourceType('camera')" class="btn-secondary" style="padding: 6px 12px; font-size: 0.74rem; font-weight: 600; border-radius: 6px; background: rgba(56,189,248,0.15); border-color: #38bdf8; color: #38bdf8; cursor: pointer;">
-                📹 Location Camera
-              </button>
-              <button type="button" id="speed-src-tab-rtsp" onclick="window.speedDashboard.setSourceType('rtsp')" class="btn-secondary" style="padding: 6px 12px; font-size: 0.74rem; font-weight: 600; border-radius: 6px; color: var(--muted); cursor: pointer;">
+              <button type="button" id="speed-src-tab-rtsp" onclick="window.speedDashboard.setSourceType('rtsp')" class="btn-secondary" style="padding: 6px 14px; font-size: 0.76rem; font-weight: 600; border-radius: 6px; background: rgba(56,189,248,0.15); border-color: #38bdf8; color: #38bdf8; cursor: pointer;">
                 🌐 Custom RTSP URL
               </button>
-              <button type="button" id="speed-src-tab-video" onclick="window.speedDashboard.setSourceType('video')" class="btn-secondary" style="padding: 6px 12px; font-size: 0.74rem; font-weight: 600; border-radius: 6px; color: var(--muted); cursor: pointer;">
+              <button type="button" id="speed-src-tab-video" onclick="window.speedDashboard.setSourceType('video')" class="btn-secondary" style="padding: 6px 14px; font-size: 0.76rem; font-weight: 600; border-radius: 6px; color: var(--muted); cursor: pointer;">
                 📁 Upload / Video File
               </button>
             </div>
@@ -1561,16 +1558,9 @@
           </div>
 
           <!-- Dynamic Source Controls Container -->
-          <div id="speed-src-container-cam" style="display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px;">
-            <label style="font-size: 0.72rem; color: var(--muted); font-weight: 600;">ACTIVE CAMERA:</label>
-            <select id="speed-cam-select" style="flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; font-size: 0.78rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono);">
-              <option value="0">Camera 1 (Main Gate)</option>
-            </select>
-          </div>
-
-          <div id="speed-src-container-rtsp" style="display: none; align-items: center; gap: 10px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px;">
+          <div id="speed-src-container-rtsp" style="display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px;">
             <label style="font-size: 0.72rem; color: var(--muted); font-weight: 600;">RTSP URL:</label>
-            <input type="text" id="speed-custom-rtsp-input" placeholder="rtsp://admin:pass@192.168.1.100:554/stream" style="flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; font-size: 0.78rem; border-radius: 6px; outline: none; font-family: var(--mono);">
+            <input type="text" id="speed-custom-rtsp-input" placeholder="rtsp://192.168.96.72:8554/vehicle_speed" style="flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; font-size: 0.78rem; border-radius: 6px; outline: none; font-family: var(--mono);">
           </div>
 
           <div id="speed-src-container-video" style="display: none; flex-direction: column; gap: 8px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px;">
@@ -1703,7 +1693,7 @@
   <script src="/static/js/detection.js?v=7.0"></script>
   <script src="/static/js/location_dashboard.js?v=6.0"></script>
   <script src="/static/js/ptz_controller.js?v=5.0_dynamic"></script>
-  <script src="/static/js/speed_dashboard.js?v=3.0"></script>
+  <script src="/static/js/speed_dashboard.js?v=4.0"></script>
 
   <script>
     var streamsArray = [];

@@ -1,10 +1,10 @@
 import os
-os.environ["OMP_NUM_THREADS"] = "2"
-os.environ["MKL_NUM_THREADS"] = "2"
-os.environ["OPENBLAS_NUM_THREADS"] = "2"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
-os.environ["NUMEXPR_NUM_THREADS"] = "2"
-os.environ["TORCH_NUM_THREADS"] = "2"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["TORCH_NUM_THREADS"] = "1"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
 
@@ -17,7 +17,7 @@ except Exception:
 
 import torch
 try:
-    torch.set_num_threads(2)
+    torch.set_num_threads(1)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
 except Exception:
@@ -905,9 +905,12 @@ def stop_raw_stream(i, **kwargs):
 @app.on_event("startup")
 async def startup_event():
     init_db()
-    for i, u in enumerate(read_streams_conf()): start_raw_stream(i, u)
-    t = threading.Thread(target=monitor_raw_streams_loop, daemon=True)
-    t.start()
+    # On-demand streaming: only start streams when requested by user/UI to prevent idle CPU load & heat
+    auto_start_streams = os.getenv("AUTO_START_RAW_STREAMS", "false").lower() in ("true", "1")
+    if auto_start_streams:
+        for i, u in enumerate(read_streams_conf()): start_raw_stream(i, u)
+        t = threading.Thread(target=monitor_raw_streams_loop, daemon=True)
+        t.start()
     
     # Pre-load all available model weights in the background (weights only, NO warmup inference).
     # WARNING: Running model.predict() for warmup at server startup on ARM64 Pi 4 causes
