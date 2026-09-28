@@ -270,7 +270,7 @@ class SpeedDashboard {
                     statusSpan.textContent = "● AI Speed Monitor Running";
                     statusSpan.style.color = "#00ffaa";
                 }
-                setTimeout(() => this.updatePlayerSource(), 800);
+                setTimeout(() => this.updatePlayerSource(true), 800);
             } else {
                 if (statusSpan) {
                     statusSpan.textContent = data.message || data.error || "Failed to start";
@@ -305,19 +305,40 @@ class SpeedDashboard {
                     statusSpan.textContent = "○ Speed Monitor Stopped";
                     statusSpan.style.color = "var(--muted)";
                 }
-                setTimeout(() => this.updatePlayerSource(), 800);
+                if (this.sourceType !== "camera") {
+                    // Cleanly stop player for custom RTSP or test video file
+                    if (this.hlsPlayer) {
+                        this.hlsPlayer.destroy();
+                        this.hlsPlayer = null;
+                    }
+                    const video = document.getElementById("speed-video-player");
+                    if (video) {
+                        video.pause();
+                        video.removeAttribute("src");
+                        video.load();
+                    }
+                } else {
+                    setTimeout(() => this.updatePlayerSource(), 800);
+                }
             }
         } catch (e) {
             console.error("[SPEED-DASH] Stop failed:", e);
         }
     }
 
-    updatePlayerSource() {
+    updatePlayerSource(forcePlay = false) {
         const video = document.getElementById("speed-video-player");
         if (!video) return;
 
         const cid = this.activeCameraId || "0";
         const streamUrl = `/hls/camera/${cid}/playlist.m3u8?t=${Date.now()}`;
+
+        if (this.sourceType !== "camera" && !forcePlay) {
+            // For custom RTSP/video, only load stream if active
+            const statusSpan = document.getElementById("speed-monitor-status");
+            const isRunning = statusSpan && statusSpan.textContent.includes("Running");
+            if (!isRunning) return;
+        }
 
         if (window.Hls && window.Hls.isSupported()) {
             if (this.hlsPlayer) {

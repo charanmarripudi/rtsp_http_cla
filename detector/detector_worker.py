@@ -79,7 +79,7 @@ NMS_OPP_IO_MIN_THRESH = 0.30
 PREDICT_CONF_FLOOR = 0.10   # raised from 0.06 → fewer ghost boxes fed into NMS
 
 # Scheduler inter-camera sleep (seconds). Allows CPU cooldown and prevents thermal throttling.
-SCHEDULER_SLEEP_S = 0.06
+SCHEDULER_SLEEP_S = 0.10
 
 # Label rendering
 LABEL_FONT_SCALE   = 0.55
@@ -757,7 +757,7 @@ class DetectorWorker:
             self._ema_next_id = 1
 
         matched_ids = set()
-        vehicle_keywords = ("truck", "car", "pickup", "bike", "tank", "vehicle", "bus", "motorcycle")
+        vehicle_keywords = ("truck", "car", "pickup", "bike", "tank", "vehicle", "bus", "motorcycle", "van")
 
         for b_xyxy, color_val, conf_val, cls_name in kept_items:
             bx1, by1, bx2, by2 = b_xyxy
@@ -771,23 +771,27 @@ class DetectorWorker:
             for tid, trk in self._ema_tracks.items():
                 if tid in matched_ids:
                     continue
-                if not match_class(trk['cls'], cls_name):
-                    continue
+                trk_cls_lower = str(trk.get('cls', '')).lower()
+                trk_is_veh = any(vk in trk_cls_lower for vk in vehicle_keywords)
 
                 if is_veh:
-                    # Vehicle ground contact centroid matching (smooth tracking down road)
+                    if not trk_is_veh:
+                        continue
+                    # Vehicle ground contact centroid matching (bottom-center tyre contact)
                     tx1, ty1, tx2, ty2 = trk['box']
                     t_cx = (tx1 + tx2) / 2.0
                     t_cy = ty2  # Tyre contact
                     curr_cx = b_cx
                     curr_cy = by2
                     dist = math.hypot(curr_cx - t_cx, curr_cy - t_cy)
-                    if dist <= 180:  # within 180px distance threshold
-                        score = max(0.01, 1.0 - (dist / 180.0))
+                    if dist <= 220:  # Allow realistic vehicle road displacement
+                        score = max(0.01, 1.0 - (dist / 220.0))
                         if score > best_score:
                             best_score = score
                             best_id = tid
                 else:
+                    if not match_class(trk['cls'], cls_name):
+                        continue
                     iou_v, io_min_v = DetectorWorker._box_iou_and_io_min(trk['box'], b_xyxy)
                     tx1, ty1, tx2, ty2 = trk['box']
                     t_cx = (tx1 + tx2) / 2.0
@@ -802,7 +806,7 @@ class DetectorWorker:
 
             if best_id is not None:
                 old_b = self._ema_tracks[best_id]['box']
-                a = 0.2 if is_veh else BOX_EMA_ALPHA
+                a = 0.3 if is_veh else BOX_EMA_ALPHA
                 smoothed = [
                     old_b[0] * a + b_xyxy[0] * (1 - a),
                     old_b[1] * a + b_xyxy[1] * (1 - a),
@@ -815,11 +819,15 @@ class DetectorWorker:
                 if len(hist) > 5:
                     hist = hist[-5:]
 
+                assigned_cls = cls_name
+                if 'truck' in str(self._ema_tracks[best_id]['cls']).lower() and 'car' in cls_name.lower():
+                    assigned_cls = self._ema_tracks[best_id]['cls']
+
                 self._ema_tracks[best_id].update({
                     'box':       smoothed,
                     'color':     color_val,
                     'conf':      conf_val,
-                    'cls':       cls_name,
+                    'cls':       assigned_cls,
                     'last_seen': now_t,
                     'hit_count': self._ema_tracks[best_id].get('hit_count', 0) + 1,
                     'history':   hist,
@@ -865,8 +873,6 @@ class DetectorWorker:
         # ── Vehicle Speed Estimation & Dual-Line Timing ──
         la_y = int(self.height * getattr(self, 'line_a_ratio', 0.40))
         lb_y = int(self.height * getattr(self, 'line_b_ratio', 0.75))
-        la_start, la_end = (int(self.width * 0.05), la_y), (int(self.width * 0.95), la_y)
-        lb_start, lb_end = (int(self.width * 0.05), lb_y), (int(self.width * 0.95), lb_y)
 
         speed_limit = float(getattr(self, 'speed_limit_kmh', 10.0))
         dist_m = float(getattr(self, 'road_distance_meters', 20.0))
@@ -878,18 +884,18 @@ class DetectorWorker:
                 cx = (bx[0] + bx[2]) / 2.0
                 cy = bx[3]  # Tyre contact point at bottom edge of bounding box
 
-                # Check Line A (Gate Entry)
-                side_a = (la_end[0] - la_start[0]) * (cy - la_start[1]) - (la_end[1] - la_start[1]) * (cx - la_start[0])
+                # Check Line A (Gate Entry Line)
+                side_a = cy - la_y
                 if not hasattr(self, '_last_side_a'): self._last_side_a = {}
                 if tid in self._last_side_a:
                     if (self._last_side_a[tid] < 0 and side_a >= 0) or (self._last_side_a[tid] > 0 and side_a <= 0):
                         if trk.get('time_a') is None:
                             trk['time_a'] = now_t
                             print(f"[GATE-LINE-A] Vehicle #{tid} ({trk['cls']}) passed Line A at {now_t:.2f}s", flush=True)
-                if side_a != 0: self._last_side_a[tid] = side_a
+                self._last_side_a[tid] = side_a
 
-                # Check Line B (Gantry Road)
-                side_b = (lb_end[0] - lb_start[0]) * (cy - lb_start[1]) - (lb_end[1] - lb_start[1]) * (cx - lb_start[0])
+                # Check Line B (Gantry Road Line)
+                side_b = cy - lb_y
                 if not hasattr(self, '_last_side_b'): self._last_side_b = {}
                 if tid in self._last_side_b:
                     if (self._last_side_b[tid] < 0 and side_b >= 0) or (self._last_side_b[tid] > 0 and side_b <= 0):
@@ -901,9 +907,9 @@ class DetectorWorker:
                             if tid not in self.counted_ids:
                                 self.vehicle_counts[trk['cls']] += 1
                                 self.counted_ids.add(tid)
-                if side_b != 0: self._last_side_b[tid] = side_b
+                self._last_side_b[tid] = side_b
 
-                # Compute Speed when both lines crossed
+                # Compute Speed when both lines crossed (Gate -> Gantry or Gantry -> Gate)
                 if trk.get('time_a') is not None and trk.get('time_b') is not None and trk.get('speed_kmh') is None:
                     delta_t = abs(trk['time_b'] - trk['time_a'])
                     if delta_t >= 0.05:
@@ -945,17 +951,23 @@ class DetectorWorker:
             # Format speed label
             speed_val = trk.get('speed_kmh')
             if trk.get('is_over_speed'):
-                box_lbl = f"{trk_cls} #{tid} OVER SPEED: {speed_val:.1f} km/h"
+                box_lbl = f"{trk_cls} #{tid} 🚨 {speed_val:.1f} km/h (OVER SPEED)"
                 box_col = (0, 0, 255)
             elif speed_val is not None:
-                box_lbl = f"{trk_cls} #{tid} {speed_val:.1f} km/h"
+                box_lbl = f"{trk_cls} #{tid} ✓ {speed_val:.1f} km/h"
                 box_col = (0, 255, 100)
             elif is_veh:
-                if trk.get('time_a') is not None:
-                    box_lbl = f"{trk_cls} #{tid} [TIMING...]"
+                if trk.get('time_a') is not None and trk.get('time_b') is None:
+                    elapsed = now_t - trk['time_a']
+                    box_lbl = f"{trk_cls} #{tid} [TIMING {elapsed:.1f}s]"
+                    box_col = (0, 220, 255)
+                elif trk.get('time_b') is not None and trk.get('time_a') is None:
+                    elapsed = now_t - trk['time_b']
+                    box_lbl = f"{trk_cls} #{tid} [TIMING {elapsed:.1f}s]"
+                    box_col = (0, 220, 255)
                 else:
                     box_lbl = f"{trk_cls} #{tid}"
-                box_col = (255, 190, 40) if "car" in trk_cls.lower() else (0, 140, 255)
+                    box_col = (255, 190, 40) if "car" in trk_cls.lower() else (0, 140, 255)
             else:
                 box_lbl = f"{trk_cls} {trk.get('conf', 0.0):.2f}"
                 box_col = trk.get('color', (0, 255, 0))
