@@ -629,7 +629,7 @@ class DetectorWorker:
             m_conf = self.conf
             m_iou  = self.iou
             enabled_classes = None
-            is_veh_model    = ("vehicle_speed" in m_name.lower() or "speed" in m_name.lower())
+            is_veh_model    = ("vehicle" in m_name.lower() or "speed" in m_name.lower())
             default_imgsz   = 320 if is_veh_model else int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz         = default_imgsz
             cfg             = get_config_for_model(self.model_configs, m_name)
@@ -722,7 +722,19 @@ class DetectorWorker:
                         bh = max(0, y2 - y1)
                         is_veh_cls = any(vk in cls.lower() for vk in ("car", "truck", "bus", "van", "pickup", "tank truck", "vehicle", "bike"))
                         if is_veh_cls:
-                            if bw < 25 or bh < 20 or (bw * bh) < 600:
+                            # ── Filter 1: Min confidence ──
+                            if conf_val < 0.42:
+                                continue
+                            # ── Filter 2: Min area / box size ──
+                            if bw < 42 or bh < 36 or (bw * bh) < 1800:
+                                continue
+                            # ── Filter 3: Roadside reflector poles on image borders ──
+                            if (bh / max(1, bw)) > 2.8 and (x1 < self.width * 0.18 or x2 > self.width * 0.82):
+                                continue
+                            # ── Filter 4: Tree foliage & sky ──
+                            if y2 < self.height * 0.40 and x1 > self.width * 0.65:
+                                continue
+                            if y2 < self.height * 0.25 and x2 < self.width * 0.20:
                                 continue
                         elif bw < 10 or bh < 10:
                             continue
@@ -978,16 +990,35 @@ class DetectorWorker:
             conf_pct = trk.get('conf', 0.8)
             box_header = f"{trk_cls.upper()} #{tid} ({conf_pct:.0%})"
             sub_lbl = None
+            t_a = trk.get('time_a')
+            bx = trk.get('box', [0, 0, 0, 0])
+            by2 = bx[3]
 
-            if trk.get('is_over_speed'):
-                sub_lbl = f"OVER SPEED: {speed_val:.1f} km/h"
+            if trk.get('is_over_speed') or (speed_val is not None and speed_val > speed_limit):
+                sub_lbl = f"OVER SPEED: {speed_val:.1f} km/h (LIMIT: {speed_limit:.0f})"
                 box_col = (0, 0, 255)  # Bright Red
             elif speed_val is not None:
                 sub_lbl = f"SPEED: {speed_val:.1f} km/h"
                 box_col = (0, 255, 100)  # Bright Green
             elif is_veh:
-                sub_lbl = "CALCULATING..."
-                box_col = (255, 190, 40) if "car" in trk_cls.lower() else (0, 140, 255)
+                if t_a is not None:
+                    # Vehicle is traveling between Line A and Line B
+                    dist_px = max(20, lb_y - la_y)
+                    y_prog = max(0.05, min(1.0, (by2 - la_y) / float(dist_px)))
+                    dt = max(0.05, now_t - t_a)
+                    live_est = max(2.0, min(140.0, ((dist_m * y_prog) / dt) * 3.6))
+                    if live_est > speed_limit:
+                        sub_lbl = f"OVER SPEED: ~{live_est:.1f} km/h (LIMIT: {speed_limit:.0f})"
+                        box_col = (0, 0, 255)  # Bright Red
+                    else:
+                        sub_lbl = f"SPEED: ~{live_est:.1f} km/h"
+                        box_col = (0, 230, 100)  # Compliant Green
+                elif by2 >= lb_y:
+                    sub_lbl = "PAST LINE B"
+                    box_col = (180, 180, 180)
+                else:
+                    sub_lbl = "APPROACHING LINE A"
+                    box_col = (255, 180, 0)
             else:
                 box_header = f"{trk_cls} {conf_pct:.2f}"
                 box_col = trk.get('color', (0, 255, 0))
@@ -1240,10 +1271,6 @@ class DetectorWorker:
                 # Draw box: black shadow first (offset 1px) then coloured border
                 cv2.rectangle(pf, (x1+1, y1+1), (x2+1, y2+1), (0, 0, 0), 2)      # shadow
                 cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)               # main
-
-                # If vehicle, draw red tyre contact point at bottom center
-                if t_box.get('is_veh'):
-                    cv2.circle(pf, ((x1 + x2) // 2, y2), 4, (0, 0, 255), -1)
 
                 sub_text = t_box.get('sub')
                 if sub_text:
