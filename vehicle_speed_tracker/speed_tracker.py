@@ -127,8 +127,20 @@ class VehicleSpeedTracker:
     Complete Vehicle Detection, Line-Crossing Counter, and Dual-Line Speed Estimator.
     """
     def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.model_path = config.get("model_path", "models/best.pt")
+        model_path = config.get("model_path")
+        if not model_path or not os.path.exists(model_path):
+            candidates = [
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "vehicle_speed.pt")),
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "best.pt")),
+                "models/vehicle_speed.pt",
+                "models/yolov8n.pt",
+                "yolov8n.pt"
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    model_path = c
+                    break
+        self.model_path = model_path or "models/vehicle_speed.pt"
         self.speed_limit_kmh = float(config.get("speed_limit_kmh", 10.0))
         self.road_distance_meters = float(config.get("road_distance_meters", 20.0))
         self.conf_thresh = float(config.get("confidence_threshold", 0.30))
@@ -261,7 +273,7 @@ class VehicleSpeedTracker:
                         print(f"✅ [SPEED-NORMAL] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h)")
 
         # 4. Render Visual Overlay with BBoxes, Vehicle Type, ID, and Speed HUD
-        annotated_frame = self._draw_annotations(frame, tracked_objects, la_start, la_end, lb_start, lb_end)
+        annotated_frame = self._draw_annotations(frame, tracked_objects, la_start, la_end, lb_start, lb_end, now_t)
 
         # 5. Save violation snapshot images WITH burned-in bboxes, vehicle type, ID, and speed
         for v in violations_this_frame:
@@ -292,6 +304,7 @@ class VehicleSpeedTracker:
         la_end: Tuple[int, int],
         lb_start: Tuple[int, int],
         lb_end: Tuple[int, int],
+        now_t: float = 0.0,
     ) -> np.ndarray:
         out = frame.copy()
         h, w = out.shape[:2]
@@ -312,6 +325,7 @@ class VehicleSpeedTracker:
             trk = self.tracker.tracks.get(track_id, {})
             speed = trk.get("speed_kmh")
             is_violation = trk.get("is_speed_violation", False)
+            t_a = trk.get("time_line_a")
 
             if is_violation:
                 box_color = (0, 0, 255)       # Red for Over Speed
@@ -323,11 +337,27 @@ class VehicleSpeedTracker:
                 status_text = f"✓ SPEED: {speed:.1f} km/h"
                 bg_color = (0, 160, 60)
                 text_color = (255, 255, 255)
+            elif t_a is not None:
+                # Vehicle is currently between Line A and Line B — compute real-time live speed
+                line_dist_y = max(20, lb_start[1] - la_start[1])
+                y_prog = max(0.05, min(1.0, (y2 - la_start[1]) / float(line_dist_y)))
+                dt = max(0.05, now_t - t_a)
+                live_est = max(2.0, min(140.0, ((self.road_distance_meters * y_prog) / dt) * 3.6))
+                
+                if live_est > self.speed_limit_kmh:
+                    box_color = (0, 120, 255)  # Orange for fast moving vehicle
+                    status_text = f"⚡ SPEED: ~{live_est:.1f} km/h"
+                    bg_color = (0, 90, 200)
+                else:
+                    box_color = (0, 220, 255)  # Cyan for normal tracking
+                    status_text = f"⚡ SPEED: ~{live_est:.1f} km/h"
+                    bg_color = (0, 140, 180)
+                text_color = (255, 255, 255)
             else:
                 box_color = CLASS_COLORS.get(label.lower(), (255, 180, 0))
-                status_text = "CALCULATING..."
+                status_text = "APPROACHING LINE A"
                 bg_color = (30, 30, 30)
-                text_color = (220, 220, 220)
+                text_color = (200, 200, 200)
 
             # Draw bounding box + tyre contact point
             cv2.rectangle(out, (x1, y1), (x2, y2), box_color, 2)
