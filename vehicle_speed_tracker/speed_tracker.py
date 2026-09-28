@@ -258,6 +258,10 @@ class VehicleSpeedTracker:
                     if trk["time_line_a"] is None:
                         trk["time_line_a"] = now_t
                         print(f"[GATE-LINE-A] Vehicle #{track_id} ({label}) crossed Line A at {now_t:.3f}s")
+            elif trk["time_line_a"] is None and cy > la_start[1] and cy < lb_start[1]:
+                # Vehicle was already between Line A and Line B when video/stream started
+                trk["time_line_a"] = max(0.0, now_t - 0.15)
+                print(f"[GATE-LINE-A] Vehicle #{track_id} ({label}) initialized between lines at {now_t:.3f}s")
             if side_a != 0:
                 self.last_side_a[track_id] = side_a
 
@@ -394,7 +398,10 @@ class VehicleSpeedTracker:
                     text_color = (255, 255, 255)
             else:
                 box_color = CLASS_COLORS.get(label.lower(), (255, 180, 0))
-                status_text = "APPROACHING LINE A"
+                if y2 >= lb_start[1]:
+                    status_text = "PAST LINE B"
+                else:
+                    status_text = "APPROACHING LINE A"
                 bg_color = (30, 30, 30)
                 text_color = (200, 200, 200)
 
