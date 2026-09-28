@@ -23,13 +23,15 @@ try:
 except Exception:
     pass
 
-from fastapi import FastAPI, Body, Query, Request, HTTPException
+from fastapi import FastAPI, Body, Query, Request, HTTPException, File, UploadFile
 from typing import Optional, Tuple, Any
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 import asyncio
 import httpx
+import re
+import shutil
 
 # Load .env file
 try:
