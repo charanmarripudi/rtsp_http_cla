@@ -148,6 +148,21 @@ def extract_negation_and_core(s):
         "fire": "fire",
         "flame": "fire",
         "smoke": "smoke",
+        "car": "car",
+        "automobile": "car",
+        "vehicle": "car",
+        "sedan": "car",
+        "suv": "car",
+        "bike": "bike",
+        "motorcycle": "bike",
+        "motorbike": "bike",
+        "bicycle": "bike",
+        "truck": "truck",
+        "lorry": "truck",
+        "tanktruck": "truck",
+        "tanker": "truck",
+        "pickuptruck": "pickuptruck",
+        "pickup": "pickuptruck",
     }
     mapped_core = synonym_map.get(core, core)
     return is_neg, mapped_core, cleaned
@@ -193,8 +208,21 @@ def get_yolo_model(model_path):
             resolved_path = os.path.join(m_dir, os.path.basename(resolved_path))
 
     if not os.path.exists(resolved_path):
-        # File is not on disk — return None to prevent Ultralytics from freezing with GitHub 429 errors
-        return None
+        # Fallback for vehicle_speed if not found
+        if "vehicle_speed" in os.path.basename(resolved_path):
+            fallback_paths = [
+                os.path.join(str(BASE_DIR), "models", "yolov8n.pt"),
+                os.path.join(str(BASE_DIR), "vehicle_speed_tracker", "yolov8n.pt"),
+                os.path.join(str(BASE_DIR), "..", "Vehicle_Detector_Tracking_Counter", "best.pt")
+            ]
+            for fp in fallback_paths:
+                if os.path.exists(fp):
+                    print(f"[CACHE-WARN] {resolved_path} not found, falling back to {fp}", flush=True)
+                    resolved_path = fp
+                    break
+        if not os.path.exists(resolved_path):
+            print(f"[CACHE-ERR] Model file not found on disk: {resolved_path}", flush=True)
+            return None
 
     if resolved_path not in YOLO_CACHE:
         with INFERENCE_LOCK:
