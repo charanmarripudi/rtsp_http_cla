@@ -2186,6 +2186,135 @@ def save_cm(d: dict = Body(...)):
 
     return {"status": "saved"}
 
+# ──────────────────────────────────────────────────────────────────────────────
+# SPEED TRACKER REST APIS FOR OFFICE UI & CENTRAL DASHBOARD
+# ──────────────────────────────────────────────────────────────────────────────
+SPEED_CONFIG_FILE = os.path.join(BASE_DIR, "speed_config.json")
+
+def _get_speed_config():
+    default_cfg = {
+        "speed_limit_kmh": 10.0,
+        "road_distance_meters": 20.0,
+        "line_a_ratio": 0.40,
+        "line_b_ratio": 0.75
+    }
+    if os.path.exists(SPEED_CONFIG_FILE):
+        try:
+            with open(SPEED_CONFIG_FILE, "r") as f:
+                saved = json.load(f)
+                default_cfg.update(saved)
+        except Exception:
+            pass
+    return default_cfg
+
+@app.get("/api/speed/config")
+def get_speed_config():
+    """Returns terminal speed limit, distance between lines, and line ratios."""
+    return {"status": "ok", "config": _get_speed_config()}
+
+@app.post("/api/speed/config")
+def update_speed_config(d: dict = Body(...)):
+    """Dynamically updates speed limit, road distance, and line ratios across running camera workers."""
+    cfg = _get_speed_config()
+    if "speed_limit_kmh" in d:
+        cfg["speed_limit_kmh"] = float(d["speed_limit_kmh"])
+    if "road_distance_meters" in d:
+        cfg["road_distance_meters"] = float(d["road_distance_meters"])
+    if "line_a_ratio" in d:
+        cfg["line_a_ratio"] = float(d["line_a_ratio"])
+    if "line_b_ratio" in d:
+        cfg["line_b_ratio"] = float(d["line_b_ratio"])
+
+    with open(SPEED_CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, indent=2)
+
+    # Propagate to all running workers immediately
+    for cid, r_info in running.items():
+        w = r_info.get("worker")
+        if w:
+            w.speed_limit_kmh = cfg["speed_limit_kmh"]
+            w.road_distance_meters = cfg["road_distance_meters"]
+            w.line_a_ratio = cfg["line_a_ratio"]
+            w.line_b_ratio = cfg["line_b_ratio"]
+
+    return {"status": "updated", "config": cfg}
+
+@app.get("/api/speed/stats")
+def get_speed_stats(camera_id: str = None):
+    """
+    Returns real-time vehicle counts, over-speed violations, and recent vehicle speed telemetry
+    for all active cameras or a specified camera_id.
+    """
+    cfg = _get_speed_config()
+    stats = {
+        "speed_limit_kmh": cfg.get("speed_limit_kmh", 10.0),
+        "road_distance_meters": cfg.get("road_distance_meters", 20.0),
+        "cameras": {}
+    }
+    total_trucks = 0
+    total_cars = 0
+    total_vehicles = 0
+    total_violations = 0
+    all_recent_speeds = []
+
+    for cid, r_info in running.items():
+        if camera_id is not None and str(cid) != str(camera_id):
+            continue
+        w = r_info.get("worker")
+        if not w:
+            continue
+        v_counts = getattr(w, "vehicle_counts", {})
+        trucks = v_counts.get("truck", 0) + v_counts.get("pickup truck", 0)
+        cars = v_counts.get("car", 0)
+        bikes = v_counts.get("bike", 0)
+        tot = sum(v_counts.values())
+        overspeed = getattr(w, "overspeed_count", 0)
+        rec_speeds = getattr(w, "speed_records", [])
+
+        total_trucks += trucks
+        total_cars += cars
+        total_vehicles += tot
+        total_violations += overspeed
+        all_recent_speeds.extend(rec_speeds)
+
+        stats["cameras"][str(cid)] = {
+            "location": r_info.get("location", f"Camera {cid}"),
+            "trucks": trucks,
+            "cars": cars,
+            "bikes": bikes,
+            "total_vehicles": tot,
+            "overspeed_violations": overspeed,
+            "recent_speeds": rec_speeds[-20:]
+        }
+
+    stats["summary"] = {
+        "total_trucks": total_trucks,
+        "total_cars": total_cars,
+        "total_vehicles": total_vehicles,
+        "total_violations": total_violations,
+        "recent_violations": [s for s in all_recent_speeds if s.get("is_over_speed")][-20:]
+    }
+    return stats
+
+@app.get("/api/speed/violations")
+def get_speed_violations(limit: int = 50):
+    """Fetches historical over-speed violations with snapshot URLs from alerts."""
+    adir = os.path.join(HLS_DIR, "alerts")
+    alerts_json = os.path.join(adir, "alerts.json")
+    violations = []
+    if os.path.exists(alerts_json):
+        try:
+            with open(alerts_json, "r") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    for a in data:
+                        alert_type = str(a.get("type_of_alert", "")).lower()
+                        if "over speed" in alert_type or "speed" in alert_type:
+                            violations.append(a)
+        except Exception:
+            pass
+    return {"violations": violations[:limit]}
+
 @app.get("/api/locations")
 async def get_locations(
     request: Request,

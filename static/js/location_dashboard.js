@@ -659,7 +659,8 @@ class LocationDashboard {
             { file: "120_spillage_best.pt", label: "SPILLAGE DETECTION CLASSES", color: "#06b6d4", classes: ["spillage"] },
             { file: "best_tape.pt", label: "REFLECTIVE TAPE CLASSES", color: "#10b981", classes: ["reflective_tape_floor","reflective_tape_person","reflective_tape_vehicles","traffic_tape_bollards","traffic_tape_cone"] },
             { file: "sand_ext_chocks.pt", label: "SAND EXT CHOCKS CLASSES", color: "#84cc16", classes: ["Fire_Extinguisher","Sand-Bucket","wheel-choke"] },
-            { file: "tyre_final.pt", label: "TYRE INSPECTION CLASSES", color: "#6366f1", classes: ["Defective","Good_tyre"] }
+            { file: "tyre_final.pt", label: "TYRE INSPECTION CLASSES", color: "#6366f1", classes: ["Defective","Good_tyre"] },
+            { file: "vehicle_speed.pt", label: "TANK TRUCK SPEED & COUNT MONITOR", color: "#38bdf8", classes: ["truck","car","pickup truck","bike"] }
         ];
 
         const specFileNames = specializedModels.map(s => s.file);

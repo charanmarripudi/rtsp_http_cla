@@ -9,6 +9,7 @@ os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
 
 import cv2, subprocess, time, threading, queue, json, math
+from collections import Counter
 import numpy as np
 try:
     cv2.setNumThreads(1)
@@ -437,6 +438,13 @@ class DetectorWorker:
         self._last_frame_time, self._cap_ok = time.time(), True
         self.alert_timers, self.alert_triggered = {}, set()
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
+        self.speed_limit_kmh = float(os.getenv("TERMINAL_SPEED_LIMIT", "10.0"))
+        self.road_distance_meters = float(os.getenv("TERMINAL_GATE_GANTRY_METERS", "20.0"))
+        self.line_a_ratio = float(os.getenv("LINE_A_RATIO", "0.40"))
+        self.line_b_ratio = float(os.getenv("LINE_B_RATIO", "0.75"))
+        self.vehicle_counts = Counter()
+        self.overspeed_count = 0
+        self.speed_records = []
         if isinstance(model_paths, list):
             seen = []
             for p in model_paths:
@@ -839,17 +847,99 @@ class DetectorWorker:
             if now_t - self._ema_tracks[tid].get('last_seen', 0.0) > TRACK_MAX_AGE_S:
                 del self._ema_tracks[tid]
 
+        # ── Vehicle Speed Estimation & Line Crossing Engine ──
+        la_y = int(self.height * 0.40)
+        lb_y = int(self.height * 0.75)
+        la_start, la_end = (int(self.width * 0.10), la_y), (int(self.width * 0.90), la_y)
+        lb_start, lb_end = (int(self.width * 0.10), lb_y), (int(self.width * 0.90), lb_y)
+
+        vehicle_keywords = ("truck", "car", "pickup", "bike", "tank", "vehicle")
+        speed_limit = float(getattr(self, 'speed_limit_kmh', 10.0))
+        dist_m = float(getattr(self, 'road_distance_meters', 20.0))
+
+        for tid, trk in self._ema_tracks.items():
+            cls_lower = str(trk.get('cls', '')).lower()
+            if any(vk in cls_lower for vk in vehicle_keywords):
+                bx = trk['box']
+                cx = (bx[0] + bx[2]) / 2.0
+                cy = bx[3]  # Tyre contact point at bottom edge
+
+                # Check Line A (Gate Entry)
+                side_a = (la_end[0] - la_start[0]) * (cy - la_start[1]) - (la_end[1] - la_start[1]) * (cx - la_start[0])
+                if not hasattr(self, '_last_side_a'): self._last_side_a = {}
+                if tid in self._last_side_a:
+                    if (self._last_side_a[tid] < 0 < side_a) or (self._last_side_a[tid] > 0 > side_a):
+                        if trk.get('time_a') is None:
+                            trk['time_a'] = now_t
+                if side_a != 0: self._last_side_a[tid] = side_a
+
+                # Check Line B (Gantry Road)
+                side_b = (lb_end[0] - lb_start[0]) * (cy - lb_start[1]) - (lb_end[1] - lb_start[1]) * (cx - lb_start[0])
+                if not hasattr(self, '_last_side_b'): self._last_side_b = {}
+                if tid in self._last_side_b:
+                    if (self._last_side_b[tid] < 0 < side_b) or (self._last_side_b[tid] > 0 > side_b):
+                        if trk.get('time_b') is None:
+                            trk['time_b'] = now_t
+                            if not hasattr(self, 'vehicle_counts'): self.vehicle_counts = Counter()
+                            if not hasattr(self, 'counted_ids'): self.counted_ids = set()
+                            if tid not in self.counted_ids:
+                                self.vehicle_counts[trk['cls']] += 1
+                                self.counted_ids.add(tid)
+                if side_b != 0: self._last_side_b[tid] = side_b
+
+                # Compute Speed when both lines crossed
+                if trk.get('time_a') is not None and trk.get('time_b') is not None and trk.get('speed_kmh') is None:
+                    delta_t = abs(trk['time_b'] - trk['time_a'])
+                    if delta_t >= 0.05:
+                        v = (dist_m / delta_t) * 3.6
+                        trk['speed_kmh'] = v
+                        if not hasattr(self, 'speed_records'): self.speed_records = []
+                        self.speed_records.append({
+                            "vehicle_id": tid,
+                            "cls": trk['cls'],
+                            "speed_kmh": round(v, 1),
+                            "is_over_speed": bool(v > speed_limit),
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        })
+                        if len(self.speed_records) > 200:
+                            self.speed_records = self.speed_records[-200:]
+
+                        if v > speed_limit:
+                            trk['is_over_speed'] = True
+                            trk['color'] = (0, 0, 255)  # Pure Red Alert
+                            if not hasattr(self, 'overspeed_count'): self.overspeed_count = 0
+                            self.overspeed_count += 1
+                            print(f"[SPEED-VIOLATION] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Limit: {speed_limit:.0f} km/h)", flush=True)
+                            # Queue instant over-speed alert
+                            trk['should_alert_overspeed'] = True
+                        else:
+                            trk['color'] = (0, 255, 100)  # Green Normal
+                            print(f"[SPEED-NORMAL] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h", flush=True)
+
         # Build display list from live EMA tracks
         display_boxes = []
-        for trk in self._ema_tracks.values():
+        for tid, trk in self._ema_tracks.items():
             age = now_t - trk.get('last_seen', 0.0)
             if age > TRACK_MAX_AGE_S:
                 continue
             cur_cls.add(trk['cls'])
+            
+            # Format speed label
+            speed_val = trk.get('speed_kmh')
+            if trk.get('is_over_speed'):
+                box_lbl = f"{trk['cls']} #{tid} OVER SPEED: {speed_val:.1f} km/h"
+                box_col = (0, 0, 255)
+            elif speed_val is not None:
+                box_lbl = f"{trk['cls']} #{tid} {speed_val:.1f} km/h"
+                box_col = (0, 255, 100)
+            else:
+                box_lbl = f"{trk['cls']} {trk['conf']:.2f}"
+                box_col = trk['color']
+
             display_boxes.append({
                 'box':   trk['box'],
-                'label': f"{trk['cls']} {trk['conf']:.2f}",
-                'color': trk['color'],
+                'label': box_lbl,
+                'color': box_col,
                 'cls':   trk['cls'],
                 'conf':  trk['conf'],
             })
@@ -914,6 +1004,15 @@ class DetectorWorker:
                 trk['last_alert_time'] = now_t
                 print(f"[ALERT-TRIGGER] Instant alert generated: cam={self.cam_id}, class={c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
                 self._save_alert(c, frame_snapshot)
+
+        # ── Over Speed Alert Trigger ──
+        for tid, trk in list(self._ema_tracks.items()):
+            if trk.get('should_alert_overspeed') and not trk.get('overspeed_alerted'):
+                trk['overspeed_alerted'] = True
+                spd = trk.get('speed_kmh', 0.0)
+                alert_cls = f"OVER SPEED: {spd:.1f} km/h (Limit: {speed_limit:.0f} km/h)"
+                print(f"[ALERT-TRIGGER-SPEED] Over speed alert generated: cam={self.cam_id}, vehicle_id={tid}, class={trk.get('cls')}, speed={spd:.1f} km/h", flush=True)
+                self._save_alert(alert_cls, frame_snapshot)
 
     def _save_alert(self, class_name, frame):
         try:
@@ -1213,6 +1312,39 @@ class DetectorWorker:
                             display_boxes = list(self._tracked_boxes)
 
                         DetectorWorker._draw_boxes(pf, display_boxes)
+
+                        # Draw vehicle speed timing lines & telemetry HUD if vehicle speed model is active
+                        active_mods = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+                        is_speed_model = any("vehicle_speed" in str(mp).lower() or "speed" in str(mp).lower() for mp in active_mods)
+                        if is_speed_model:
+                            la_y = int(f_h * getattr(self, 'line_a_ratio', 0.40))
+                            lb_y = int(f_h * getattr(self, 'line_b_ratio', 0.75))
+                            
+                            # Line A (Gate Entry) - Electric Cyan
+                            cv2.line(pf, (int(f_w * 0.05), la_y), (int(f_w * 0.95), la_y), (255, 200, 0), 2)
+                            cv2.putText(pf, "LINE A (GATE ENTRY)", (int(f_w * 0.06), la_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 200, 0), 1, cv2.LINE_AA)
+                            
+                            # Line B (Gantry Road) - Lime Green
+                            cv2.line(pf, (int(f_w * 0.05), lb_y), (int(f_w * 0.95), lb_y), (0, 255, 100), 2)
+                            cv2.putText(pf, "LINE B (GANTRY ROAD)", (int(f_w * 0.06), lb_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 100), 1, cv2.LINE_AA)
+
+                            # Top-Right Telemetry HUD
+                            hud_w, hud_h = 230, 68
+                            hud_x1, hud_y1 = f_w - hud_w - 10, 10
+                            overlay = pf.copy()
+                            cv2.rectangle(overlay, (hud_x1, hud_y1), (f_w - 10, hud_y1 + hud_h), (15, 23, 42), -1)
+                            cv2.addWeighted(overlay, 0.75, pf, 0.25, 0, pf)
+                            cv2.rectangle(pf, (hud_x1, hud_y1), (f_w - 10, hud_y1 + hud_h), (0, 255, 170), 1)
+
+                            v_counts = getattr(self, 'vehicle_counts', {})
+                            trucks = v_counts.get('truck', 0) + v_counts.get('pickup truck', 0)
+                            cars = v_counts.get('car', 0)
+                            overspeed_cnt = getattr(self, 'overspeed_count', 0)
+                            sp_lim = getattr(self, 'speed_limit_kmh', 10.0)
+
+                            cv2.putText(pf, f"SPEED LIMIT: {sp_lim:.0f} km/h", (hud_x1 + 10, hud_y1 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 170), 1, cv2.LINE_AA)
+                            cv2.putText(pf, f"TRUCKS: {trucks}  CARS: {cars}", (hud_x1 + 10, hud_y1 + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 255, 255), 1, cv2.LINE_AA)
+                            cv2.putText(pf, f"OVER SPEED: {overspeed_cnt}", (hud_x1 + 10, hud_y1 + 58), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 0, 255) if overspeed_cnt > 0 else (180, 180, 180), 1, cv2.LINE_AA)
 
                         if ffmpeg.poll() is not None:
                             break
