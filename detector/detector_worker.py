@@ -630,7 +630,8 @@ class DetectorWorker:
             m_conf = self.conf
             m_iou  = self.iou
             enabled_classes = None
-            default_imgsz   = int(os.getenv("DEFAULT_IMGSZ", "640"))
+            is_veh_model    = ("vehicle_speed" in m_name.lower() or "speed" in m_name.lower())
+            default_imgsz   = 384 if is_veh_model else int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz         = default_imgsz
             cfg             = get_config_for_model(self.model_configs, m_name)
             class_configs   = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}
@@ -749,58 +750,59 @@ class DetectorWorker:
         # ── Multi-Model NMS ───────────────────────────────────────────────────
         kept_items = self._apply_nms(raw_boxes)
 
-        # ── EMA-Smoothed Persistent Track Memory ─────────────────────────────
-        # Strategy:
-        #   1. For each fresh detection, find the closest existing EMA track of the
-        #      same class (by IoU).  If found → update its position with EMA blend.
-        #      If not found → create a new EMA track at the raw position.
-        #   2. Any EMA track not refreshed within TRACK_MAX_AGE_S is dropped.
-        # Result: boxes slide smoothly to the person's new position instead of
-        # teleporting, eliminating the "jumping" visual artefact.
+        # ── Robust Vehicle Centroid & Ground Tracking Engine ──────────────────
         now_t = time.time()
         if not hasattr(self, '_ema_tracks'):
             self._ema_tracks = {}
-            self._ema_next_id = 0
+            self._ema_next_id = 1
 
         matched_ids = set()
+        vehicle_keywords = ("truck", "car", "pickup", "bike", "tank", "vehicle", "bus", "motorcycle")
 
         for b_xyxy, color_val, conf_val, cls_name in kept_items:
-            # ── Match to closest same-class EMA track ────────────────────────
-            # Use a combined score: IoU for close boxes + centre-distance fallback
-            # for boxes that moved significantly (e.g. bending worker).
             bx1, by1, bx2, by2 = b_xyxy
             b_cx = (bx1 + bx2) / 2.0
             b_cy = (by1 + by2) / 2.0
             b_w  = max(1.0, bx2 - bx1)
             b_h  = max(1.0, by2 - by1)
+            is_veh = any(vk in cls_name.lower() for vk in vehicle_keywords)
 
             best_id, best_score = None, 0.0
             for tid, trk in self._ema_tracks.items():
                 if tid in matched_ids:
-                    continue  # already claimed by an earlier detection this cycle
+                    continue
                 if not match_class(trk['cls'], cls_name):
                     continue
-                iou_v, io_min_v = DetectorWorker._box_iou_and_io_min(trk['box'], b_xyxy)
 
-                # Centre-distance score: 1.0 when perfectly aligned, 0.0 when > 1 box-width away
-                tx1, ty1, tx2, ty2 = trk['box']
-                t_cx = (tx1 + tx2) / 2.0
-                t_cy = (ty1 + ty2) / 2.0
-                dist_x = abs(b_cx - t_cx) / max(b_w, (tx2 - tx1), 1.0)
-                dist_y = abs(b_cy - t_cy) / max(b_h, (ty2 - ty1), 1.0)
-                dist_score = max(0.0, 1.0 - (dist_x**2 + dist_y**2) ** 0.5)
-
-                # Combined: prioritise IoU, use distance as tiebreaker / fallback
-                score = max(iou_v * 1.2, io_min_v * 0.8, dist_score * 0.5)
-
-                if score > best_score and score >= 0.10:
-                    best_score = score
-                    best_id    = tid
+                if is_veh:
+                    # Vehicle ground contact centroid matching (smooth tracking down road)
+                    tx1, ty1, tx2, ty2 = trk['box']
+                    t_cx = (tx1 + tx2) / 2.0
+                    t_cy = ty2  # Tyre contact
+                    curr_cx = b_cx
+                    curr_cy = by2
+                    dist = math.hypot(curr_cx - t_cx, curr_cy - t_cy)
+                    if dist <= 180:  # within 180px distance threshold
+                        score = max(0.01, 1.0 - (dist / 180.0))
+                        if score > best_score:
+                            best_score = score
+                            best_id = tid
+                else:
+                    iou_v, io_min_v = DetectorWorker._box_iou_and_io_min(trk['box'], b_xyxy)
+                    tx1, ty1, tx2, ty2 = trk['box']
+                    t_cx = (tx1 + tx2) / 2.0
+                    t_cy = (ty1 + ty2) / 2.0
+                    dist_x = abs(b_cx - t_cx) / max(b_w, (tx2 - tx1), 1.0)
+                    dist_y = abs(b_cy - t_cy) / max(b_h, (ty2 - ty1), 1.0)
+                    dist_score = max(0.0, 1.0 - (dist_x**2 + dist_y**2) ** 0.5)
+                    score = max(iou_v * 1.2, io_min_v * 0.8, dist_score * 0.5)
+                    if score > best_score and score >= 0.10:
+                        best_score = score
+                        best_id = tid
 
             if best_id is not None:
-                # EMA-blend existing track toward new detection
                 old_b = self._ema_tracks[best_id]['box']
-                a = BOX_EMA_ALPHA
+                a = 0.2 if is_veh else BOX_EMA_ALPHA
                 smoothed = [
                     old_b[0] * a + b_xyxy[0] * (1 - a),
                     old_b[1] * a + b_xyxy[1] * (1 - a),
@@ -808,7 +810,6 @@ class DetectorWorker:
                     old_b[3] * a + b_xyxy[3] * (1 - a),
                 ]
                 
-                # Update rolling M-of-N voting history (1 = hit)
                 hist = self._ema_tracks[best_id].get('history', [])
                 hist.append(1)
                 if len(hist) > 5:
@@ -825,7 +826,6 @@ class DetectorWorker:
                 })
                 matched_ids.add(best_id)
             else:
-                # New detection → new EMA track (starts at raw position)
                 new_id = self._ema_next_id
                 self._ema_next_id += 1
                 self._ema_tracks[new_id] = {
@@ -837,6 +837,10 @@ class DetectorWorker:
                     'first_seen':      now_t,
                     'hit_count':       1,
                     'history':         [1],
+                    'time_a':          None,
+                    'time_b':          None,
+                    'speed_kmh':       None,
+                    'is_over_speed':   False,
                     'last_alert_time': 0.0,
                 }
                 matched_ids.add(new_id)
@@ -850,18 +854,20 @@ class DetectorWorker:
                     hist = hist[-5:]
                 trk['history'] = hist
 
-        # Expire stale tracks
+        # Expire stale tracks (6.0s persistence for vehicles so crossing lines is never lost, 1.0s for PPE)
         for tid in list(self._ema_tracks.keys()):
-            if now_t - self._ema_tracks[tid].get('last_seen', 0.0) > TRACK_MAX_AGE_S:
+            trk_cls = self._ema_tracks[tid].get('cls', '').lower()
+            is_veh = any(vk in trk_cls for vk in vehicle_keywords)
+            max_age = 6.0 if is_veh else TRACK_MAX_AGE_S
+            if now_t - self._ema_tracks[tid].get('last_seen', 0.0) > max_age:
                 del self._ema_tracks[tid]
 
-        # ── Vehicle Speed Estimation & Line Crossing Engine ──
-        la_y = int(self.height * 0.40)
-        lb_y = int(self.height * 0.75)
-        la_start, la_end = (int(self.width * 0.10), la_y), (int(self.width * 0.90), la_y)
-        lb_start, lb_end = (int(self.width * 0.10), lb_y), (int(self.width * 0.90), lb_y)
+        # ── Vehicle Speed Estimation & Dual-Line Timing ──
+        la_y = int(self.height * getattr(self, 'line_a_ratio', 0.40))
+        lb_y = int(self.height * getattr(self, 'line_b_ratio', 0.75))
+        la_start, la_end = (int(self.width * 0.05), la_y), (int(self.width * 0.95), la_y)
+        lb_start, lb_end = (int(self.width * 0.05), lb_y), (int(self.width * 0.95), lb_y)
 
-        vehicle_keywords = ("truck", "car", "pickup", "bike", "tank", "vehicle")
         speed_limit = float(getattr(self, 'speed_limit_kmh', 10.0))
         dist_m = float(getattr(self, 'road_distance_meters', 20.0))
 
@@ -870,24 +876,26 @@ class DetectorWorker:
             if any(vk in cls_lower for vk in vehicle_keywords):
                 bx = trk['box']
                 cx = (bx[0] + bx[2]) / 2.0
-                cy = bx[3]  # Tyre contact point at bottom edge
+                cy = bx[3]  # Tyre contact point at bottom edge of bounding box
 
                 # Check Line A (Gate Entry)
                 side_a = (la_end[0] - la_start[0]) * (cy - la_start[1]) - (la_end[1] - la_start[1]) * (cx - la_start[0])
                 if not hasattr(self, '_last_side_a'): self._last_side_a = {}
                 if tid in self._last_side_a:
-                    if (self._last_side_a[tid] < 0 < side_a) or (self._last_side_a[tid] > 0 > side_a):
+                    if (self._last_side_a[tid] < 0 and side_a >= 0) or (self._last_side_a[tid] > 0 and side_a <= 0):
                         if trk.get('time_a') is None:
                             trk['time_a'] = now_t
+                            print(f"[GATE-LINE-A] Vehicle #{tid} ({trk['cls']}) passed Line A at {now_t:.2f}s", flush=True)
                 if side_a != 0: self._last_side_a[tid] = side_a
 
                 # Check Line B (Gantry Road)
                 side_b = (lb_end[0] - lb_start[0]) * (cy - lb_start[1]) - (lb_end[1] - lb_start[1]) * (cx - lb_start[0])
                 if not hasattr(self, '_last_side_b'): self._last_side_b = {}
                 if tid in self._last_side_b:
-                    if (self._last_side_b[tid] < 0 < side_b) or (self._last_side_b[tid] > 0 > side_b):
+                    if (self._last_side_b[tid] < 0 and side_b >= 0) or (self._last_side_b[tid] > 0 and side_b <= 0):
                         if trk.get('time_b') is None:
                             trk['time_b'] = now_t
+                            print(f"[GANTRY-LINE-B] Vehicle #{tid} ({trk['cls']}) passed Line B at {now_t:.2f}s", flush=True)
                             if not hasattr(self, 'vehicle_counts'): self.vehicle_counts = Counter()
                             if not hasattr(self, 'counted_ids'): self.counted_ids = set()
                             if tid not in self.counted_ids:
@@ -918,7 +926,6 @@ class DetectorWorker:
                             if not hasattr(self, 'overspeed_count'): self.overspeed_count = 0
                             self.overspeed_count += 1
                             print(f"[SPEED-VIOLATION] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Limit: {speed_limit:.0f} km/h)", flush=True)
-                            # Queue instant over-speed alert
                             trk['should_alert_overspeed'] = True
                         else:
                             trk['color'] = (0, 255, 100)  # Green Normal
@@ -927,22 +934,31 @@ class DetectorWorker:
         # Build display list from live EMA tracks
         display_boxes = []
         for tid, trk in self._ema_tracks.items():
+            trk_cls = trk.get('cls', '')
+            is_veh = any(vk in trk_cls.lower() for vk in vehicle_keywords)
+            max_age = 6.0 if is_veh else TRACK_MAX_AGE_S
             age = now_t - trk.get('last_seen', 0.0)
-            if age > TRACK_MAX_AGE_S:
+            if age > max_age:
                 continue
-            cur_cls.add(trk['cls'])
+            cur_cls.add(trk_cls)
             
             # Format speed label
             speed_val = trk.get('speed_kmh')
             if trk.get('is_over_speed'):
-                box_lbl = f"{trk['cls']} #{tid} OVER SPEED: {speed_val:.1f} km/h"
+                box_lbl = f"{trk_cls} #{tid} OVER SPEED: {speed_val:.1f} km/h"
                 box_col = (0, 0, 255)
             elif speed_val is not None:
-                box_lbl = f"{trk['cls']} #{tid} {speed_val:.1f} km/h"
+                box_lbl = f"{trk_cls} #{tid} {speed_val:.1f} km/h"
                 box_col = (0, 255, 100)
+            elif is_veh:
+                if trk.get('time_a') is not None:
+                    box_lbl = f"{trk_cls} #{tid} [TIMING...]"
+                else:
+                    box_lbl = f"{trk_cls} #{tid}"
+                box_col = (255, 190, 40) if "car" in trk_cls.lower() else (0, 140, 255)
             else:
-                box_lbl = f"{trk['cls']} {trk['conf']:.2f}"
-                box_col = trk['color']
+                box_lbl = f"{trk_cls} {trk.get('conf', 0.0):.2f}"
+                box_col = trk.get('color', (0, 255, 0))
 
             display_boxes.append({
                 'box':   trk['box'],
