@@ -127,7 +127,8 @@ class VehicleSpeedTracker:
     Complete Vehicle Detection, Line-Crossing Counter, and Dual-Line Speed Estimator.
     """
     def __init__(self, config: Dict[str, Any]):
-        model_path = config.get("model_path")
+        self.config = config or {}
+        model_path = self.config.get("model_path")
         if not model_path or not os.path.exists(model_path):
             candidates = [
                 os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "vehicle_speed.pt")),
