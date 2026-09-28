@@ -1185,8 +1185,25 @@ class DetectorWorker:
     def _capture_thread(self, cap, cap_stop_evt):
         consecutive_fails = 0
         is_local_file = os.path.isfile(str(self.rtsp_url)) or not str(self.rtsp_url).lower().startswith("rtsp")
+        file_fps = 25.0
+        if is_local_file:
+            try:
+                fps_val = cap.get(cv2.CAP_PROP_FPS)
+                if fps_val and 1.0 <= fps_val <= 120.0:
+                    file_fps = float(fps_val)
+            except Exception:
+                file_fps = 25.0
+        frame_interval = 1.0 / file_fps
+        next_frame_time = time.time()
+
         while not self._stop_event.is_set() and not cap_stop_evt.is_set():
             try:
+                if is_local_file:
+                    now_t = time.time()
+                    if now_t < next_frame_time:
+                        time.sleep(max(0.001, next_frame_time - now_t))
+                    next_frame_time = time.time() + frame_interval
+
                 ret, f = cap.read()
                 if not ret or f is None:
                     if is_local_file:
