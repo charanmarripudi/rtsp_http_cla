@@ -957,7 +957,12 @@ async def hls_options_handler(path: str = None, cam_id: str = None, filename: st
 
 @app.api_route("/hls/camera/{cam_id}/{filename}", methods=["GET", "HEAD", "OPTIONS"])
 async def serve_camera_virtual_file(cam_id: str, filename: str, request: Request = None):
-    sub = f"stream{cam_id}_detected" if (cam_id in running or cam_id == "speed" or "_detected" in filename or os.path.exists(os.path.join(HLS_DIR, f"stream{cam_id}_detected/playlist.m3u8"))) else f"stream{cam_id}_raw"
+    if cam_id in running:
+        sub = f"stream{cam_id}_detected"
+    elif cam_id == "speed":
+        sub = f"stream{cam_id}_detected"
+    else:
+        sub = f"stream{cam_id}_raw"
     return await serve_hls(f"{sub}/{filename}", request=request)
 
 @app.api_route("/hls/camera/{cam_id}/playlist.m3u8", methods=["GET", "HEAD", "OPTIONS"])

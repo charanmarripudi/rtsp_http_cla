@@ -969,38 +969,34 @@ class DetectorWorker:
             is_veh = any(vk in trk_cls.lower() for vk in vehicle_keywords)
             max_age = 1.2 if is_veh else TRACK_MAX_AGE_S
             age = now_t - trk.get('last_seen', 0.0)
-            age = now_t - trk.get('last_seen', 0.0)
             if age > max_age:
                 continue
             cur_cls.add(trk_cls)
             
             # Format speed label
             speed_val = trk.get('speed_kmh')
+            conf_pct = trk.get('conf', 0.8)
+            box_header = f"{trk_cls.upper()} #{tid} ({conf_pct:.0%})"
+            sub_lbl = None
+
             if trk.get('is_over_speed'):
-                box_lbl = f"{trk_cls} #{tid} 🚨 {speed_val:.1f} km/h (OVER SPEED)"
-                box_col = (0, 0, 255)
+                sub_lbl = f"OVER SPEED: {speed_val:.1f} km/h"
+                box_col = (0, 0, 255)  # Bright Red
             elif speed_val is not None:
-                box_lbl = f"{trk_cls} #{tid} ✓ {speed_val:.1f} km/h"
-                box_col = (0, 255, 100)
+                sub_lbl = f"SPEED: {speed_val:.1f} km/h"
+                box_col = (0, 255, 100)  # Bright Green
             elif is_veh:
-                if trk.get('time_a') is not None and trk.get('time_b') is None:
-                    elapsed = now_t - trk['time_a']
-                    box_lbl = f"{trk_cls} #{tid} [TIMING {elapsed:.1f}s]"
-                    box_col = (0, 220, 255)
-                elif trk.get('time_b') is not None and trk.get('time_a') is None:
-                    elapsed = now_t - trk['time_b']
-                    box_lbl = f"{trk_cls} #{tid} [TIMING {elapsed:.1f}s]"
-                    box_col = (0, 220, 255)
-                else:
-                    box_lbl = f"{trk_cls} #{tid}"
-                    box_col = (255, 190, 40) if "car" in trk_cls.lower() else (0, 140, 255)
+                sub_lbl = "CALCULATING..."
+                box_col = (255, 190, 40) if "car" in trk_cls.lower() else (0, 140, 255)
             else:
-                box_lbl = f"{trk_cls} {trk.get('conf', 0.0):.2f}"
+                box_header = f"{trk_cls} {conf_pct:.2f}"
                 box_col = trk.get('color', (0, 255, 0))
 
             display_boxes.append({
                 'box':   trk['box'],
-                'label': box_lbl,
+                'label': box_header,
+                'sub':   sub_lbl,
+                'is_veh': is_veh,
                 'color': box_col,
                 'cls':   trk['cls'],
                 'conf':  trk['conf'],
@@ -1245,37 +1241,46 @@ class DetectorWorker:
                 cv2.rectangle(pf, (x1+1, y1+1), (x2+1, y2+1), (0, 0, 0), 2)      # shadow
                 cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)               # main
 
-                # Compute label size
-                (tw, th), baseline = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE, LABEL_THICKNESS)
-                pad = LABEL_BOX_PADDING
+                # If vehicle, draw red tyre contact point at bottom center
+                if t_box.get('is_veh'):
+                    cv2.circle(pf, ((x1 + x2) // 2, y2), 4, (0, 0, 255), -1)
 
-                # Preferred position: just above the box top edge
-                pref_bg_y1 = y1 - th - 2*pad
-                pref_bg_y2 = y1
-                pref_bg_x1 = x1
-                pref_bg_x2 = min(f_w - 1, x1 + tw + 2*pad)
-
-                # If the label would go above frame top, place it inside the box instead
-                if pref_bg_y1 < 0:
-                    pref_bg_y1 = y1
-                    pref_bg_y2 = y1 + th + 2*pad
-
-                # Resolve vertical collision by stacking
-                bg_y1, bg_y2 = find_free_label_y(pref_bg_x1, pref_bg_x2, pref_bg_y1, pref_bg_y2)
-                bg_x1, bg_x2 = pref_bg_x1, pref_bg_x2
-                text_y = bg_y1 + th + pad - 1
-
-                # Label background panel
-                cv2.rectangle(pf, (bg_x1, bg_y1), (bg_x2, bg_y2), color_val, -1)
-                # Black text for readability
-                cv2.putText(pf, label_text, (bg_x1 + pad, text_y),
-                            cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE,
-                            (0, 0, 0), LABEL_THICKNESS + 1, cv2.LINE_AA)
-                cv2.putText(pf, label_text, (bg_x1 + pad, text_y),
-                            cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE,
-                            (255, 255, 255), LABEL_THICKNESS, cv2.LINE_AA)
-
-                used_label_slots.append((bg_x1, bg_y1, bg_x2, bg_y2))
+                sub_text = t_box.get('sub')
+                if sub_text:
+                    (tw1, th1), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+                    (tw2, th2), _ = cv2.getTextSize(sub_text, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 2)
+                    max_w = max(tw1, tw2) + 12
+                    pref_bg_y1 = max(0, y1 - 34)
+                    pref_bg_y2 = y1
+                    pref_bg_x1 = x1
+                    pref_bg_x2 = min(f_w - 1, x1 + max_w)
+                    bg_y1, bg_y2 = find_free_label_y(pref_bg_x1, pref_bg_x2, pref_bg_y1, pref_bg_y2)
+                    cv2.rectangle(pf, (pref_bg_x1, bg_y1), (pref_bg_x2, bg_y2), color_val, -1)
+                    cv2.putText(pf, label_text, (pref_bg_x1 + 4, bg_y1 + 13), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1, cv2.LINE_AA)
+                    cv2.putText(pf, sub_text, (pref_bg_x1 + 4, bg_y1 + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 2, cv2.LINE_AA)
+                    used_label_slots.append((pref_bg_x1, bg_y1, pref_bg_x2, bg_y2))
+                else:
+                    # Standard PPE single-line label
+                    (tw, th), baseline = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE, LABEL_THICKNESS)
+                    pad = LABEL_BOX_PADDING
+                    pref_bg_y1 = y1 - th - 2*pad
+                    pref_bg_y2 = y1
+                    pref_bg_x1 = x1
+                    pref_bg_x2 = min(f_w - 1, x1 + tw + 2*pad)
+                    if pref_bg_y1 < 0:
+                        pref_bg_y1 = y1
+                        pref_bg_y2 = y1 + th + 2*pad
+                    bg_y1, bg_y2 = find_free_label_y(pref_bg_x1, pref_bg_x2, pref_bg_y1, pref_bg_y2)
+                    bg_x1, bg_x2 = pref_bg_x1, pref_bg_x2
+                    text_y = bg_y1 + th + pad - 1
+                    cv2.rectangle(pf, (bg_x1, bg_y1), (bg_x2, bg_y2), color_val, -1)
+                    cv2.putText(pf, label_text, (bg_x1 + pad, text_y),
+                                cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE,
+                                (0, 0, 0), LABEL_THICKNESS + 1, cv2.LINE_AA)
+                    cv2.putText(pf, label_text, (bg_x1 + pad, text_y),
+                                cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE,
+                                (255, 255, 255), LABEL_THICKNESS, cv2.LINE_AA)
+                    used_label_slots.append((bg_x1, bg_y1, bg_x2, bg_y2))
             except Exception:
                 pass
 
@@ -1381,9 +1386,9 @@ class DetectorWorker:
 
                         DetectorWorker._draw_boxes(pf, display_boxes)
 
-                        # Draw vehicle speed timing lines & telemetry HUD if vehicle speed model is active
+                        # Draw vehicle speed timing lines & telemetry HUD if vehicle speed or yolov8n model is active
                         active_mods = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
-                        is_speed_model = any("vehicle_speed" in str(mp).lower() or "speed" in str(mp).lower() for mp in active_mods)
+                        is_speed_model = (str(self.cam_id) == "speed" or any("speed" in str(mp).lower() or "vehicle" in str(mp).lower() for mp in active_mods))
                         if is_speed_model:
                             la_y = int(f_h * getattr(self, 'line_a_ratio', 0.40))
                             lb_y = int(f_h * getattr(self, 'line_b_ratio', 0.75))
@@ -1396,23 +1401,25 @@ class DetectorWorker:
                             cv2.line(pf, (int(f_w * 0.05), lb_y), (int(f_w * 0.95), lb_y), (0, 255, 100), 2)
                             cv2.putText(pf, "LINE B (GANTRY ROAD)", (int(f_w * 0.06), lb_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 100), 1, cv2.LINE_AA)
 
-                            # Top-Right Telemetry HUD
-                            hud_w, hud_h = 230, 68
-                            hud_x1, hud_y1 = f_w - hud_w - 10, 10
+                            # Top-Left Telemetry HUD (Matches Terminal Speed Tracker)
+                            hud_w, hud_h = 240, 78
+                            hud_x1, hud_y1 = 12, 12
                             overlay = pf.copy()
-                            cv2.rectangle(overlay, (hud_x1, hud_y1), (f_w - 10, hud_y1 + hud_h), (15, 23, 42), -1)
-                            cv2.addWeighted(overlay, 0.75, pf, 0.25, 0, pf)
-                            cv2.rectangle(pf, (hud_x1, hud_y1), (f_w - 10, hud_y1 + hud_h), (0, 255, 170), 1)
+                            cv2.rectangle(overlay, (hud_x1, hud_y1), (hud_x1 + hud_w, hud_y1 + hud_h), (15, 15, 15), -1)
+                            cv2.addWeighted(overlay, 0.82, pf, 0.18, 0, pf)
+                            cv2.rectangle(pf, (hud_x1, hud_y1), (hud_x1 + hud_w, hud_y1 + hud_h), (60, 60, 60), 1)
 
                             v_counts = getattr(self, 'vehicle_counts', {})
                             trucks = v_counts.get('truck', 0) + v_counts.get('pickup truck', 0)
                             cars = v_counts.get('car', 0)
-                            overspeed_cnt = getattr(self, 'overspeed_count', 0)
+                            tot_cnt = sum(v_counts.values()) if v_counts else 0
                             sp_lim = getattr(self, 'speed_limit_kmh', 10.0)
+                            dist_m = getattr(self, 'road_distance_meters', 20.0)
 
-                            cv2.putText(pf, f"SPEED LIMIT: {sp_lim:.0f} km/h", (hud_x1 + 10, hud_y1 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 170), 1, cv2.LINE_AA)
-                            cv2.putText(pf, f"TRUCKS: {trucks}  CARS: {cars}", (hud_x1 + 10, hud_y1 + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 255, 255), 1, cv2.LINE_AA)
-                            cv2.putText(pf, f"OVER SPEED: {overspeed_cnt}", (hud_x1 + 10, hud_y1 + 58), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 0, 255) if overspeed_cnt > 0 else (180, 180, 180), 1, cv2.LINE_AA)
+                            cv2.putText(pf, "TERMINAL SPEED MONITOR", (hud_x1 + 10, hud_y1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 255, 170), 2, cv2.LINE_AA)
+                            cv2.putText(pf, f"Speed Limit : {sp_lim:.0f} km/h (Gate-Gantry: {dist_m:.0f}m)", (hud_x1 + 10, hud_y1 + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 200, 200), 1, cv2.LINE_AA)
+                            cv2.putText(pf, f"Total Count : {tot_cnt}", (hud_x1 + 10, hud_y1 + 54), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1, cv2.LINE_AA)
+                            cv2.putText(pf, f"  car: {cars}  truck: {trucks}", (hud_x1 + 10, hud_y1 + 70), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 190, 40), 1, cv2.LINE_AA)
 
                         if ffmpeg.poll() is not None:
                             break
