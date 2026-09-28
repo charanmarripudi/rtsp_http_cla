@@ -720,7 +720,11 @@ class DetectorWorker:
                         
                         bw = max(0, x2 - x1)
                         bh = max(0, y2 - y1)
-                        if bw < 5 or bh < 5:
+                        is_veh_cls = any(vk in cls.lower() for vk in ("car", "truck", "bus", "van", "pickup", "tank truck", "vehicle", "bike"))
+                        if is_veh_cls:
+                            if bw < 25 or bh < 20 or (bw * bh) < 600:
+                                continue
+                        elif bw < 10 or bh < 10:
                             continue
                             
                         cx = (x1 + x2) / 2.0

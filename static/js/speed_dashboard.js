@@ -138,15 +138,15 @@ class SpeedDashboard {
                 models = data.models || [];
             }
 
-            // Dedicated Vehicle Speed Tab: Only load and display vehicle_speed.pt
-            let speedModels = models.filter(m => m === "vehicle_speed.pt" || m.toLowerCase().includes("vehicle_speed"));
+            // Dedicated Vehicle Speed Tab: Load vehicle_speed.pt and yolov8n.pt
+            let speedModels = models.filter(m => m === "vehicle_speed.pt" || m === "yolov8n.pt" || m.toLowerCase().includes("vehicle_speed"));
             if (speedModels.length === 0) {
-                speedModels = ["vehicle_speed.pt"];
+                speedModels = ["vehicle_speed.pt", "yolov8n.pt"];
             }
 
             this.availableModels = speedModels;
 
-            // Fetch classes for vehicle_speed.pt
+            // Fetch classes for vehicle models
             await Promise.all(speedModels.map(async (m) => {
                 try {
                     const r = await fetch(`/api/model-classes?model=${encodeURIComponent(m)}`);
@@ -163,10 +163,13 @@ class SpeedDashboard {
             if (!this.modelClassesCache["vehicle_speed.pt"] || this.modelClassesCache["vehicle_speed.pt"].length === 0) {
                 this.modelClassesCache["vehicle_speed.pt"] = ["truck", "car", "pickup truck", "bike", "tank truck", "van", "bus"];
             }
+            if (!this.modelClassesCache["yolov8n.pt"] || this.modelClassesCache["yolov8n.pt"].length === 0) {
+                this.modelClassesCache["yolov8n.pt"] = ["car", "truck", "bus", "motorcycle", "bicycle", "person"];
+            }
 
             this.renderModelCards(speedModels);
 
-            if (countSpan) countSpan.textContent = `vehicle_speed.pt loaded`;
+            if (countSpan) countSpan.textContent = `${speedModels.length} vehicle model(s) ready`;
         } catch (e) {
             console.error("[SPEED-DASH] Error loading models:", e);
             if (countSpan) countSpan.textContent = "Ready";
