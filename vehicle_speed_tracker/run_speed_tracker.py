@@ -72,12 +72,14 @@ def main():
         cfg["model_path"] = args.model
     elif not os.path.exists(cfg.get("model_path", "")):
         candidate_paths = [
+            str(CURR_DIR.parent / "models" / "vehicles.pt"),
+            str(CURR_DIR / "vehicles.pt"),
+            "/home/algo/rtsp_http_cla/models/vehicles.pt",
             str(CURR_DIR.parent / "models" / "vehicle_speed.pt"),
             str(CURR_DIR / "models" / "vehicle_speed.pt"),
             "/home/algo/rtsp_http_cla/models/vehicle_speed.pt",
             str(CURR_DIR.parent / "Vehicle_Detector_Tracking_Counter" / "best.pt"),
-            str(CURR_DIR.parent / "models" / "yolov8n.pt"),
-            "yolov8n.pt"
+            str(CURR_DIR.parent / "models" / "yolov8n.pt")
         ]
         for cp in candidate_paths:
             if os.path.exists(cp):

@@ -131,20 +131,21 @@ class VehicleSpeedTracker:
         model_path = self.config.get("model_path")
         if not model_path or not os.path.exists(model_path):
             candidates = [
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "vehicles.pt")),
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "vehicles.pt")),
                 os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "vehicle_speed.pt")),
                 os.path.abspath(os.path.join(os.path.dirname(__file__), "best.pt")),
-                "models/vehicle_speed.pt",
-                "models/yolov8n.pt",
-                "yolov8n.pt"
+                "models/vehicles.pt",
+                "models/vehicle_speed.pt"
             ]
             for c in candidates:
                 if os.path.exists(c):
                     model_path = c
                     break
-        self.model_path = model_path or "models/vehicle_speed.pt"
+        self.model_path = model_path or "models/vehicles.pt"
         self.speed_limit_kmh = float(config.get("speed_limit_kmh", 10.0))
         self.road_distance_meters = float(config.get("road_distance_meters", 20.0))
-        self.conf_thresh = float(config.get("confidence_threshold", 0.30))
+        self.conf_thresh = float(config.get("confidence_threshold", 0.40))
         self.imgsz = int(config.get("imgsz", 416))
         self.allowed_classes = [c.lower() for c in config.get("allowed_classes", ["truck", "car", "pickup truck", "bike"])]
         self.alerts_dir = config.get("alerts_dir", "alerts")
@@ -190,17 +191,52 @@ class VehicleSpeedTracker:
             verbose=False
         )
 
-        detections = []
+        raw_detections = []
         for r in results:
             if r.boxes is not None:
                 box_data = r.boxes.xyxy.cpu().numpy().astype(int)
                 class_data = r.boxes.cls.cpu().numpy().astype(int)
                 conf_data = r.boxes.conf.cpu().numpy()
                 for i, (x1, y1, x2, y2) in enumerate(box_data):
-                    label = r.names.get(class_data[i], str(class_data[i]))
+                    label = r.names.get(class_data[i], str(class_data[i])).lower()
+                    score = float(conf_data[i])
+                    bw = x2 - x1
+                    bh = y2 - y1
+
+                    # ── FILTER 1: Discard tiny noise (lane dashed markings, dots, pebbles) ──
+                    if bw < 42 or bh < 36 or (bw * bh) < 1800:
+                        continue
+
+                    # ── FILTER 2: Discard roadside reflector posts (tall thin vertical poles on edges) ──
+                    if (bh / max(1, bw)) > 3.0 and (x1 < w * 0.15 or x2 > w * 0.85):
+                        continue
+
                     # Filter allowed vehicle classes
-                    if not self.allowed_classes or any(c in label.lower() for c in self.allowed_classes):
-                        detections.append((x1, y1, x2, y2, label, float(conf_data[i])))
+                    if not self.allowed_classes or any(c in label for c in self.allowed_classes):
+                        raw_detections.append((x1, y1, x2, y2, label, score))
+
+        # ── FILTER 3: Suppress nested sub-boxes (e.g. helmet inside bike, passenger inside car) ──
+        detections = []
+        for d in raw_detections:
+            dx1, dy1, dx2, dy2, dlbl, dscore = d
+            d_area = (dx2 - dx1) * (dy2 - dy1)
+            is_nested_sub_box = False
+            for od in raw_detections:
+                if od == d:
+                    continue
+                ox1, oy1, ox2, oy2, olbl, oscore = od
+                o_area = (ox2 - ox1) * (oy2 - oy1)
+                if o_area > d_area:
+                    # Check overlap containment
+                    ix1, iy1 = max(dx1, ox1), max(dy1, oy1)
+                    ix2, iy2 = min(dx2, ox2), min(dy2, oy2)
+                    if ix1 < ix2 and iy1 < iy2:
+                        inter_area = (ix2 - ix1) * (iy2 - iy1)
+                        if (inter_area / float(d_area)) > 0.60:
+                            is_nested_sub_box = True
+                            break
+            if not is_nested_sub_box:
+                detections.append(d)
 
         # 2. Update Fast Centroid Tracker
         tracked_objects = self.tracker.update(detections, now_t)
@@ -271,7 +307,7 @@ class VehicleSpeedTracker:
                                 "timestamp": datetime.now().isoformat()
                             })
                     else:
-                        print(f"✅ [SPEED-NORMAL] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h)")
+                        print(f"✓ [SPEED-NORMAL] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h)")
 
         # 4. Render Visual Overlay with BBoxes, Vehicle Type, ID, and Speed HUD
         annotated_frame = self._draw_annotations(frame, tracked_objects, la_start, la_end, lb_start, lb_end, now_t)
@@ -328,41 +364,42 @@ class VehicleSpeedTracker:
             is_violation = trk.get("is_speed_violation", False)
             t_a = trk.get("time_line_a")
 
-            if is_violation:
-                box_color = (0, 0, 255)       # Red for Over Speed
-                status_text = f"🚨 SPEED: {speed:.1f} km/h (LIMIT: {self.speed_limit_kmh:.0f})"
+            if is_violation or (speed is not None and speed > self.speed_limit_kmh):
+                box_color = (0, 0, 255)       # Pure Red for Over Speed
+                status_text = f"OVER SPEED: {speed:.1f} km/h (LIMIT: {self.speed_limit_kmh:.0f})"
                 bg_color = (0, 0, 220)
                 text_color = (255, 255, 255)
             elif speed is not None:
                 box_color = (0, 230, 100)     # Green for Normal Speed
-                status_text = f"✓ SPEED: {speed:.1f} km/h"
+                status_text = f"SPEED: {speed:.1f} km/h"
                 bg_color = (0, 160, 60)
                 text_color = (255, 255, 255)
             elif t_a is not None:
-                # Vehicle is currently between Line A and Line B — compute real-time live speed
+                # Vehicle is currently traveling between Line A and Line B
                 line_dist_y = max(20, lb_start[1] - la_start[1])
                 y_prog = max(0.05, min(1.0, (y2 - la_start[1]) / float(line_dist_y)))
                 dt = max(0.05, now_t - t_a)
                 live_est = max(2.0, min(140.0, ((self.road_distance_meters * y_prog) / dt) * 3.6))
                 
+                # If vehicle is exceeding speed limit while in between lines, turn RED immediately!
                 if live_est > self.speed_limit_kmh:
-                    box_color = (0, 120, 255)  # Orange for fast moving vehicle
-                    status_text = f"⚡ SPEED: ~{live_est:.1f} km/h"
-                    bg_color = (0, 90, 200)
+                    box_color = (0, 0, 255)   # RED for Over Speed
+                    status_text = f"OVER SPEED: ~{live_est:.1f} km/h (LIMIT: {self.speed_limit_kmh:.0f})"
+                    bg_color = (0, 0, 220)
+                    text_color = (255, 255, 255)
                 else:
-                    box_color = (0, 220, 255)  # Cyan for normal tracking
-                    status_text = f"⚡ SPEED: ~{live_est:.1f} km/h"
-                    bg_color = (0, 140, 180)
-                text_color = (255, 255, 255)
+                    box_color = (0, 230, 100) # Green for compliant speed
+                    status_text = f"SPEED: ~{live_est:.1f} km/h"
+                    bg_color = (0, 160, 60)
+                    text_color = (255, 255, 255)
             else:
                 box_color = CLASS_COLORS.get(label.lower(), (255, 180, 0))
                 status_text = "APPROACHING LINE A"
                 bg_color = (30, 30, 30)
                 text_color = (200, 200, 200)
 
-            # Draw bounding box + tyre contact point
+            # Draw bounding box (clean without dot artifacts)
             cv2.rectangle(out, (x1, y1), (x2, y2), box_color, 2)
-            cv2.circle(out, ((x1 + x2) // 2, y2), 5, (0, 0, 255), -1)
 
             # Label banner above bounding box
             header = f"{label.upper()} #{track_id} ({conf:.0%})"
@@ -394,6 +431,6 @@ class VehicleSpeedTracker:
 
         for idx, (lbl, count) in enumerate(self.counts.items()):
             col = CLASS_COLORS.get(lbl.lower(), (255, 255, 255))
-            cv2.putText(out, f"  • {lbl}: {count}", (25, 94 + idx * 22), cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1, cv2.LINE_AA)
+            cv2.putText(out, f"  - {lbl}: {count}", (25, 94 + idx * 22), cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1, cv2.LINE_AA)
 
         return out
