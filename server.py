@@ -2377,46 +2377,48 @@ async def upload_speed_video(request: Request):
 
 @app.post("/api/speed/start")
 def start_speed_tracker(d: dict = Body(...)):
-    """Direct start for Vehicle Speed Tracking on a camera, custom RTSP, or test video file."""
-    cid = str(d.get("camera", "0"))
-    loc = d.get("location", f"Location {int(cid)+1 if cid.isdigit() else cid}")
-    source_type = d.get("source_type", "camera")
+    """Direct start for Vehicle Speed Tracking on a custom RTSP or test video file."""
+    cid = "speed"
+    loc = d.get("location", "Vehicle Speed Monitor")
+    source_type = d.get("source_type", "rtsp")
     rtsp = str(d.get("rtsp", "")).strip()
     video_path = str(d.get("video_path", "")).strip()
 
     if source_type == "video" and video_path:
         rtsp = video_path
-    elif source_type == "rtsp" and rtsp:
-        pass
-    else:
-        if not rtsp:
-            urls = read_streams_conf()
-            if cid.isdigit() and int(cid) < len(urls):
-                rtsp = urls[int(cid)]
 
     if not rtsp:
-        return {"status": "error", "message": "No stream URL or video file provided"}
+        return {"status": "error", "message": "No RTSP stream URL or video file provided"}
 
-    # Assign vehicle_speed.pt model with optimized imgsz=384 for low CPU
+    models = d.get("models")
+    if not models or not isinstance(models, list):
+        models = ["vehicle_speed.pt"]
+
+    conf = float(d.get("conf", 0.25))
+    iou = float(d.get("iou", 0.45))
+    model_configs = d.get("model_configs") or {}
+    for m in models:
+        norm_m = m if m.endswith(".pt") else f"{m}.pt"
+        if norm_m not in model_configs:
+            model_configs[norm_m] = {
+                "enabled_classes": ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle", "van", "bus"],
+                "imgsz": 320
+            }
+
     return start_detection({
         "camera": cid,
-        "models": ["vehicle_speed.pt"],
+        "models": models,
         "rtsp": rtsp,
         "location": loc,
-        "conf": 0.25,
-        "iou": 0.45,
-        "model_configs": {
-            "vehicle_speed.pt": {
-                "enabled_classes": ["truck", "car", "pickup truck", "bike"],
-                "imgsz": 384
-            }
-        }
+        "conf": conf,
+        "iou": iou,
+        "model_configs": model_configs
     })
 
 @app.post("/api/speed/stop")
-def stop_speed_tracker(d: dict = Body(...)):
+def stop_speed_tracker(d: dict = Body(None)):
     """Direct one-click stop for Vehicle Speed Tracking."""
-    return stop_detection(d)
+    return stop_detection({"camera": "speed"})
 
 @app.get("/api/locations")
 async def get_locations(

@@ -6,12 +6,13 @@
 
 class SpeedDashboard {
     constructor() {
-        this.activeCameraId = "0";
+        this.activeCameraId = "speed";
         this.sourceType = "rtsp"; // "rtsp", "video"
         this.uploadedVideoPath = "";
         this.pollInterval = null;
         this.hlsPlayer = null;
         this.initialized = false;
+        this.availableModels = [];
     }
 
     init() {
@@ -19,132 +20,68 @@ class SpeedDashboard {
         this.initialized = true;
 
         this.bindEvents();
+        this.loadModels();
         this.loadConfig();
         this.startPolling();
         this.setSourceType("rtsp");
     }
 
-    setSourceType(type) {
-        this.sourceType = type;
-
-        const btnRtsp = document.getElementById("speed-src-tab-rtsp");
-        const btnVideo = document.getElementById("speed-src-tab-video");
-
-        const boxRtsp = document.getElementById("speed-src-container-rtsp");
-        const boxVideo = document.getElementById("speed-src-container-video");
-
-        if (btnRtsp) {
-            btnRtsp.style.background = type === "rtsp" ? "rgba(56,189,248,0.15)" : "transparent";
-            btnRtsp.style.borderColor = type === "rtsp" ? "#38bdf8" : "var(--border)";
-            btnRtsp.style.color = type === "rtsp" ? "#38bdf8" : "var(--muted)";
-        }
-        if (btnVideo) {
-            btnVideo.style.background = type === "video" ? "rgba(56,189,248,0.15)" : "transparent";
-            btnVideo.style.borderColor = type === "video" ? "#38bdf8" : "var(--border)";
-            btnVideo.style.color = type === "video" ? "#38bdf8" : "var(--muted)";
-        }
-
-        if (boxRtsp) boxRtsp.style.display = type === "rtsp" ? "flex" : "none";
-        if (boxVideo) boxVideo.style.display = type === "video" ? "flex" : "none";
-    }
-
-    bindEvents() {
-        const camSelect = document.getElementById("speed-cam-select");
-        if (camSelect) {
-            camSelect.addEventListener("change", (e) => {
-                this.activeCameraId = e.target.value;
-                this.updatePlayerSource();
-            });
-        }
-
-        const fileInput = document.getElementById("speed-video-file-input");
-        if (fileInput) {
-            fileInput.addEventListener("change", (e) => this.handleFileUpload(e));
-        }
-
-        const startBtn = document.getElementById("speed-start-btn");
-        if (startBtn) {
-            startBtn.addEventListener("click", () => this.startMonitoring());
-        }
-
-        const stopBtn = document.getElementById("speed-stop-btn");
-        if (stopBtn) {
-            stopBtn.addEventListener("click", () => this.stopMonitoring());
-        }
-
-        const saveCfgBtn = document.getElementById("speed-save-cfg-btn");
-        if (saveCfgBtn) {
-            saveCfgBtn.addEventListener("click", () => this.saveConfig());
-        }
-    }
-
-    async handleFileUpload(e) {
-        const file = e.target.files && e.target.files[0];
-        if (!file) return;
-
-        const nameSpan = document.getElementById("speed-upload-filename");
-        const statusSpan = document.getElementById("speed-monitor-status");
-
-        if (nameSpan) nameSpan.textContent = `Uploading ${file.name}...`;
-
-        const formData = new FormData();
-        formData.append("file", file);
+    async loadModels() {
+        const container = document.getElementById("speed-models-checkboxes");
+        const countSpan = document.getElementById("speed-models-count");
+        if (!container) return;
 
         try {
-            const res = await fetch("/api/speed/upload", {
-                method: "POST",
-                body: formData
-            });
-            const data = await res.json();
-            if (res.ok && data.status === "ok") {
-                this.uploadedVideoPath = data.filepath;
-                if (nameSpan) {
-                    nameSpan.textContent = `✓ ${data.filename} (${(file.size / (1024*1024)).toFixed(1)} MB)`;
-                    nameSpan.style.color = "#00ffaa";
-                }
-                const serverInput = document.getElementById("speed-server-video-input");
-                if (serverInput) serverInput.value = data.filepath;
-            } else {
-                if (nameSpan) {
-                    nameSpan.textContent = "Upload failed";
-                    nameSpan.style.color = "#ff4444";
-                }
-            }
-        } catch (err) {
-            if (nameSpan) {
-                nameSpan.textContent = `Error: ${err.message}`;
-                nameSpan.style.color = "#ff4444";
-            }
-        }
-    }
-
-    async loadCameras() {
-        try {
-            const res = await fetch("/api/streams");
+            const res = await fetch("/api/models");
             if (!res.ok) return;
-            const streams = await res.json();
-            const select = document.getElementById("speed-cam-select");
-            if (!select) return;
+            const data = await res.json();
+            const models = data.models || ["vehicle_speed.pt", "yolov8n.pt"];
+            this.availableModels = models;
 
-            select.innerHTML = "";
-            (streams || []).forEach((s, idx) => {
-                const cid = String(s.id !== undefined ? s.id : idx);
-                const opt = document.createElement("option");
-                opt.value = cid;
-                opt.textContent = s.label || s.location || `Camera ${idx + 1}`;
-                select.appendChild(opt);
+            container.innerHTML = "";
+            models.forEach(m => {
+                const normName = m.replace(".pt", "");
+                const isDefault = normName.includes("speed") || normName.includes("vehicle") || models.length === 1;
+
+                const card = document.createElement("label");
+                card.style.cssText = `
+                    display: inline-flex; align-items: center; gap: 6px;
+                    background: rgba(0,0,0,0.4); border: 1px solid ${isDefault ? '#38bdf8' : 'var(--border)'};
+                    padding: 4px 10px; border-radius: 6px; cursor: pointer; user-select: none;
+                    font-family: var(--mono); font-size: 0.72rem; transition: all 0.2s ease;
+                `;
+
+                const chk = document.createElement("input");
+                chk.type = "checkbox";
+                chk.className = "speed-model-checkbox";
+                chk.value = m;
+                chk.checked = isDefault;
+                chk.style.cursor = "pointer";
+
+                chk.addEventListener("change", () => {
+                    card.style.borderColor = chk.checked ? "#38bdf8" : "var(--border)";
+                    card.style.background = chk.checked ? "rgba(56,189,248,0.12)" : "rgba(0,0,0,0.4)";
+                });
+
+                if (isDefault) {
+                    card.style.background = "rgba(56,189,248,0.12)";
+                }
+
+                const nameText = document.createElement("span");
+                nameText.textContent = m;
+                nameText.style.color = isDefault ? "#00ffaa" : "var(--text)";
+
+                card.appendChild(chk);
+                card.appendChild(nameText);
+                container.appendChild(card);
             });
 
-            if (streams.length > 0) {
-                this.activeCameraId = String(streams[0].id !== undefined ? streams[0].id : 0);
-                this.updatePlayerSource();
-            }
+            if (countSpan) countSpan.textContent = `${models.length} available model(s)`;
         } catch (e) {
-            console.error("[SPEED-DASH] Error loading cameras:", e);
+            console.error("[SPEED-DASH] Error loading models:", e);
+            if (countSpan) countSpan.textContent = "Using default vehicle_speed.pt";
         }
     }
-
-    async loadConfig() {
         try {
             const res = await fetch("/api/speed/config");
             if (!res.ok) return;
@@ -211,16 +148,17 @@ class SpeedDashboard {
     }
 
     async startMonitoring() {
-        const camSelect = document.getElementById("speed-cam-select");
-        const cid = camSelect ? camSelect.value : this.activeCameraId;
         const statusSpan = document.getElementById("speed-monitor-status");
+        const checkedBoxes = document.querySelectorAll(".speed-model-checkbox:checked");
+        const selectedModels = Array.from(checkedBoxes).map(cb => cb.value);
 
         const payload = {
-            camera: cid,
-            source_type: this.sourceType
+            camera: "speed",
+            source_type: this.sourceType,
+            models: selectedModels.length > 0 ? selectedModels : ["vehicle_speed.pt"]
         };
 
-        console.log(`[SPEED-DASH] Starting Speed Monitor (Source: ${this.sourceType}, Cam: ${cid})...`);
+        console.log(`[SPEED-DASH] Starting Speed Monitor (Source: ${this.sourceType}, Models: ${payload.models.join(',')})...`);
 
         if (this.sourceType === "rtsp") {
             const rtspInput = document.getElementById("speed-custom-rtsp-input");
@@ -279,8 +217,6 @@ class SpeedDashboard {
     }
 
     async stopMonitoring() {
-        const camSelect = document.getElementById("speed-cam-select");
-        const cid = camSelect ? camSelect.value : this.activeCameraId;
         const statusSpan = document.getElementById("speed-monitor-status");
 
         try {
@@ -288,7 +224,7 @@ class SpeedDashboard {
             const res = await fetch("/api/speed/stop", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ camera: cid })
+                body: JSON.stringify({ camera: "speed" })
             });
             const data = await res.json();
             console.log("[SPEED-DASH] Stop response:", data);
@@ -297,20 +233,15 @@ class SpeedDashboard {
                     statusSpan.textContent = "○ Speed Monitor Stopped";
                     statusSpan.style.color = "var(--muted)";
                 }
-                if (this.sourceType !== "camera") {
-                    // Cleanly stop player for custom RTSP or test video file
-                    if (this.hlsPlayer) {
-                        this.hlsPlayer.destroy();
-                        this.hlsPlayer = null;
-                    }
-                    const video = document.getElementById("speed-video-player");
-                    if (video) {
-                        video.pause();
-                        video.removeAttribute("src");
-                        video.load();
-                    }
-                } else {
-                    setTimeout(() => this.updatePlayerSource(), 800);
+                if (this.hlsPlayer) {
+                    this.hlsPlayer.destroy();
+                    this.hlsPlayer = null;
+                }
+                const video = document.getElementById("speed-video-player");
+                if (video) {
+                    video.pause();
+                    video.removeAttribute("src");
+                    video.load();
                 }
             }
         } catch (e) {
@@ -322,11 +253,9 @@ class SpeedDashboard {
         const video = document.getElementById("speed-video-player");
         if (!video) return;
 
-        const cid = this.activeCameraId || "0";
-        const streamUrl = `/hls/camera/${cid}/playlist.m3u8?t=${Date.now()}`;
+        const streamUrl = `/hls/camera/speed/playlist.m3u8?t=${Date.now()}`;
 
-        if (this.sourceType !== "camera" && !forcePlay) {
-            // For custom RTSP/video, only load stream if active
+        if (!forcePlay) {
             const statusSpan = document.getElementById("speed-monitor-status");
             const isRunning = statusSpan && statusSpan.textContent.includes("Running");
             if (!isRunning) return;

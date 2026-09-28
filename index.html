@@ -1577,6 +1577,15 @@
             </div>
           </div>
 
+          <!-- Assigned AI Detection Models -->
+          <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 0.68rem; font-weight: 600; color: #38bdf8; letter-spacing: 0.5px;">🤖 ASSIGNED AI DETECTION MODELS</span>
+              <span id="speed-models-count" style="font-size: 0.68rem; color: var(--muted);">Select models to run</span>
+            </div>
+            <div id="speed-models-checkboxes" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 28px;"></div>
+          </div>
+
           <!-- Video Player Box -->
           <div style="background: #000; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; position: relative; min-height: 380px; display: flex; align-items: center; justify-content: center;">
             <video id="speed-video-player" playsinline muted autoplay style="width: 100%; height: 100%; object-fit: contain; display: block; max-height: 480px;"></video>
@@ -1693,7 +1702,7 @@
   <script src="/static/js/detection.js?v=7.0"></script>
   <script src="/static/js/location_dashboard.js?v=6.0"></script>
   <script src="/static/js/ptz_controller.js?v=5.0_dynamic"></script>
-  <script src="/static/js/speed_dashboard.js?v=4.0"></script>
+  <script src="/static/js/speed_dashboard.js?v=5.0"></script>
 
   <script>
     var streamsArray = [];
