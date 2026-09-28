@@ -137,23 +137,17 @@ class SpeedDashboard {
                 const data = await res.json();
                 models = data.models || [];
             }
-            if (models.length === 0) {
-                models = ["vehicle_speed.pt", "yolov8n.pt"];
+
+            // Dedicated Vehicle Speed Tab: Only load and display vehicle_speed.pt
+            let speedModels = models.filter(m => m === "vehicle_speed.pt" || m.toLowerCase().includes("vehicle_speed"));
+            if (speedModels.length === 0) {
+                speedModels = ["vehicle_speed.pt"];
             }
 
-            // Always prioritize speed/vehicle models first
-            models.sort((a, b) => {
-                const aSpeed = a.includes("speed") || a.includes("vehicle");
-                const bSpeed = b.includes("speed") || b.includes("vehicle");
-                if (aSpeed && !bSpeed) return -1;
-                if (!aSpeed && bSpeed) return 1;
-                return a.localeCompare(b);
-            });
+            this.availableModels = speedModels;
 
-            this.availableModels = models;
-
-            // Fetch classes for all models in parallel
-            await Promise.all(models.map(async (m) => {
+            // Fetch classes for vehicle_speed.pt
+            await Promise.all(speedModels.map(async (m) => {
                 try {
                     const r = await fetch(`/api/model-classes?model=${encodeURIComponent(m)}`);
                     if (r.ok) {
@@ -170,9 +164,9 @@ class SpeedDashboard {
                 this.modelClassesCache["vehicle_speed.pt"] = ["truck", "car", "pickup truck", "bike", "tank truck", "van", "bus"];
             }
 
-            this.renderModelCards(models);
+            this.renderModelCards(speedModels);
 
-            if (countSpan) countSpan.textContent = `${models.length} model(s) ready`;
+            if (countSpan) countSpan.textContent = `vehicle_speed.pt loaded`;
         } catch (e) {
             console.error("[SPEED-DASH] Error loading models:", e);
             if (countSpan) countSpan.textContent = "Ready";
