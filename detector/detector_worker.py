@@ -1,10 +1,10 @@
 import os
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["TORCH_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
+os.environ["NUMEXPR_NUM_THREADS"] = "2"
+os.environ["TORCH_NUM_THREADS"] = "2"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
 
@@ -39,10 +39,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Low-CPU single thread for PyTorch on Pi 4 CPU to prevent thermal heating
+# Optimize PyTorch CPU threading to 2 dedicated cores on Raspberry Pi 4 CPU
 try:
     import torch
-    torch.set_num_threads(1)
+    torch.set_num_threads(2)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
 except Exception:
@@ -78,7 +78,7 @@ NMS_OPP_IO_MIN_THRESH = 0.30
 PREDICT_CONF_FLOOR = 0.10   # raised from 0.06 → fewer ghost boxes fed into NMS
 
 # Scheduler inter-camera sleep (seconds). Allows CPU cooldown and prevents thermal throttling.
-SCHEDULER_SLEEP_S = 0.15
+SCHEDULER_SLEEP_S = 0.06
 
 # Label rendering
 LABEL_FONT_SCALE   = 0.55
