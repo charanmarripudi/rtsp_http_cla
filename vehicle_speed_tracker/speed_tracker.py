@@ -239,14 +239,12 @@ class VehicleSpeedTracker:
                         trk["is_speed_violation"] = True
                         print(f"\n🚨 [SPEED-VIOLATION] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h, Δt: {delta_t:.2f}s)!")
                         
-                        # Save violation snapshot
+                        # Prepare alert record (snapshot saved below after annotation)
                         if not trk["alert_recorded"]:
                             trk["alert_recorded"] = True
                             snap_name = f"speed_violation_id{track_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{int(speed_kmh)}kmh.jpg"
                             snap_path = os.path.join(self.alerts_dir, snap_name)
-                            cv2.imwrite(snap_path, frame)
-                            print(f"[ALERT-SAVED] Saved speed violation snapshot: {snap_path}")
-
+                            
                             # Optional Hook: Run FastANPR to read license plate
                             if self.config.get("enable_anpr_hook", False):
                                 plate_crop = frame[max(0, y1):min(h, y2), max(0, x1):min(w, x2)]
@@ -262,8 +260,19 @@ class VehicleSpeedTracker:
                     else:
                         print(f"✅ [SPEED-NORMAL] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h)")
 
-        # 4. Render Visual Overlay
+        # 4. Render Visual Overlay with BBoxes, Vehicle Type, ID, and Speed HUD
         annotated_frame = self._draw_annotations(frame, tracked_objects, la_start, la_end, lb_start, lb_end)
+
+        # 5. Save violation snapshot images WITH burned-in bboxes, vehicle type, ID, and speed
+        for v in violations_this_frame:
+            snap_path = v.get("snapshot")
+            if snap_path:
+                try:
+                    cv2.imwrite(snap_path, annotated_frame)
+                    print(f"[ALERT-SAVED] Saved speed violation annotated snapshot: {snap_path}")
+                except Exception as ex:
+                    print(f"[ERROR] Failed saving alert image: {ex}")
+
         return annotated_frame, violations_this_frame
 
     def extract_license_plate_hook(self, cropped_vehicle: np.ndarray) -> Optional[str]:
@@ -306,31 +315,41 @@ class VehicleSpeedTracker:
 
             if is_violation:
                 box_color = (0, 0, 255)       # Red for Over Speed
-                status_text = f"OVER SPEED: {speed:.1f} km/h"
+                status_text = f"🚨 SPEED: {speed:.1f} km/h (LIMIT: {self.speed_limit_kmh:.0f})"
+                bg_color = (0, 0, 220)
+                text_color = (255, 255, 255)
             elif speed is not None:
-                box_color = (0, 255, 100)     # Green for Normal Speed
-                status_text = f"SPEED: {speed:.1f} km/h"
+                box_color = (0, 230, 100)     # Green for Normal Speed
+                status_text = f"✓ SPEED: {speed:.1f} km/h"
+                bg_color = (0, 160, 60)
+                text_color = (255, 255, 255)
             else:
                 box_color = CLASS_COLORS.get(label.lower(), (255, 180, 0))
                 status_text = "CALCULATING..."
+                bg_color = (30, 30, 30)
+                text_color = (220, 220, 220)
 
             # Draw bounding box + tyre contact point
             cv2.rectangle(out, (x1, y1), (x2, y2), box_color, 2)
             cv2.circle(out, ((x1 + x2) // 2, y2), 5, (0, 0, 255), -1)
 
-            # Label banner
+            # Label banner above bounding box
             header = f"{label.upper()} #{track_id} ({conf:.0%})"
             sub = f"{status_text}"
             
-            (tw1, th1), _ = cv2.getTextSize(header, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 2)
-            (tw2, th2), _ = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 2)
-            max_w = max(tw1, tw2) + 12
+            (tw1, th1), _ = cv2.getTextSize(header, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 2)
+            (tw2, th2), _ = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 2)
+            max_w = max(tw1, tw2) + 16
 
             bg_y1 = max(0, y1 - 42)
             bg_y2 = y1
-            cv2.rectangle(out, (x1, bg_y1), (x1 + max_w, bg_y2), box_color, -1)
-            cv2.putText(out, header, (x1 + 6, bg_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
-            cv2.putText(out, sub, (x1 + 6, bg_y1 + 34), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.rectangle(out, (x1, bg_y1), (x1 + max_w, bg_y2), bg_color, -1)
+            cv2.rectangle(out, (x1, bg_y1), (x1 + max_w, bg_y2), box_color, 1)
+
+            # Header text (Vehicle Class + ID + Confidence)
+            cv2.putText(out, header, (x1 + 6, bg_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+            # Sub text (Measured Speed)
+            cv2.putText(out, sub, (x1 + 6, bg_y1 + 34), cv2.FONT_HERSHEY_SIMPLEX, 0.46, text_color, 2, cv2.LINE_AA)
 
         # 3. Top Info Panel (Total Count & Speed Limit Indicator)
         panel_w = 280
