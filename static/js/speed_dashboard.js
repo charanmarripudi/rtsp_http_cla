@@ -1,11 +1,14 @@
 /**
  * Plug-and-Play Vehicle Speed & Count Dashboard Module
  * Dedicated Tab for Real-Time Tank Truck Speed Enforcement & Telemetry
+ * Supports: Location Cameras, Custom RTSP URLs, and Uploaded/Local Test Videos
  */
 
 class SpeedDashboard {
     constructor() {
         this.activeCameraId = "0";
+        this.sourceType = "camera"; // "camera", "rtsp", "video"
+        this.uploadedVideoPath = "";
         this.pollInterval = null;
         this.hlsPlayer = null;
         this.initialized = false;
@@ -21,6 +24,38 @@ class SpeedDashboard {
         this.startPolling();
     }
 
+    setSourceType(type) {
+        this.sourceType = type;
+
+        const btnCam = document.getElementById("speed-src-tab-cam");
+        const btnRtsp = document.getElementById("speed-src-tab-rtsp");
+        const btnVideo = document.getElementById("speed-src-tab-video");
+
+        const boxCam = document.getElementById("speed-src-container-cam");
+        const boxRtsp = document.getElementById("speed-src-container-rtsp");
+        const boxVideo = document.getElementById("speed-src-container-video");
+
+        if (btnCam) {
+            btnCam.style.background = type === "camera" ? "rgba(56,189,248,0.15)" : "transparent";
+            btnCam.style.borderColor = type === "camera" ? "#38bdf8" : "var(--border)";
+            btnCam.style.color = type === "camera" ? "#38bdf8" : "var(--muted)";
+        }
+        if (btnRtsp) {
+            btnRtsp.style.background = type === "rtsp" ? "rgba(56,189,248,0.15)" : "transparent";
+            btnRtsp.style.borderColor = type === "rtsp" ? "#38bdf8" : "var(--border)";
+            btnRtsp.style.color = type === "rtsp" ? "#38bdf8" : "var(--muted)";
+        }
+        if (btnVideo) {
+            btnVideo.style.background = type === "video" ? "rgba(56,189,248,0.15)" : "transparent";
+            btnVideo.style.borderColor = type === "video" ? "#38bdf8" : "var(--border)";
+            btnVideo.style.color = type === "video" ? "#38bdf8" : "var(--muted)";
+        }
+
+        if (boxCam) boxCam.style.display = type === "camera" ? "flex" : "none";
+        if (boxRtsp) boxRtsp.style.display = type === "rtsp" ? "flex" : "none";
+        if (boxVideo) boxVideo.style.display = type === "video" ? "flex" : "none";
+    }
+
     bindEvents() {
         const camSelect = document.getElementById("speed-cam-select");
         if (camSelect) {
@@ -28,6 +63,11 @@ class SpeedDashboard {
                 this.activeCameraId = e.target.value;
                 this.updatePlayerSource();
             });
+        }
+
+        const fileInput = document.getElementById("speed-video-file-input");
+        if (fileInput) {
+            fileInput.addEventListener("change", (e) => this.handleFileUpload(e));
         }
 
         const startBtn = document.getElementById("speed-start-btn");
@@ -43,6 +83,46 @@ class SpeedDashboard {
         const saveCfgBtn = document.getElementById("speed-save-cfg-btn");
         if (saveCfgBtn) {
             saveCfgBtn.addEventListener("click", () => this.saveConfig());
+        }
+    }
+
+    async handleFileUpload(e) {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+
+        const nameSpan = document.getElementById("speed-upload-filename");
+        const statusSpan = document.getElementById("speed-monitor-status");
+
+        if (nameSpan) nameSpan.textContent = `Uploading ${file.name}...`;
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+            const res = await fetch("/api/speed/upload", {
+                method: "POST",
+                body: formData
+            });
+            const data = await res.json();
+            if (res.ok && data.status === "ok") {
+                this.uploadedVideoPath = data.filepath;
+                if (nameSpan) {
+                    nameSpan.textContent = `✓ ${data.filename} (${(file.size / (1024*1024)).toFixed(1)} MB)`;
+                    nameSpan.style.color = "#00ffaa";
+                }
+                const serverInput = document.getElementById("speed-server-video-input");
+                if (serverInput) serverInput.value = data.filepath;
+            } else {
+                if (nameSpan) {
+                    nameSpan.textContent = "Upload failed";
+                    nameSpan.style.color = "#ff4444";
+                }
+            }
+        } catch (err) {
+            if (nameSpan) {
+                nameSpan.textContent = `Error: ${err.message}`;
+                nameSpan.style.color = "#ff4444";
+            }
         }
     }
 
@@ -143,12 +223,43 @@ class SpeedDashboard {
         const cid = camSelect ? camSelect.value : this.activeCameraId;
         const statusSpan = document.getElementById("speed-monitor-status");
 
+        const payload = {
+            camera: cid,
+            source_type: this.sourceType
+        };
+
+        if (this.sourceType === "rtsp") {
+            const rtspInput = document.getElementById("speed-custom-rtsp-input");
+            payload.rtsp = rtspInput ? rtspInput.value.trim() : "";
+            if (!payload.rtsp) {
+                if (statusSpan) {
+                    statusSpan.textContent = "Please enter an RTSP URL";
+                    statusSpan.style.color = "#ff4444";
+                }
+                return;
+            }
+        } else if (this.sourceType === "video") {
+            const serverInput = document.getElementById("speed-server-video-input");
+            const manualPath = serverInput ? serverInput.value.trim() : "";
+            payload.video_path = manualPath || this.uploadedVideoPath;
+            if (!payload.video_path) {
+                if (statusSpan) {
+                    statusSpan.textContent = "Please upload or specify a video file";
+                    statusSpan.style.color = "#ff4444";
+                }
+                return;
+            }
+        }
+
         try {
-            if (statusSpan) statusSpan.textContent = "Starting AI Speed Tracker...";
+            if (statusSpan) {
+                statusSpan.textContent = "Starting AI Speed Tracker...";
+                statusSpan.style.color = "#38bdf8";
+            }
             const res = await fetch("/api/speed/start", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ camera: cid })
+                body: JSON.stringify(payload)
             });
             const data = await res.json();
             if (res.ok && data.status === "started") {

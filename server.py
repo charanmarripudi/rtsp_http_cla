@@ -2315,18 +2315,39 @@ def get_speed_violations(limit: int = 50):
             pass
     return {"violations": violations[:limit]}
 
+@app.post("/api/speed/upload")
+async def upload_speed_video(file: UploadFile = File(...)):
+    """Uploads a test video file for Vehicle Speed Tracking."""
+    upload_dir = os.path.join(BASE_DIR, "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    clean_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', file.filename)
+    dest_path = os.path.join(upload_dir, f"speed_{int(time.time())}_{clean_name}")
+    with open(dest_path, "wb") as buffer:
+        import shutil
+        shutil.copyfileobj(file.file, buffer)
+    return {"status": "ok", "filename": clean_name, "filepath": dest_path}
+
 @app.post("/api/speed/start")
 def start_speed_tracker(d: dict = Body(...)):
-    """Direct one-click start for Vehicle Speed & Count Tracking on a camera."""
+    """Direct start for Vehicle Speed Tracking on a camera, custom RTSP, or test video file."""
     cid = str(d.get("camera", "0"))
     loc = d.get("location", f"Location {int(cid)+1 if cid.isdigit() else cid}")
-    rtsp = d.get("rtsp", "")
+    source_type = d.get("source_type", "camera")
+    rtsp = str(d.get("rtsp", "")).strip()
+    video_path = str(d.get("video_path", "")).strip()
+
+    if source_type == "video" and video_path:
+        rtsp = video_path
+    elif source_type == "rtsp" and rtsp:
+        pass
+    else:
+        if not rtsp:
+            urls = read_streams_conf()
+            if cid.isdigit() and int(cid) < len(urls):
+                rtsp = urls[int(cid)]
+
     if not rtsp:
-        urls = read_streams_conf()
-        if cid.isdigit() and int(cid) < len(urls):
-            rtsp = urls[int(cid)]
-    if not rtsp:
-        return {"status": "error", "message": "No RTSP stream URL configured for this camera"}
+        return {"status": "error", "message": "No stream URL or video file provided"}
 
     # Assign vehicle_speed.pt model with optimized imgsz=384 for low CPU
     return start_detection({

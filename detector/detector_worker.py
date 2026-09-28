@@ -1119,10 +1119,16 @@ class DetectorWorker:
 
     def _capture_thread(self, cap, cap_stop_evt):
         consecutive_fails = 0
+        is_local_file = os.path.isfile(str(self.rtsp_url)) or not str(self.rtsp_url).lower().startswith("rtsp")
         while not self._stop_event.is_set() and not cap_stop_evt.is_set():
             try:
                 ret, f = cap.read()
                 if not ret or f is None:
+                    if is_local_file:
+                        # Auto-loop video file from beginning
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        time.sleep(0.03)
+                        continue
                     consecutive_fails += 1
                     time.sleep(0.02)
                     if consecutive_fails > 150:
