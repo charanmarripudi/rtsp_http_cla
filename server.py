@@ -1162,6 +1162,9 @@ async def update_thresholds(req: Request):
 def get_models(): return {"models": [f for f in os.listdir(MODEL_DIR) if f.endswith(".pt")]} if os.path.exists(MODEL_DIR) else {"models": []}
 
 MODEL_CLASSES_CACHE = {
+    "vehicles.pt": [
+        "car", "bike", "truck", "pickup truck"
+    ],
     "vehicle_speed.pt": [
         "truck", "car", "pickup truck", "bike", "tank truck", "van", "bus"
     ],

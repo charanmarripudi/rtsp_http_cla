@@ -138,10 +138,10 @@ class SpeedDashboard {
                 models = data.models || [];
             }
 
-            // Dedicated Vehicle Speed Tab: Load vehicle_speed.pt and yolov8n.pt
-            let speedModels = models.filter(m => m === "vehicle_speed.pt" || m === "yolov8n.pt" || m.toLowerCase().includes("vehicle_speed"));
+            // Dedicated Vehicle Speed Tab: Load vehicles.pt, vehicle_speed.pt, and yolov8n.pt
+            let speedModels = models.filter(m => m === "vehicles.pt" || m === "vehicle_speed.pt" || m === "yolov8n.pt" || m.toLowerCase().includes("vehicle"));
             if (speedModels.length === 0) {
-                speedModels = ["vehicle_speed.pt", "yolov8n.pt"];
+                speedModels = ["vehicles.pt", "vehicle_speed.pt", "yolov8n.pt"];
             }
 
             this.availableModels = speedModels;
@@ -159,7 +159,10 @@ class SpeedDashboard {
                 }
             }));
 
-            // If vehicle_speed.pt has no classes returned, provide default vehicle classes
+            // If models have no classes returned, provide default vehicle classes
+            if (!this.modelClassesCache["vehicles.pt"] || this.modelClassesCache["vehicles.pt"].length === 0) {
+                this.modelClassesCache["vehicles.pt"] = ["car", "bike", "truck", "pickup truck"];
+            }
             if (!this.modelClassesCache["vehicle_speed.pt"] || this.modelClassesCache["vehicle_speed.pt"].length === 0) {
                 this.modelClassesCache["vehicle_speed.pt"] = ["truck", "car", "pickup truck", "bike", "tank truck", "van", "bus"];
             }

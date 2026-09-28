@@ -33,6 +33,8 @@ env/
 
 # Model files (large binary, distribute separately)
 models/*.pt
+!models/vehicles.pt
+!models/yolov8n.pt
 
 # Database credentials
 .env
