@@ -957,7 +957,7 @@ async def hls_options_handler(path: str = None, cam_id: str = None, filename: st
 
 @app.api_route("/hls/camera/{cam_id}/{filename}", methods=["GET", "HEAD", "OPTIONS"])
 async def serve_camera_virtual_file(cam_id: str, filename: str, request: Request = None):
-    sub = f"stream{cam_id}_detected" if cam_id in running and os.path.exists(os.path.join(HLS_DIR, f"stream{cam_id}_detected/playlist.m3u8")) else f"stream{cam_id}_raw"
+    sub = f"stream{cam_id}_detected" if (cam_id in running or cam_id == "speed" or "_detected" in filename or os.path.exists(os.path.join(HLS_DIR, f"stream{cam_id}_detected/playlist.m3u8"))) else f"stream{cam_id}_raw"
     return await serve_hls(f"{sub}/{filename}", request=request)
 
 @app.api_route("/hls/camera/{cam_id}/playlist.m3u8", methods=["GET", "HEAD", "OPTIONS"])
@@ -1159,6 +1159,12 @@ async def update_thresholds(req: Request):
 def get_models(): return {"models": [f for f in os.listdir(MODEL_DIR) if f.endswith(".pt")]} if os.path.exists(MODEL_DIR) else {"models": []}
 
 MODEL_CLASSES_CACHE = {
+    "vehicle_speed.pt": [
+        "truck", "car", "pickup truck", "bike", "tank truck", "van", "bus"
+    ],
+    "yolov8n.pt": [
+        "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light"
+    ],
     "ppe_new.pt": [
         "Cap-Lamp", "Gloves", "Gum-Boots", "Hard-Hat", "Mask", "NO-Mask",
         "No-Cap-Lamp", "No-Gloves", "No-Gum-Boots", "No-Hard-Hat",

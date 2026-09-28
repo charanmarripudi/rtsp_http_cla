@@ -1659,7 +1659,7 @@
               </div>
             </div>
 
-            <button id="speed-save-cfg-btn" class="btn-primary" style="margin-top: 4px; padding: 8px; font-size: 0.78rem; font-weight: 600; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; cursor: pointer;">
+            <button id="speed-save-cfg-btn" onclick="if(window.speedDashboard) window.speedDashboard.saveConfig()" class="btn-primary" style="margin-top: 4px; padding: 8px; font-size: 0.78rem; font-weight: 600; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; cursor: pointer;">
               💾 Apply Calibration Live
             </button>
           </div>
@@ -1702,7 +1702,7 @@
   <script src="/static/js/detection.js?v=7.0"></script>
   <script src="/static/js/location_dashboard.js?v=6.0"></script>
   <script src="/static/js/ptz_controller.js?v=5.0_dynamic"></script>
-  <script src="/static/js/speed_dashboard.js?v=5.0"></script>
+  <script src="/static/js/speed_dashboard.js?v=6.0"></script>
 
   <script>
     var streamsArray = [];
