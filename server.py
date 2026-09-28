@@ -23,7 +23,7 @@ try:
 except Exception:
     pass
 
-from fastapi import FastAPI, Body, Query, Request, HTTPException, File, UploadFile
+from fastapi import FastAPI, Body, Query, Request, HTTPException
 from typing import Optional, Tuple, Any
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -2318,15 +2318,49 @@ def get_speed_violations(limit: int = 50):
     return {"violations": violations[:limit]}
 
 @app.post("/api/speed/upload")
-async def upload_speed_video(file: UploadFile = File(...)):
-    """Uploads a test video file for Vehicle Speed Tracking."""
+async def upload_speed_video(request: Request):
+    """Uploads a test video file for Vehicle Speed Tracking (zero external dependencies)."""
     upload_dir = os.path.join(BASE_DIR, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
-    clean_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', file.filename)
+    
+    clean_name = f"test_video_{int(time.time())}.mp4"
     dest_path = os.path.join(upload_dir, f"speed_{int(time.time())}_{clean_name}")
+    
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        try:
+            form = await request.form()
+            file_obj = form.get("file")
+            if file_obj:
+                orig_name = getattr(file_obj, "filename", clean_name)
+                clean_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', orig_name)
+                dest_path = os.path.join(upload_dir, f"speed_{int(time.time())}_{clean_name}")
+                with open(dest_path, "wb") as buffer:
+                    content = await file_obj.read() if hasattr(file_obj, "read") else file_obj
+                    buffer.write(content)
+                return {"status": "ok", "filename": clean_name, "filepath": dest_path}
+        except Exception:
+            pass  # Fallback to reading raw stream / boundary if python-multipart not installed
+            
+    body = await request.body()
+    if b"Content-Disposition" in body:
+        header_end = body.find(b"\r\n\r\n")
+        if header_end != -1:
+            header_part = body[:header_end].decode("latin1", errors="ignore")
+            m = re.search(r'filename="([^"]+)"', header_part)
+            if m:
+                clean_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', os.path.basename(m.group(1)))
+                dest_path = os.path.join(upload_dir, f"speed_{int(time.time())}_{clean_name}")
+            raw_data = body[header_end + 4:]
+            last_boundary = raw_data.rfind(b"\r\n--")
+            if last_boundary != -1:
+                raw_data = raw_data[:last_boundary]
+            with open(dest_path, "wb") as buffer:
+                buffer.write(raw_data)
+            return {"status": "ok", "filename": clean_name, "filepath": dest_path}
+
     with open(dest_path, "wb") as buffer:
-        import shutil
-        shutil.copyfileobj(file.file, buffer)
+        buffer.write(body)
     return {"status": "ok", "filename": clean_name, "filepath": dest_path}
 
 @app.post("/api/speed/start")
