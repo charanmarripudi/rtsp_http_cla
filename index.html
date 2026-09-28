@@ -1035,6 +1035,7 @@
     <div class="nav-tabs">
       <button class="tab-btn active" data-tab="manage">Locations</button>
       <button class="tab-btn" data-tab="dashboard">Location Cameras</button>
+      <button class="tab-btn" data-tab="speed">🚗 Vehicle Speed</button>
       <button class="tab-btn" data-tab="ptz">🎮 PTZ Camera</button>
       <button class="tab-btn" data-tab="videolab">🧪 AI Video Lab</button>
     </div>
@@ -1493,7 +1494,150 @@
 
 
 
-  <!-- PTZ API Modal -->
+  <!-- Tab 5: Dedicated Tank Truck Vehicle Speed & Count Monitor -->
+  <div class="config-layout tab-content" id="tab-speed" style="display: none; padding: 22px;">
+    <div style="max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px;">
+      
+      <!-- Top Banner / Title -->
+      <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+        <div>
+          <h2 style="font-family: var(--display); font-size: 1.15rem; color: #38bdf8; display: flex; align-items: center; gap: 8px;">
+            <span>🚗</span> Terminal Tank Truck Speed & Count Monitor
+          </h2>
+          <p style="font-size: 0.75rem; color: var(--muted); margin-top: 4px;">
+            Enforcing 10 km/h speed limit from Main Gate (Line A) to Gantry Road (Line B) with ground tyre contact tracking, snapshot capture & real-time telemetry.
+          </p>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <span style="font-size: 0.72rem; color: var(--muted); background: rgba(0,0,0,0.3); padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border);">
+            ⚡ Speed Limit: <strong id="speed-badge-limit" style="color: #ff4444; font-family: var(--mono);">10.0 km/h</strong>
+          </span>
+          <span style="font-size: 0.72rem; color: var(--muted); background: rgba(0,0,0,0.3); padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border);">
+            📏 Distance: <strong id="speed-badge-dist" style="color: #00ffaa; font-family: var(--mono);">20.0 m</strong>
+          </span>
+        </div>
+      </div>
+
+      <!-- Live Metric Badges Bar -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px;">
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px;">
+          <div style="font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px;">TOTAL VEHICLES</div>
+          <div id="speed-cnt-total" style="font-size: 1.5rem; font-weight: 800; color: #38bdf8; font-family: var(--mono); margin-top: 4px;">0</div>
+        </div>
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px;">
+          <div style="font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px;">TANK TRUCKS / TRUCKS</div>
+          <div id="speed-cnt-trucks" style="font-size: 1.5rem; font-weight: 800; color: #f5a623; font-family: var(--mono); margin-top: 4px;">0</div>
+        </div>
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px;">
+          <div style="font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px;">CARS / VANS</div>
+          <div id="speed-cnt-cars" style="font-size: 1.5rem; font-weight: 800; color: #a78bfa; font-family: var(--mono); margin-top: 4px;">0</div>
+        </div>
+        <div class="widget-card" style="background: var(--surface); border: 1px solid rgba(255,68,68,0.4); border-radius: var(--radius); padding: 14px 16px; background: rgba(255,0,0,0.04);">
+          <div style="font-size: 0.68rem; color: #ff6666; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700;">🚨 OVER-SPEED VIOLATIONS</div>
+          <div id="speed-cnt-overspeed" style="font-size: 1.5rem; font-weight: 800; color: #ff4444; font-family: var(--mono); margin-top: 4px;">0</div>
+        </div>
+      </div>
+
+      <!-- Main 2-Column Grid -->
+      <div style="display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 20px;" class="vlab-grid-responsive">
+        
+        <!-- Left Column: Camera Selector, Live Player & Controls -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 16px;">
+          
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <label style="font-size: 0.75rem; color: var(--muted); font-weight: 600;">SELECT CAMERA:</label>
+              <select id="speed-cam-select" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; font-size: 0.78rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono); min-width: 160px;">
+                <option value="0">Camera 1 (Main Gate)</option>
+              </select>
+            </div>
+            <span id="speed-monitor-status" style="font-size: 0.75rem; color: var(--muted); font-family: var(--mono);">Ready</span>
+          </div>
+
+          <!-- Video Player Box -->
+          <div style="background: #000; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; position: relative; min-height: 380px; display: flex; align-items: center; justify-content: center;">
+            <video id="speed-video-player" playsinline muted autoplay style="width: 100%; height: 100%; object-fit: contain; display: block; max-height: 480px;"></video>
+          </div>
+
+          <!-- Direct Start / Stop Actions -->
+          <div style="display: flex; gap: 12px;">
+            <button id="speed-start-btn" class="btn-primary" style="flex: 1; padding: 12px; font-size: 0.85rem; font-weight: 700; background: #00ffaa; color: #000; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 0 12px rgba(0,255,170,0.3);">
+              <span>⚡</span> Start Speed Monitor
+            </button>
+            <button id="speed-stop-btn" class="btn-secondary" style="padding: 12px 20px; font-size: 0.85rem; color: #ff4444; border: 1px solid rgba(255,68,68,0.4); border-radius: 8px; cursor: pointer;">
+              <span>⏹</span> Stop
+            </button>
+          </div>
+        </div>
+
+        <!-- Right Column: Live Telemetry Log Table & Calibration Settings -->
+        <div style="display: flex; flex-direction: column; gap: 18px;">
+          
+          <!-- Live Telemetry Log Table -->
+          <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3 style="font-size: 0.85rem; font-weight: 600; color: #38bdf8;">📊 Live Vehicle Telemetry Log</h3>
+              <span style="font-size: 0.68rem; color: var(--muted);">Auto-Updating</span>
+            </div>
+
+            <div style="overflow-x: auto; max-height: 250px; border: 1px solid var(--border); border-radius: 6px;">
+              <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                <thead>
+                  <tr style="background: rgba(0,0,0,0.3); font-size: 0.68rem; color: var(--muted); border-bottom: 1px solid var(--border);">
+                    <th style="padding: 6px 10px;">TIME</th>
+                    <th style="padding: 6px 10px;">VEHICLE</th>
+                    <th style="padding: 6px 10px;">ID</th>
+                    <th style="padding: 6px 10px;">SPEED</th>
+                    <th style="padding: 6px 10px;">STATUS</th>
+                  </tr>
+                </thead>
+                <tbody id="speed-telemetry-tbody">
+                  <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:14px;">No vehicles tracked yet in this session</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Speed & Dual-Line Calibration Settings -->
+          <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3 style="font-size: 0.85rem; font-weight: 600; color: var(--text);">⚙️ Terminal Calibration Settings</h3>
+              <span id="speed-cfg-status" style="font-size: 0.70rem; color: #00ffaa; font-family: var(--mono);"></span>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div>
+                <label style="font-size: 0.68rem; color: var(--muted); display: block; margin-bottom: 4px;">SPEED LIMIT (km/h):</label>
+                <input type="number" id="speed-cfg-limit" value="10.0" step="0.5" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: #ff4444; font-weight: 700; padding: 6px 10px; font-size: 0.80rem; border-radius: 6px; font-family: var(--mono); outline: none;">
+              </div>
+              <div>
+                <label style="font-size: 0.68rem; color: var(--muted); display: block; margin-bottom: 4px;">GATE-GANTRY DISTANCE (m):</label>
+                <input type="number" id="speed-cfg-dist" value="20.0" step="1.0" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: #00ffaa; font-weight: 700; padding: 6px 10px; font-size: 0.80rem; border-radius: 6px; font-family: var(--mono); outline: none;">
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div>
+                <label style="font-size: 0.68rem; color: var(--muted); display: block; margin-bottom: 4px;">LINE A GATE ENTRY (% Height):</label>
+                <input type="number" id="speed-cfg-line-a" value="40" min="5" max="95" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; font-size: 0.80rem; border-radius: 6px; font-family: var(--mono); outline: none;">
+              </div>
+              <div>
+                <label style="font-size: 0.68rem; color: var(--muted); display: block; margin-bottom: 4px;">LINE B GANTRY ROAD (% Height):</label>
+                <input type="number" id="speed-cfg-line-b" value="75" min="5" max="95" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; font-size: 0.80rem; border-radius: 6px; font-family: var(--mono); outline: none;">
+              </div>
+            </div>
+
+            <button id="speed-save-cfg-btn" class="btn-primary" style="margin-top: 4px; padding: 8px; font-size: 0.78rem; font-weight: 600; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; cursor: pointer;">
+              💾 Apply Calibration Live
+            </button>
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+  </div>
   <div id="ptzApiModal" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; z-index:99999; backdrop-filter:blur(6px);">
     <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:580px; max-width:90vw; padding:20px; position:relative; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
       <button onclick="window.closePtzApiModal()" style="position:absolute; top:14px; right:14px; background:transparent; border:none; color:var(--muted); font-size:1.2rem; cursor:pointer;">✕</button>
@@ -1526,6 +1670,7 @@
   <script src="/static/js/detection.js?v=7.0"></script>
   <script src="/static/js/location_dashboard.js?v=6.0"></script>
   <script src="/static/js/ptz_controller.js?v=5.0_dynamic"></script>
+  <script src="/static/js/speed_dashboard.js?v=1.0"></script>
 
   <script>
     var streamsArray = [];
@@ -1832,6 +1977,10 @@
           loadDevicesWidget();
           renderLocationWidgets();
           notifyDetectionReady();
+        } else if (tabId === 'speed') {
+          setTimeout(() => {
+            if (window.initSpeedTab) window.initSpeedTab();
+          }, 50);
         } else if (tabId === 'ptz') {
           setTimeout(() => {
             if (window.initPtzController) window.initPtzController();

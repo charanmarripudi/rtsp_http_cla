@@ -2315,6 +2315,40 @@ def get_speed_violations(limit: int = 50):
             pass
     return {"violations": violations[:limit]}
 
+@app.post("/api/speed/start")
+def start_speed_tracker(d: dict = Body(...)):
+    """Direct one-click start for Vehicle Speed & Count Tracking on a camera."""
+    cid = str(d.get("camera", "0"))
+    loc = d.get("location", f"Location {int(cid)+1 if cid.isdigit() else cid}")
+    rtsp = d.get("rtsp", "")
+    if not rtsp:
+        urls = read_streams_conf()
+        if cid.isdigit() and int(cid) < len(urls):
+            rtsp = urls[int(cid)]
+    if not rtsp:
+        return {"status": "error", "message": "No RTSP stream URL configured for this camera"}
+
+    # Assign vehicle_speed.pt model with optimized imgsz=384 for low CPU
+    return start_detection({
+        "camera": cid,
+        "models": ["vehicle_speed.pt"],
+        "rtsp": rtsp,
+        "location": loc,
+        "conf": 0.25,
+        "iou": 0.45,
+        "model_configs": {
+            "vehicle_speed.pt": {
+                "enabled_classes": ["truck", "car", "pickup truck", "bike"],
+                "imgsz": 384
+            }
+        }
+    })
+
+@app.post("/api/speed/stop")
+def stop_speed_tracker(d: dict = Body(...)):
+    """Direct one-click stop for Vehicle Speed Tracking."""
+    return stop_detection(d)
+
 @app.get("/api/locations")
 async def get_locations(
     request: Request,
