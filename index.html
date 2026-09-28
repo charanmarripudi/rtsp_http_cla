@@ -1594,10 +1594,10 @@
 
           <!-- Direct Start / Stop Actions -->
           <div style="display: flex; gap: 12px;">
-            <button id="speed-start-btn" class="btn-primary" style="flex: 1; padding: 12px; font-size: 0.85rem; font-weight: 700; background: #00ffaa; color: #000; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 0 12px rgba(0,255,170,0.3);">
+            <button id="speed-start-btn" onclick="if(window.speedDashboard) window.speedDashboard.startMonitoring()" class="btn-primary" style="flex: 1; padding: 12px; font-size: 0.85rem; font-weight: 700; background: #00ffaa; color: #000; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 0 12px rgba(0,255,170,0.3);">
               <span>⚡</span> Start Speed Monitor
             </button>
-            <button id="speed-stop-btn" class="btn-secondary" style="padding: 12px 20px; font-size: 0.85rem; color: #ff4444; border: 1px solid rgba(255,68,68,0.4); border-radius: 8px; cursor: pointer;">
+            <button id="speed-stop-btn" onclick="if(window.speedDashboard) window.speedDashboard.stopMonitoring()" class="btn-secondary" style="padding: 12px 20px; font-size: 0.85rem; color: #ff4444; border: 1px solid rgba(255,68,68,0.4); border-radius: 8px; cursor: pointer;">
               <span>⏹</span> Stop
             </button>
           </div>
@@ -1703,7 +1703,7 @@
   <script src="/static/js/detection.js?v=7.0"></script>
   <script src="/static/js/location_dashboard.js?v=6.0"></script>
   <script src="/static/js/ptz_controller.js?v=5.0_dynamic"></script>
-  <script src="/static/js/speed_dashboard.js?v=1.0"></script>
+  <script src="/static/js/speed_dashboard.js?v=2.0"></script>
 
   <script>
     var streamsArray = [];

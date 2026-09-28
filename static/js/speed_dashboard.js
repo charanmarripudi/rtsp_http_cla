@@ -228,9 +228,11 @@ class SpeedDashboard {
             source_type: this.sourceType
         };
 
+        console.log(`[SPEED-DASH] Starting Speed Monitor (Source: ${this.sourceType}, Cam: ${cid})...`);
+
         if (this.sourceType === "rtsp") {
             const rtspInput = document.getElementById("speed-custom-rtsp-input");
-            payload.rtsp = rtspInput ? rtspInput.value.trim() : "";
+            payload.rtsp = rtspInput ? (rtspInput.value.trim() || rtspInput.placeholder.trim()) : "";
             if (!payload.rtsp) {
                 if (statusSpan) {
                     statusSpan.textContent = "Please enter an RTSP URL";
@@ -262,7 +264,8 @@ class SpeedDashboard {
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
-            if (res.ok && data.status === "started") {
+            console.log("[SPEED-DASH] Start response:", data);
+            if (res.ok && (data.status === "started" || data.status === "ok")) {
                 if (statusSpan) {
                     statusSpan.textContent = "● AI Speed Monitor Running";
                     statusSpan.style.color = "#00ffaa";
@@ -270,12 +273,16 @@ class SpeedDashboard {
                 setTimeout(() => this.updatePlayerSource(), 800);
             } else {
                 if (statusSpan) {
-                    statusSpan.textContent = data.message || "Failed to start";
+                    statusSpan.textContent = data.message || data.error || "Failed to start";
                     statusSpan.style.color = "#ff4444";
                 }
             }
         } catch (e) {
             console.error("[SPEED-DASH] Start failed:", e);
+            if (statusSpan) {
+                statusSpan.textContent = `Error: ${e.message}`;
+                statusSpan.style.color = "#ff4444";
+            }
         }
     }
 
@@ -291,6 +298,8 @@ class SpeedDashboard {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ camera: cid })
             });
+            const data = await res.json();
+            console.log("[SPEED-DASH] Stop response:", data);
             if (res.ok) {
                 if (statusSpan) {
                     statusSpan.textContent = "○ Speed Monitor Stopped";
@@ -401,3 +410,10 @@ window.initSpeedTab = function() {
         window.speedDashboard.updatePlayerSource();
     }
 };
+
+// Auto-initialize on load and DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => window.initSpeedTab());
+} else {
+    window.initSpeedTab();
+}

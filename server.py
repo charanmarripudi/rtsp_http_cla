@@ -582,9 +582,15 @@ def write_json_atomic(path, data):
 
 def is_valid_rtsp_url(value):
     try:
-        parsed = urlparse(value)
-        return parsed.scheme in ("rtsp", "rtsps") and bool(parsed.hostname)
-    except: return False
+        val_str = str(value or "").strip()
+        if not val_str:
+            return False
+        if os.path.exists(val_str) or any(val_str.lower().endswith(ext) for ext in (".mp4", ".avi", ".mkv", ".mov", ".ts")):
+            return True
+        parsed = urlparse(val_str)
+        return parsed.scheme in ("rtsp", "rtsps", "http", "https", "file") or bool(parsed.hostname)
+    except:
+        return False
 
 def sanitize_location(value):
     clean = "".join(ch for ch in str(value or "") if ch.isalnum() or ch in " _-.,()").strip()
@@ -1865,7 +1871,10 @@ def start_detection(d: dict):
     cid = str(d.get("camera", "0"))
     rtsp = d.get("rtsp")
     streams = read_streams_metadata()
-    if cid.isdigit() and int(cid) < len(streams) and streams[int(cid)].get("rtsp"):
+    if rtsp and is_valid_rtsp_url(rtsp):
+        # Use explicitly provided RTSP or video file directly
+        pass
+    elif cid.isdigit() and int(cid) < len(streams) and streams[int(cid)].get("rtsp"):
         # Prioritize currently configured stream for this camera index
         configured_rtsp = streams[int(cid)].get("rtsp")
         if not rtsp or (rtsp != configured_rtsp and not is_valid_rtsp_url(rtsp)):

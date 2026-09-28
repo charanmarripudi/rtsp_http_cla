@@ -153,6 +153,7 @@ class LocationDashboardTabs {
             content.style.display = content.id === `tab-${tabId}` ? (tabId === "dashboard" ? "flex" : "block") : "none";
         });
         if (tabId === "dashboard") this.onDashboardOpen();
+        if (tabId === "speed" && window.initSpeedTab) window.initSpeedTab();
     }
 }
 
