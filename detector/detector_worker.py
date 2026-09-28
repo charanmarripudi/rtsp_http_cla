@@ -783,8 +783,9 @@ class DetectorWorker:
                     curr_cx = b_cx
                     curr_cy = by2
                     dist = math.hypot(curr_cx - t_cx, curr_cy - t_cy)
-                    if dist <= 220:  # Allow realistic vehicle road displacement
-                        score = max(0.01, 1.0 - (dist / 220.0))
+                    max_veh_dist = min(110.0, max(60.0, float(self.width) * 0.16))
+                    if dist <= max_veh_dist:  # Tight distance threshold prevents swapping between different cars
+                        score = max(0.01, 1.0 - (dist / max_veh_dist))
                         if score > best_score:
                             best_score = score
                             best_id = tid
@@ -805,7 +806,7 @@ class DetectorWorker:
 
             if best_id is not None:
                 old_b = self._ema_tracks[best_id]['box']
-                a = 0.3 if is_veh else BOX_EMA_ALPHA
+                a = 0.35 if is_veh else BOX_EMA_ALPHA
                 smoothed = [
                     old_b[0] * a + b_xyxy[0] * (1 - a),
                     old_b[1] * a + b_xyxy[1] * (1 - a),
@@ -861,13 +862,17 @@ class DetectorWorker:
                     hist = hist[-5:]
                 trk['history'] = hist
 
-        # Expire stale tracks (6.0s persistence for vehicles so crossing lines is never lost, 1.0s for PPE)
+        # Expire stale tracks (1.2s persistence for vehicles so new cars never inherit old timestamps)
         for tid in list(self._ema_tracks.keys()):
             trk_cls = self._ema_tracks[tid].get('cls', '').lower()
             is_veh = any(vk in trk_cls for vk in vehicle_keywords)
-            max_age = 6.0 if is_veh else TRACK_MAX_AGE_S
+            max_age = 1.2 if is_veh else TRACK_MAX_AGE_S
             if now_t - self._ema_tracks[tid].get('last_seen', 0.0) > max_age:
                 del self._ema_tracks[tid]
+                if hasattr(self, '_last_side_a') and tid in self._last_side_a:
+                    del self._last_side_a[tid]
+                if hasattr(self, '_last_side_b') and tid in self._last_side_b:
+                    del self._last_side_b[tid]
 
         # ── Vehicle Speed Estimation & Dual-Line Timing ──
         la_y = int(self.height * getattr(self, 'line_a_ratio', 0.40))
@@ -882,6 +887,12 @@ class DetectorWorker:
                 bx = trk['box']
                 cx = (bx[0] + bx[2]) / 2.0
                 cy = bx[3]  # Tyre contact point at bottom edge of bounding box
+
+                # Reset stale timing if a vehicle took > 10.0s (e.g. stopped or turned around)
+                if trk.get('time_a') is not None and (now_t - trk['time_a'] > 10.0) and trk.get('time_b') is None:
+                    trk['time_a'] = None
+                if trk.get('time_b') is not None and (now_t - trk['time_b'] > 10.0) and trk.get('time_a') is None:
+                    trk['time_b'] = None
 
                 # Check Line A (Gate Entry Line)
                 side_a = cy - la_y
@@ -911,7 +922,7 @@ class DetectorWorker:
                 # Compute Speed when both lines crossed (Gate -> Gantry or Gantry -> Gate)
                 if trk.get('time_a') is not None and trk.get('time_b') is not None and trk.get('speed_kmh') is None:
                     delta_t = abs(trk['time_b'] - trk['time_a'])
-                    if delta_t >= 0.05:
+                    if 0.1 <= delta_t <= 10.0:
                         v = (dist_m / delta_t) * 3.6
                         trk['speed_kmh'] = v
                         if not hasattr(self, 'speed_records'): self.speed_records = []
@@ -930,18 +941,30 @@ class DetectorWorker:
                             trk['color'] = (0, 0, 255)  # Pure Red Alert
                             if not hasattr(self, 'overspeed_count'): self.overspeed_count = 0
                             self.overspeed_count += 1
-                            print(f"[SPEED-VIOLATION] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Limit: {speed_limit:.0f} km/h)", flush=True)
+                            print(f"🚨 [SPEED-VIOLATION] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Limit: {speed_limit:.0f} km/h, Δt: {delta_t:.2f}s)!", flush=True)
                             trk['should_alert_overspeed'] = True
+
+                            # Save alert snapshot
+                            try:
+                                alerts_dir = os.path.join(BASE_DIR, "alerts")
+                                os.makedirs(alerts_dir, exist_ok=True)
+                                snap_name = f"speed_violation_cam{self.cam_id}_id{tid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{int(v)}kmh.jpg"
+                                snap_path = os.path.join(alerts_dir, snap_name)
+                                cv2.imwrite(snap_path, pf if 'pf' in locals() else f)
+                                print(f"[ALERT-SAVED] Saved speed violation snapshot: {snap_path}", flush=True)
+                            except Exception as e_snap:
+                                print(f"[ALERT-SNAP-ERR] Failed to save speed snapshot: {e_snap}", flush=True)
                         else:
                             trk['color'] = (0, 255, 100)  # Green Normal
-                            print(f"[SPEED-NORMAL] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h", flush=True)
+                            print(f"[SPEED-NORMAL] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Δt: {delta_t:.2f}s)", flush=True)
 
         # Build display list from live EMA tracks
         display_boxes = []
         for tid, trk in self._ema_tracks.items():
             trk_cls = trk.get('cls', '')
             is_veh = any(vk in trk_cls.lower() for vk in vehicle_keywords)
-            max_age = 6.0 if is_veh else TRACK_MAX_AGE_S
+            max_age = 1.2 if is_veh else TRACK_MAX_AGE_S
+            age = now_t - trk.get('last_seen', 0.0)
             age = now_t - trk.get('last_seen', 0.0)
             if age > max_age:
                 continue
