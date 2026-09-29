@@ -150,6 +150,8 @@ def main():
     t_start = time.time()
     paused = False
 
+    has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")) and not args.no_display
+
     try:
         while True:
             if not paused:
@@ -184,24 +186,35 @@ def main():
                 if writer:
                     writer.write(annotated_frame)
 
-            if not args.no_display:
-                cv2.imshow("Terminal Vehicle Speed & Count Monitor", annotated_frame)
-                key = cv2.waitKey(1 if not paused else 30) & 0xFF
-                if key == ord("q") or key == 27:
-                    print("[USER] Quit requested.")
-                    break
-                elif key == ord("p"):
-                    paused = not paused
-                    print(f"[USER] {'PAUSED' if paused else 'RESUMED'}")
-                elif key == ord("s"):
-                    snap_name = f"manual_snapshot_{int(time.time())}.jpg"
-                    cv2.imwrite(snap_name, annotated_frame)
-                    print(f"[SNAPSHOT] Saved manual screenshot: {snap_name}")
+            if has_display:
+                try:
+                    cv2.imshow("Terminal Vehicle Speed & Count Monitor", annotated_frame)
+                    key = cv2.waitKey(1 if not paused else 30) & 0xFF
+                    if key == ord("q") or key == 27:
+                        print("[USER] Quit requested.")
+                        break
+                    elif key == ord("p"):
+                        paused = not paused
+                        print(f"[USER] {'PAUSED' if paused else 'RESUMED'}")
+                    elif key == ord("s"):
+                        snap_name = f"manual_snapshot_{int(time.time())}.jpg"
+                        cv2.imwrite(snap_name, annotated_frame)
+                        print(f"[SNAPSHOT] Saved manual screenshot: {snap_name}")
+                except Exception:
+                    has_display = False
+            else:
+                # In headless / SSH mode, sleep minimally so CPU doesn't busy-wait on pause
+                if paused:
+                    time.sleep(0.05)
     finally:
         cap.release()
         if writer:
             writer.release()
-        cv2.destroyAllWindows()
+        try:
+            if has_display:
+                cv2.destroyAllWindows()
+        except Exception:
+            pass
         print(f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         print(f"  FINAL SUMMARY: Total Vehicles Counted = {sum(tracker_engine.counts.values())}")
         print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
