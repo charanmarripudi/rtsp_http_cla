@@ -481,15 +481,26 @@ class DetectorWorker:
         # Standalone VehicleSpeedTracker Engine (Low-CPU imgsz=320, skip=2)
         if self.is_speed_worker and VehicleSpeedTracker is not None:
             veh_model = self.model_paths[0] if (isinstance(self.model_paths, list) and self.model_paths) else str(self.model_paths)
+            speed_cfg_file = os.path.join(BASE_DIR, "speed_config.json")
+            persisted_cfg = {}
+            if os.path.exists(speed_cfg_file):
+                try:
+                    with open(speed_cfg_file, "r") as scf:
+                        persisted_cfg = json.load(scf)
+                except: pass
+            
+            line_a_cfg = persisted_cfg.get("line_a", {"x1_pct": 5, "y1_pct": int(self.line_a_ratio * 100), "x2_pct": 95, "y2_pct": int(self.line_a_ratio * 100)})
+            line_b_cfg = persisted_cfg.get("line_b", {"x1_pct": 5, "y1_pct": int(self.line_b_ratio * 100), "x2_pct": 95, "y2_pct": int(self.line_b_ratio * 100)})
+
             speed_cfg = {
                 "model_path": veh_model,
-                "speed_limit_kmh": self.speed_limit_kmh,
-                "road_distance_meters": self.road_distance_meters,
+                "speed_limit_kmh": float(persisted_cfg.get("speed_limit_kmh", self.speed_limit_kmh)),
+                "road_distance_meters": float(persisted_cfg.get("road_distance_meters", self.road_distance_meters)),
                 "confidence_threshold": max(0.20, float(self.conf)),
                 "imgsz": 320,
                 "frame_skip": 2,
-                "line_a": {"x1_pct": 5, "y1_pct": int(self.line_a_ratio * 100), "x2_pct": 95, "y2_pct": int(self.line_a_ratio * 100)},
-                "line_b": {"x1_pct": 5, "y1_pct": int(self.line_b_ratio * 100), "x2_pct": 95, "y2_pct": int(self.line_b_ratio * 100)},
+                "line_a": line_a_cfg,
+                "line_b": line_b_cfg,
                 "allowed_classes": ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle", "van", "bus"],
                 "alerts_dir": os.path.join(str(BASE_DIR), "alerts")
             }
@@ -1185,7 +1196,7 @@ class DetectorWorker:
             disp_name = "NO-PPE" if str(class_name).lower() == "none" else str(class_name)
             safe_cls_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', disp_name)
             filename = f"cam{self.cam_id}_{ts}_{safe_cls_filename}.jpg"
-            adir = os.path.join(os.path.dirname(self.output_dir), "alerts")
+            adir = os.path.join(BASE_DIR, "alerts")
             os.makedirs(adir, exist_ok=True)
             img_saved = cv2.imwrite(os.path.join(adir, filename), frame)
             print(f"[ALERT-IMG] Saved snapshot {filename}, ok={img_saved}", flush=True)
@@ -1492,6 +1503,32 @@ class DetectorWorker:
                                 pf = cv2.resize(pf, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
                             
                             self.vehicle_counts = self.speed_tracker_engine.counts
+
+                            # Update live speed records from tracker
+                            if not hasattr(self, 'speed_records'): self.speed_records = []
+                            for tid, trk in list(self.speed_tracker_engine.tracker.tracks.items()):
+                                spd = trk.get("speed_kmh") or trk.get("disp_speed")
+                                if spd is not None and not trk.get("_stat_logged", False):
+                                    trk["_stat_logged"] = True
+                                    is_over = bool(spd > self.speed_limit_kmh)
+                                    self.speed_records.append({
+                                        "vehicle_id": tid,
+                                        "cls": trk.get("label", "vehicle"),
+                                        "speed_kmh": round(spd, 1),
+                                        "is_over_speed": is_over,
+                                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    })
+                                    if len(self.speed_records) > 200:
+                                        self.speed_records = self.speed_records[-200:]
+
+                            # Handle any overspeed violations triggered this frame
+                            for v in violations:
+                                if not hasattr(self, 'overspeed_count'): self.overspeed_count = 0
+                                self.overspeed_count += 1
+                                v_spd = v.get("speed_kmh", 0.0)
+                                alert_cls = f"OVER SPEED: {v_spd:.1f} km/h (Limit: {self.speed_limit_kmh:.0f} km/h)"
+                                print(f"🚨 [ALERT-TRIGGER-SPEED] Standalone Engine Over speed alert: cam={self.cam_id}, vehicle_id={v.get('track_id')}, class={v.get('label')}, speed={v_spd:.1f} km/h", flush=True)
+                                self._save_alert(alert_cls, pf)
 
                             # Top-Right FPS Counter
                             if not hasattr(self, '_frame_count_stat'):

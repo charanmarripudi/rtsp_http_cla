@@ -339,8 +339,9 @@ except Exception as e:
         except: pass
     os.makedirs(HLS_DIR, exist_ok=True)
 
+ALERTS_DIR   = os.path.join(BASE_DIR, "alerts")
+os.makedirs(ALERTS_DIR, exist_ok=True)
 os.makedirs(os.path.join(HLS_DIR, "alerts"), exist_ok=True)
-ALERTS_DIR   = os.path.join(HLS_DIR, "alerts")
 ALERTS_JSON  = os.path.join(ALERTS_DIR, "alerts.json")
 CAMERA_MODELS_JSON = os.path.join(BASE_DIR, "camera_models.json")
 _locations_cache = None
@@ -386,7 +387,23 @@ os.makedirs(ALERTS_DIR, exist_ok=True)
 if not os.path.exists(ALERTS_JSON): json.dump([], open(ALERTS_JSON, "w"))
 
 app = FastAPI()
-app.mount("/hls/alerts", StaticFiles(directory=ALERTS_DIR), name="alerts")
+app.mount("/alerts", StaticFiles(directory=ALERTS_DIR), name="alerts_static")
+
+@app.get("/hls/alerts/{filename:path}")
+def get_hls_alert_file(filename: str):
+    safe_name = os.path.basename(filename)
+    search_dirs = [
+        os.path.join(BASE_DIR, "alerts"),
+        os.path.join(HLS_DIR, "alerts"),
+        os.path.join(BASE_DIR, "vehicle_speed_tracker", "alerts"),
+        os.path.join(BASE_DIR, "static", "alerts")
+    ]
+    for d in search_dirs:
+        fp = os.path.join(d, safe_name)
+        if os.path.isfile(fp):
+            return FileResponse(fp, media_type="image/jpeg", headers={"Access-Control-Allow-Origin": "*"})
+    return Response(status_code=404, content='{"detail":"Alert snapshot not found"}', media_type="application/json")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -2236,7 +2253,9 @@ def _get_speed_config():
         "speed_limit_kmh": 10.0,
         "road_distance_meters": 20.0,
         "line_a_ratio": 0.40,
-        "line_b_ratio": 0.75
+        "line_b_ratio": 0.75,
+        "line_a": {"x1_pct": 5, "y1_pct": 40, "x2_pct": 95, "y2_pct": 40},
+        "line_b": {"x1_pct": 5, "y1_pct": 75, "x2_pct": 95, "y2_pct": 75}
     }
     if os.path.exists(SPEED_CONFIG_FILE):
         try:
@@ -2254,7 +2273,7 @@ def get_speed_config():
 
 @app.post("/api/speed/config")
 def update_speed_config(d: dict = Body(...)):
-    """Dynamically updates speed limit, road distance, and line ratios across running camera workers."""
+    """Dynamically updates speed limit, road distance, and line coordinates across running camera workers."""
     cfg = _get_speed_config()
     if "speed_limit_kmh" in d:
         cfg["speed_limit_kmh"] = float(d["speed_limit_kmh"])
@@ -2264,6 +2283,20 @@ def update_speed_config(d: dict = Body(...)):
         cfg["line_a_ratio"] = float(d["line_a_ratio"])
     if "line_b_ratio" in d:
         cfg["line_b_ratio"] = float(d["line_b_ratio"])
+    if "line_a" in d and isinstance(d["line_a"], dict):
+        cfg["line_a"] = {
+            "x1_pct": float(d["line_a"].get("x1_pct", 5)),
+            "y1_pct": float(d["line_a"].get("y1_pct", 40)),
+            "x2_pct": float(d["line_a"].get("x2_pct", 95)),
+            "y2_pct": float(d["line_a"].get("y2_pct", 40))
+        }
+    if "line_b" in d and isinstance(d["line_b"], dict):
+        cfg["line_b"] = {
+            "x1_pct": float(d["line_b"].get("x1_pct", 5)),
+            "y1_pct": float(d["line_b"].get("y1_pct", 75)),
+            "x2_pct": float(d["line_b"].get("x2_pct", 95)),
+            "y2_pct": float(d["line_b"].get("y2_pct", 75))
+        }
 
     with open(SPEED_CONFIG_FILE, "w") as f:
         json.dump(cfg, f, indent=2)
@@ -2276,6 +2309,13 @@ def update_speed_config(d: dict = Body(...)):
             w.road_distance_meters = cfg["road_distance_meters"]
             w.line_a_ratio = cfg["line_a_ratio"]
             w.line_b_ratio = cfg["line_b_ratio"]
+            if hasattr(w, "speed_tracker_engine") and w.speed_tracker_engine:
+                w.speed_tracker_engine.speed_limit_kmh = cfg["speed_limit_kmh"]
+                w.speed_tracker_engine.road_distance_meters = cfg["road_distance_meters"]
+                if "line_a" in cfg:
+                    w.speed_tracker_engine.config["line_a"] = cfg["line_a"]
+                if "line_b" in cfg:
+                    w.speed_tracker_engine.config["line_b"] = cfg["line_b"]
 
     return {"status": "updated", "config": cfg}
 

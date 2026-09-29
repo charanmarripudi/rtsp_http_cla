@@ -170,14 +170,20 @@ class VehicleSpeedTracker:
         self.last_side_b: Dict[int, float] = {}
 
     def _get_pixel_lines(self, width: int, height: int) -> Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int], Tuple[int, int]]:
-        la = self.config.get("line_a", {"x1_pct": 10, "y1_pct": 40, "x2_pct": 90, "y2_pct": 40})
-        lb = self.config.get("line_b", {"x1_pct": 10, "y1_pct": 75, "x2_pct": 90, "y2_pct": 75})
+        la = self.config.get("line_a")
+        if not la or not isinstance(la, dict):
+            la_pct = int(self.config.get("line_a_ratio", 0.40) * 100)
+            la = {"x1_pct": 5, "y1_pct": la_pct, "x2_pct": 95, "y2_pct": la_pct}
+        lb = self.config.get("line_b")
+        if not lb or not isinstance(lb, dict):
+            lb_pct = int(self.config.get("line_b_ratio", 0.75) * 100)
+            lb = {"x1_pct": 5, "y1_pct": lb_pct, "x2_pct": 95, "y2_pct": lb_pct}
         
-        la_start = (int(width * la["x1_pct"] / 100.0), int(height * la["y1_pct"] / 100.0))
-        la_end   = (int(width * la["x2_pct"] / 100.0), int(height * la["y2_pct"] / 100.0))
+        la_start = (int(width * float(la.get("x1_pct", 5)) / 100.0), int(height * float(la.get("y1_pct", 40)) / 100.0))
+        la_end   = (int(width * float(la.get("x2_pct", 95)) / 100.0), int(height * float(la.get("y2_pct", 40)) / 100.0))
         
-        lb_start = (int(width * lb["x1_pct"] / 100.0), int(height * lb["y1_pct"] / 100.0))
-        lb_end   = (int(width * lb["x2_pct"] / 100.0), int(height * lb["y2_pct"] / 100.0))
+        lb_start = (int(width * float(lb.get("x1_pct", 5)) / 100.0), int(height * float(lb.get("y1_pct", 75)) / 100.0))
+        lb_end   = (int(width * float(lb.get("x2_pct", 95)) / 100.0), int(height * float(lb.get("y2_pct", 75)) / 100.0))
         
         return la_start, la_end, lb_start, lb_end
 
@@ -378,15 +384,19 @@ class VehicleSpeedTracker:
         h, w = out.shape[:2]
 
         # 1. Draw Timing Lines
-        # Line A (Gate Entry) - Cyan
+        # Line A (Gate Entry) - Cyan/Yellow
         cv2.line(out, la_start, la_end, (255, 220, 0), 2)
-        cv2.putText(out, "LINE A (GATE ENTRY)", (la_start[0] + 10, max(25, la_start[1] - 8)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 220, 0), 2, cv2.LINE_AA)
+        mid_a_x = (la_start[0] + la_end[0]) // 2
+        mid_a_y = (la_start[1] + la_end[1]) // 2
+        cv2.putText(out, "LINE A (GATE ENTRY)", (min(w - 180, max(10, mid_a_x - 60)), max(25, mid_a_y - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 220, 0), 2, cv2.LINE_AA)
 
-        # Line B (Gantry Road) - Green
+        # Line B (Gantry Road) - Emerald Green
         cv2.line(out, lb_start, lb_end, (0, 255, 170), 2)
-        cv2.putText(out, "LINE B (GANTRY ROAD)", (lb_start[0] + 10, max(25, lb_start[1] - 8)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 170), 2, cv2.LINE_AA)
+        mid_b_x = (lb_start[0] + lb_end[0]) // 2
+        mid_b_y = (lb_start[1] + lb_end[1]) // 2
+        cv2.putText(out, "LINE B (GANTRY ROAD)", (min(w - 180, max(10, mid_b_x - 60)), max(25, mid_b_y - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 170), 2, cv2.LINE_AA)
 
         # 2. Draw Tracked Vehicles
         for (x1, y1, x2, y2, label, conf, track_id) in tracked_objects:
@@ -404,11 +414,11 @@ class VehicleSpeedTracker:
                         ref_cx, ref_cy, ref_t = h_cx, h_cy, h_t
                         break
                 dt_h = max(0.001, curr_t - ref_t)
-                dy_h = curr_cy - ref_cy
-                if dt_h >= 0.08 and dy_h > 2:
-                    line_dist_y = max(20, lb_start[1] - la_start[1])
-                    meters_per_px = self.road_distance_meters / float(line_dist_y)
-                    calc_v = (dy_h * meters_per_px / dt_h) * 3.6
+                disp_px = math.hypot(curr_cx - ref_cx, curr_cy - ref_cy)
+                if dt_h >= 0.08 and disp_px > 3:
+                    line_dist_px = math.hypot(mid_b_x - mid_a_x, mid_b_y - mid_a_y)
+                    meters_per_px = self.road_distance_meters / max(20.0, line_dist_px)
+                    calc_v = (disp_px * meters_per_px / dt_h) * 3.6
                     if 3.0 <= calc_v <= 150.0:
                         old_v = trk.get("disp_speed")
                         if old_v is not None:
@@ -429,8 +439,10 @@ class VehicleSpeedTracker:
                 text_color = (255, 255, 255)
             else:
                 box_color = CLASS_COLORS.get(label.lower(), (0, 220, 255))
-                if y2 >= lb_start[1]:
+                if trk.get("time_line_b") is not None:
                     status_text = "PAST LINE B"
+                elif trk.get("time_line_a") is not None:
+                    status_text = "IN TRANSIT (A->B)"
                 else:
                     status_text = "APPROACHING LINE A"
                 bg_color = (30, 30, 30)
