@@ -177,7 +177,7 @@ def main():
                 # Process frame with speed tracker engine
                 annotated_frame, violations = tracker_engine.process_frame(frame, curr_time)
 
-                # Overlay live FPS stats
+                # Compute FPS and overlay stats
                 elapsed = time.time() - t_start
                 proc_fps = frame_count / max(0.001, elapsed)
                 cv2.putText(annotated_frame, f"FPS: {proc_fps:.1f}", (width - 110, 30),
@@ -185,6 +185,11 @@ def main():
 
                 if writer:
                     writer.write(annotated_frame)
+
+                # Show live processing progress in terminal every 25 frames
+                if frame_count % 25 == 0:
+                    pct_str = f"({frame_count/total_frames*100:.1f}%)" if total_frames > 0 else ""
+                    print(f"  ⏳ [PROCESSING] Frame {frame_count}/{total_frames} {pct_str} | Speed: {proc_fps:.1f} FPS | Active Tracks: {len(tracker_engine.tracker.tracks)}", flush=True)
 
             if has_display:
                 try:
