@@ -1276,31 +1276,15 @@ class DetectorWorker:
     def _capture_thread(self, cap, cap_stop_evt):
         consecutive_fails = 0
         is_local_file = os.path.isfile(str(self.rtsp_url)) or not str(self.rtsp_url).lower().startswith("rtsp")
-        
-        # Target FPS: 5.0 FPS for speed monitor, 10.0 FPS for regular cameras
-        target_fps = float(getattr(self, 'fps', 5.0 if str(getattr(self, 'cam_id', '')) == "speed" else 10.0))
-        if target_fps <= 0 or target_fps > 60.0:
-            target_fps = 5.0 if str(getattr(self, 'cam_id', '')) == "speed" else 10.0
-        frame_interval = 1.0 / target_fps
-        next_frame_time = time.time()
 
         while not self._stop_event.is_set() and not cap_stop_evt.is_set():
             try:
-                if is_local_file:
-                    now_t = time.time()
-                    if now_t < next_frame_time:
-                        time.sleep(max(0.001, next_frame_time - now_t))
-                    next_frame_time = time.time() + frame_interval
-                else:
-                    # For live RTSP streams, poll without large sleep so network frames do not queue up
-                    time.sleep(0.005)
-
                 ret, f = cap.read()
                 if not ret or f is None:
                     if is_local_file:
                         # Auto-loop video file from beginning
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        time.sleep(0.03)
+                        time.sleep(0.02)
                         continue
                     consecutive_fails += 1
                     time.sleep(0.02)
@@ -1313,6 +1297,11 @@ class DetectorWorker:
                     self._latest_raw_frame = f.copy()
                     self._last_frame_time  = time.time()
                     self._cap_ok = True
+
+                # Yield minimally to OS scheduler
+                time.sleep(0.005 if not is_local_file else 0.015)
+            except Exception:
+                time.sleep(0.02)
             except Exception:
                 time.sleep(0.02)
 
