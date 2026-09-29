@@ -1464,38 +1464,48 @@ class DetectorWorker:
 
                     print(f"[WORKER-TIMER] Camera {self.cam_id} RTSP connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
 
-                    cap_t = threading.Thread(target=self._capture_thread, args=(cap, cap_stop_evt), daemon=True)
-                    cap_t.start()
+                    if self.is_speed_worker and getattr(self, 'speed_tracker_engine', None) is not None:
+                        # ──────────────────────────────────────────────────────────
+                        # DEDICATED SPEED TRACKER PIPELINE (MATCHES run_speed_tracker.py)
+                        # ──────────────────────────────────────────────────────────
+                        is_local_file = os.path.isfile(str(self.rtsp_url)) or not str(self.rtsp_url).lower().startswith("rtsp")
+                        src_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                        if src_fps <= 0 or src_fps > 120:
+                            src_fps = 25.0
+                        
+                        target_interval = 1.0 / self.fps
+                        next_frame_time = time.time()
+                        frame_idx = 0
 
-                    f_int          = 1.0 / self.fps
-                    next_frame_time = time.time()
+                        while not self._stop_event.is_set():
+                            if is_local_file:
+                                now = time.time()
+                                if now < next_frame_time:
+                                    time.sleep(max(0.001, next_frame_time - now))
+                                next_frame_time += target_interval
+                                if now - next_frame_time > 0.5:
+                                    next_frame_time = now + target_interval
 
-                    while not self._stop_event.is_set():
-                        now = time.time()
-                        if now < next_frame_time:
-                            time.sleep(max(0.001, next_frame_time - now))
-                            continue
-                        next_frame_time += f_int
-                        if now - next_frame_time > 0.3:
-                            next_frame_time = now + f_int
+                            ret, raw_frame = cap.read()
+                            if not ret or raw_frame is None:
+                                if is_local_file:
+                                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                                    continue
+                                else:
+                                    print(f"[SPEED-WORKER] Camera {self.cam_id} RTSP stream finished or disconnected.", flush=True)
+                                    break
 
-                        if time.time() - getattr(self, '_last_frame_time', now) > 15.0 and self._latest_raw_frame is not None:
-                            print(f"[WARN] Camera {self.cam_id} frame timeout (>15s), reconnecting...", flush=True)
-                            break
+                            frame_idx += 1
+                            curr_t = (frame_idx / src_fps) if is_local_file else time.time()
 
-                        with self._frame_lock:
-                            raw_frame = self._latest_raw_frame
+                            with self._frame_lock:
+                                self._latest_raw_frame = raw_frame
+                                self._last_frame_time = time.time()
 
-                        if raw_frame is None:
-                            time.sleep(0.02)
-                            continue
-
-                        if getattr(self, 'speed_tracker_engine', None) is not None:
-                            now_t = time.time()
-                            pf, violations = self.speed_tracker_engine.process_frame(raw_frame, now_t)
+                            pf, violations = self.speed_tracker_engine.process_frame(raw_frame, curr_t)
                             if (self.width, self.height) != (pf.shape[1], pf.shape[0]):
                                 pf = cv2.resize(pf, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
-                            
+
                             self.vehicle_counts = self.speed_tracker_engine.counts
 
                             # Update live speed records from tracker
@@ -1524,23 +1534,44 @@ class DetectorWorker:
                                 print(f"🚨 [ALERT-TRIGGER-SPEED] Standalone Engine Over speed alert: cam={self.cam_id}, vehicle_id={v.get('track_id')}, class={v.get('label')}, speed={v_spd:.1f} km/h", flush=True)
                                 self._save_alert(alert_cls, pf)
 
-                            # Top-Right FPS Counter
-                            if not hasattr(self, '_frame_count_stat'):
-                                self._frame_count_stat = 0
-                                self._fps_start_t = time.time()
-                                self._stream_fps = float(self.fps)
+                            if ffmpeg.poll() is not None:
+                                break
 
-                            self._frame_count_stat += 1
-                            if self._frame_count_stat % 10 == 0:
-                                elapsed_fps = time.time() - self._fps_start_t
-                                if elapsed_fps > 0:
-                                    self._stream_fps = 10.0 / elapsed_fps
-                                self._fps_start_t = time.time()
+                            try:
+                                ffmpeg.stdin.write(pf.tobytes())
+                                ffmpeg.stdin.flush()
+                            except Exception:
+                                break
+                    else:
+                        # ──────────────────────────────────────────────────────────
+                        # LOCATION CAMERAS PIPELINE (CENTRAL INFERENCE SCHEDULER)
+                        # ──────────────────────────────────────────────────────────
+                        cap_t = threading.Thread(target=self._capture_thread, args=(cap, cap_stop_evt), daemon=True)
+                        cap_t.start()
 
-                            disp_fps = getattr(self, '_stream_fps', self.fps)
-                            cv2.putText(pf, f"FPS: {disp_fps:.1f}", (int(self.width - 110), 30),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2, cv2.LINE_AA)
-                        else:
+                        f_int          = 1.0 / self.fps
+                        next_frame_time = time.time()
+
+                        while not self._stop_event.is_set():
+                            now = time.time()
+                            if now < next_frame_time:
+                                time.sleep(max(0.001, next_frame_time - now))
+                                continue
+                            next_frame_time += f_int
+                            if now - next_frame_time > 0.3:
+                                next_frame_time = now + f_int
+
+                            if time.time() - getattr(self, '_last_frame_time', now) > 15.0 and self._latest_raw_frame is not None:
+                                print(f"[WARN] Camera {self.cam_id} frame timeout (>15s), reconnecting...", flush=True)
+                                break
+
+                            with self._frame_lock:
+                                raw_frame = self._latest_raw_frame
+
+                            if raw_frame is None:
+                                time.sleep(0.02)
+                                continue
+
                             pf = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
                             f_h, f_w = pf.shape[:2]
 
@@ -1562,14 +1593,14 @@ class DetectorWorker:
 
                             DetectorWorker._draw_boxes(pf, display_boxes)
 
-                        if ffmpeg.poll() is not None:
-                            break
+                            if ffmpeg.poll() is not None:
+                                break
 
-                        try:
-                            ffmpeg.stdin.write(pf.tobytes())
-                            ffmpeg.stdin.flush()
-                        except:
-                            break
+                            try:
+                                ffmpeg.stdin.write(pf.tobytes())
+                                ffmpeg.stdin.flush()
+                            except:
+                                break
                 except:
                     import traceback
                     traceback.print_exc()
