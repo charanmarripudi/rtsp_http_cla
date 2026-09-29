@@ -207,7 +207,7 @@ class SpeedDashboard {
 
         ctx.clearRect(0, 0, w, h);
 
-        const drawCleanLine = (line, color, labelTag) => {
+        const drawCleanLine = (line, color) => {
             if (!line) return;
             const x1 = (line.x1_pct / 100.0) * w;
             const y1 = (line.y1_pct / 100.0) * h;
@@ -227,28 +227,23 @@ class SpeedDashboard {
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
             ctx.strokeStyle = color;
-            ctx.lineWidth = 1.8;
+            ctx.lineWidth = 2;
             ctx.stroke();
 
             // Small End Point Dots
             [ [x1, y1], [x2, y2] ].forEach(([px, py]) => {
                 ctx.beginPath();
-                ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+                ctx.arc(px, py, 3, 0, Math.PI * 2);
                 ctx.fillStyle = color;
                 ctx.fill();
                 ctx.strokeStyle = "#000";
                 ctx.lineWidth = 1;
                 ctx.stroke();
             });
-
-            // Small minimal corner tag (no bulky moving box)
-            ctx.font = "bold 10px monospace";
-            ctx.fillStyle = color;
-            ctx.fillText(labelTag, x1 + 6, y1 - 4);
         };
 
-        if (this.lineA) drawCleanLine(this.lineA, "#ffdc00", "Line A");
-        if (this.lineB) drawCleanLine(this.lineB, "#00ffaa", "Line B");
+        if (this.lineA) drawCleanLine(this.lineA, "#ffdc00");
+        if (this.lineB) drawCleanLine(this.lineB, "#00ffaa");
     }
 
     setSourceType(type) {
@@ -546,14 +541,23 @@ class SpeedDashboard {
                 if (rtspInput && !rtspInput.value) rtspInput.value = cfg.rtsp_url;
             }
 
-            if (cfg.line_a && typeof cfg.line_a === "object") {
-                this.lineA = cfg.line_a;
+            // Update sidebar coordinate readout labels
+            const lblA = document.getElementById("speed-lbl-line-a");
+            const lblB = document.getElementById("speed-lbl-line-b");
+            if (lblA) {
+                lblA.textContent = (cfg.line_a && typeof cfg.line_a === "object")
+                    ? `(${cfg.line_a.x1_pct}%, ${cfg.line_a.y1_pct}%) → (${cfg.line_a.x2_pct}%, ${cfg.line_a.y2_pct}%)`
+                    : "Not Set";
             }
-            if (cfg.line_b && typeof cfg.line_b === "object") {
-                this.lineB = cfg.line_b;
+            if (lblB) {
+                lblB.textContent = (cfg.line_b && typeof cfg.line_b === "object")
+                    ? `(${cfg.line_b.x1_pct}%, ${cfg.line_b.y1_pct}%) → (${cfg.line_b.x2_pct}%, ${cfg.line_b.y2_pct}%)`
+                    : "Not Set";
             }
 
-            this.updateLineLabels();
+            // Keep canvas 100% clean and transparent on initial stage (only show lines when actively drawn)
+            this.lineA = null;
+            this.lineB = null;
             this.renderCanvas();
         } catch (e) {
             console.error("[SPEED-DASH] Error loading config:", e);
@@ -593,6 +597,12 @@ class SpeedDashboard {
                 if (hintSpan) {
                     hintSpan.textContent = "✓ Calibration lines saved!";
                     hintSpan.style.color = "#00ffaa";
+                }
+
+                // If video is not playing or has no source, ensure live stream connects
+                const video = document.getElementById("speed-video-player");
+                if (video && (!video.src || video.paused || video.readyState === 0)) {
+                    this.attachHlsStream(true, 1);
                 }
             }
         } catch (e) {

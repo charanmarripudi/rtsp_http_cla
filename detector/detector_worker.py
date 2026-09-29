@@ -441,7 +441,8 @@ class DetectorWorker:
         print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, roi_polygon={self.roi_polygon}", flush=True)
 
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.20, iou=0.45, location="Camera", model_configs=None):
-        self.roi_polygon = None
+        self._model_configs = model_configs or {}
+        self.roi_polygon = self._model_configs.get("roi_polygon") if isinstance(self._model_configs, dict) else None
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         self.is_speed_worker = (str(self.cam_id) == "speed")
