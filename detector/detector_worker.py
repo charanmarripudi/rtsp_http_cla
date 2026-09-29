@@ -435,9 +435,10 @@ class DetectorWorker:
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.20, iou=0.45, location="Camera", model_configs=None):
         self.roi_polygon = None
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
-        self.model_configs = model_configs or {}
-        self.fps, self.width, self.height = 10.0, 640, 360
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
+        is_speed_worker = (str(self.cam_id) == "speed" or any("speed" in str(mp).lower() or "vehicle" in str(mp).lower() for mp in (model_paths if isinstance(model_paths, list) else [model_paths])))
+        self.fps = 5.0 if is_speed_worker else 10.0
+        self.width, self.height = 640, 360
         self._latest_raw_frame = None
         self._tracked_boxes = []
         self._prev_inference_boxes = []
@@ -725,19 +726,14 @@ class DetectorWorker:
                         bh = max(0, y2 - y1)
                         is_veh_cls = any(vk in cls.lower() for vk in ("car", "truck", "bus", "van", "pickup", "tank truck", "vehicle", "bike"))
                         if is_veh_cls:
-                            # ── Filter 1: Min confidence ──
-                            if conf_val < 0.42:
+                            # ── Filter 1: Min area / box size for 640x360 stream canvas ──
+                            if bw < 14 or bh < 12 or (bw * bh) < 180:
                                 continue
-                            # ── Filter 2: Min area / box size ──
-                            if bw < 42 or bh < 36 or (bw * bh) < 1800:
+                            # ── Filter 2: Roadside reflector poles on image borders ──
+                            if (bh / max(1, bw)) > 3.2 and (x1 < self.width * 0.10 or x2 > self.width * 0.90):
                                 continue
-                            # ── Filter 3: Roadside reflector poles on image borders ──
-                            if (bh / max(1, bw)) > 2.8 and (x1 < self.width * 0.18 or x2 > self.width * 0.82):
-                                continue
-                            # ── Filter 4: Tree foliage & sky ──
-                            if y2 < self.height * 0.40 and x1 > self.width * 0.65:
-                                continue
-                            if y2 < self.height * 0.25 and x2 < self.width * 0.20:
+                            # ── Filter 3: Sky filter ──
+                            if y2 < self.height * 0.16:
                                 continue
                         elif bw < 10 or bh < 10:
                             continue
