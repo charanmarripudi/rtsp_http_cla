@@ -150,8 +150,11 @@ class VehicleSpeedTracker:
         self.allowed_classes = [c.lower() for c in config.get("allowed_classes", ["truck", "car", "pickup truck", "bike"])]
         self.alerts_dir = config.get("alerts_dir", "alerts")
         os.makedirs(self.alerts_dir, exist_ok=True)
+        self.frame_skip = max(1, int(config.get("frame_skip", 1)))
+        self._frame_count = 0
+        self._last_detections: List[Tuple[int, int, int, int, str, float]] = []
 
-        print(f"[INIT] Loading YOLO Vehicle Model: {self.model_path} (imgsz={self.imgsz})...")
+        print(f"[INIT] Loading YOLO Vehicle Model: {self.model_path} (imgsz={self.imgsz}, skip={self.frame_skip})...")
         self.model = YOLO(self.model_path)
         self.tracker = LowCpuCentroidTracker(max_distance=150, max_missing_frames=20)
         
@@ -183,73 +186,80 @@ class VehicleSpeedTracker:
         h, w = frame.shape[:2]
         la_start, la_end, lb_start, lb_end = self._get_pixel_lines(w, h)
 
-        # 1. Run YOLO detection with low-CPU imgsz (e.g. 416 or 320 on Pi)
-        results = self.model.predict(
-            source=frame,
-            conf=max(0.42, self.conf_thresh),
-            imgsz=self.imgsz,
-            verbose=False
-        )
+        self._frame_count += 1
+        should_infer = (self.frame_skip == 1) or (self._frame_count % self.frame_skip == 0) or not self._last_detections
 
-        raw_detections = []
-        for r in results:
-            if r.boxes is not None:
-                box_data = r.boxes.xyxy.cpu().numpy().astype(int)
-                class_data = r.boxes.cls.cpu().numpy().astype(int)
-                conf_data = r.boxes.conf.cpu().numpy()
-                for i, (x1, y1, x2, y2) in enumerate(box_data):
-                    label = r.names.get(class_data[i], str(class_data[i])).lower()
-                    score = float(conf_data[i])
-                    bw = x2 - x1
-                    bh = y2 - y1
+        if should_infer:
+            # 1. Run YOLO detection with low-CPU imgsz (e.g. 416 or 320 on Pi)
+            results = self.model.predict(
+                source=frame,
+                conf=max(0.42, self.conf_thresh),
+                imgsz=self.imgsz,
+                verbose=False
+            )
 
-                    # ── FILTER 1: Minimum confidence threshold ──
-                    if score < 0.45:
+            raw_detections = []
+            for r in results:
+                if r.boxes is not None:
+                    box_data = r.boxes.xyxy.cpu().numpy().astype(int)
+                    class_data = r.boxes.cls.cpu().numpy().astype(int)
+                    conf_data = r.boxes.conf.cpu().numpy()
+                    for i, (x1, y1, x2, y2) in enumerate(box_data):
+                        label = r.names.get(class_data[i], str(class_data[i])).lower()
+                        score = float(conf_data[i])
+                        bw = x2 - x1
+                        bh = y2 - y1
+
+                        # ── FILTER 1: Minimum confidence threshold ──
+                        if score < 0.45:
+                            continue
+
+                        # ── FILTER 2: Discard tiny noise (lane markings, dots, pebbles) ──
+                        if bw < 45 or bh < 38 or (bw * bh) < 2000:
+                            continue
+
+                        # ── FILTER 3: Discard roadside reflector posts (tall thin vertical poles on edges) ──
+                        if (bh / max(1, bw)) > 2.8 and (x1 < w * 0.18 or x2 > w * 0.82):
+                            continue
+
+                        # ── FILTER 4: Discard non-road tree foliage / off-road detections ──
+                        # Top-right tree foliage area (y2 < 0.40*h and x1 > 0.65*w)
+                        if y2 < h * 0.40 and x1 > w * 0.65:
+                            continue
+                        # Far top left off-road / sky area
+                        if y2 < h * 0.25 and x2 < w * 0.20:
+                            continue
+
+                        # Filter allowed vehicle classes
+                        if not self.allowed_classes or any(c in label for c in self.allowed_classes):
+                            raw_detections.append((x1, y1, x2, y2, label, score))
+
+            # ── FILTER 5: Suppress nested sub-boxes and overlapping partial detections ──
+            detections = []
+            for d in raw_detections:
+                dx1, dy1, dx2, dy2, dlbl, dscore = d
+                d_area = (dx2 - dx1) * (dy2 - dy1)
+                is_nested_sub_box = False
+                for od in raw_detections:
+                    if od == d:
                         continue
-
-                    # ── FILTER 2: Discard tiny noise (lane markings, dots, pebbles) ──
-                    if bw < 45 or bh < 38 or (bw * bh) < 2000:
-                        continue
-
-                    # ── FILTER 3: Discard roadside reflector posts (tall thin vertical poles on edges) ──
-                    if (bh / max(1, bw)) > 2.8 and (x1 < w * 0.18 or x2 > w * 0.82):
-                        continue
-
-                    # ── FILTER 4: Discard non-road tree foliage / off-road detections ──
-                    # Top-right tree foliage area (y2 < 0.40*h and x1 > 0.65*w)
-                    if y2 < h * 0.40 and x1 > w * 0.65:
-                        continue
-                    # Far top left off-road / sky area
-                    if y2 < h * 0.25 and x2 < w * 0.20:
-                        continue
-
-                    # Filter allowed vehicle classes
-                    if not self.allowed_classes or any(c in label for c in self.allowed_classes):
-                        raw_detections.append((x1, y1, x2, y2, label, score))
-
-        # ── FILTER 5: Suppress nested sub-boxes and overlapping partial detections ──
-        detections = []
-        for d in raw_detections:
-            dx1, dy1, dx2, dy2, dlbl, dscore = d
-            d_area = (dx2 - dx1) * (dy2 - dy1)
-            is_nested_sub_box = False
-            for od in raw_detections:
-                if od == d:
-                    continue
-                ox1, oy1, ox2, oy2, olbl, oscore = od
-                o_area = (ox2 - ox1) * (oy2 - oy1)
-                
-                # Check overlap / intersection
-                ix1, iy1 = max(dx1, ox1), max(dy1, oy1)
-                ix2, iy2 = min(dx2, ox2), min(dy2, oy2)
-                if ix1 < ix2 and iy1 < iy2:
-                    inter_area = (ix2 - ix1) * (iy2 - iy1)
-                    # If this box is largely inside another box or shares high overlap
-                    if o_area >= d_area and (inter_area / float(d_area)) > 0.50:
-                        is_nested_sub_box = True
-                        break
-            if not is_nested_sub_box:
-                detections.append(d)
+                    ox1, oy1, ox2, oy2, olbl, oscore = od
+                    o_area = (ox2 - ox1) * (oy2 - oy1)
+                    
+                    # Check overlap / intersection
+                    ix1, iy1 = max(dx1, ox1), max(dy1, oy1)
+                    ix2, iy2 = min(dx2, ox2), min(dy2, oy2)
+                    if ix1 < ix2 and iy1 < iy2:
+                        inter_area = (ix2 - ix1) * (iy2 - iy1)
+                        # If this box is largely inside another box or shares high overlap
+                        if o_area >= d_area and (inter_area / float(d_area)) > 0.50:
+                            is_nested_sub_box = True
+                            break
+                if not is_nested_sub_box:
+                    detections.append(d)
+            self._last_detections = detections
+        else:
+            detections = self._last_detections
 
         # 2. Update Fast Centroid Tracker
         tracked_objects = self.tracker.update(detections, now_t)

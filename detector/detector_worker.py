@@ -437,6 +437,7 @@ class DetectorWorker:
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.model_configs = model_configs or {}
         self.fps, self.width, self.height = 10.0, 640, 360
+        self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         self._latest_raw_frame = None
         self._tracked_boxes = []
         self._prev_inference_boxes = []
@@ -444,7 +445,6 @@ class DetectorWorker:
         self._stop_event = threading.Event()
         self._last_frame_time, self._cap_ok = time.time(), True
         self.alert_timers, self.alert_triggered = {}, set()
-        self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         self.speed_limit_kmh = float(os.getenv("TERMINAL_SPEED_LIMIT", "10.0"))
         self.road_distance_meters = float(os.getenv("TERMINAL_GATE_GANTRY_METERS", "20.0"))
         self.line_a_ratio = float(os.getenv("LINE_A_RATIO", "0.40"))
@@ -1211,19 +1211,23 @@ class DetectorWorker:
         consecutive_fails = 0
         is_local_file = os.path.isfile(str(self.rtsp_url)) or not str(self.rtsp_url).lower().startswith("rtsp")
         
-        # Enforce constant target FPS pacing (e.g. 10-12 FPS) so RTSP loop broadcasts and video files never rush in fast-forward
-        target_fps = float(getattr(self, 'fps', 10.0))
+        # Target FPS: 5.0 FPS for speed monitor, 10.0 FPS for regular cameras
+        target_fps = float(getattr(self, 'fps', 5.0 if str(getattr(self, 'cam_id', '')) == "speed" else 10.0))
         if target_fps <= 0 or target_fps > 60.0:
-            target_fps = 10.0
+            target_fps = 5.0 if str(getattr(self, 'cam_id', '')) == "speed" else 10.0
         frame_interval = 1.0 / target_fps
         next_frame_time = time.time()
 
         while not self._stop_event.is_set() and not cap_stop_evt.is_set():
             try:
-                now_t = time.time()
-                if now_t < next_frame_time:
-                    time.sleep(max(0.001, next_frame_time - now_t))
-                next_frame_time = time.time() + frame_interval
+                if is_local_file:
+                    now_t = time.time()
+                    if now_t < next_frame_time:
+                        time.sleep(max(0.001, next_frame_time - now_t))
+                    next_frame_time = time.time() + frame_interval
+                else:
+                    # For live RTSP streams, poll without large sleep so network frames do not queue up
+                    time.sleep(0.005)
 
                 ret, f = cap.read()
                 if not ret or f is None:

@@ -52,6 +52,7 @@ def main():
     parser.add_argument("--limit", type=float, default=None, help="Speed limit in km/h (default: 10.0)")
     parser.add_argument("--distance", type=float, default=None, help="Distance between Line A and Line B in meters (default: 20.0)")
     parser.add_argument("--imgsz", type=int, default=None, help="Inference resolution (default: 416 for Pi CPU)")
+    parser.add_argument("--skip", type=int, default=None, help="YOLO frame skipping factor (e.g. 2 = run inference every 2nd frame for low CPU)")
     parser.add_argument("--loop", action="store_true", help="Loop video continuously if testing with a video file")
     parser.add_argument("--output", type=str, default=None, help="Optional output video file to save result (.mp4)")
     parser.add_argument("--no-display", action="store_true", help="Run in headless mode without cv2.imshow")
@@ -93,6 +94,8 @@ def main():
         cfg["road_distance_meters"] = args.distance
     if args.imgsz is not None:
         cfg["imgsz"] = args.imgsz
+    if args.skip is not None:
+        cfg["frame_skip"] = args.skip
 
     should_loop = args.loop or cfg.get("loop_video", False)
     is_live_stream = is_rtsp_stream(source)
