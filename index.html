@@ -1561,6 +1561,9 @@
           <div id="speed-src-container-rtsp" style="display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px;">
             <label style="font-size: 0.72rem; color: var(--muted); font-weight: 600;">RTSP URL:</label>
             <input type="text" id="speed-custom-rtsp-input" placeholder="rtsp://192.168.96.72:8554/vehicle_speed" style="flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; font-size: 0.78rem; border-radius: 6px; outline: none; font-family: var(--mono);">
+            <button type="button" id="speed-btn-save-connect" onclick="if(window.speedDashboard) window.speedDashboard.saveAndConnectStream()" class="btn-primary" style="padding: 6px 14px; font-size: 0.75rem; font-weight: 700; background: #38bdf8; color: #000; border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap;">
+              <span>💾</span> Save & Connect
+            </button>
           </div>
 
           <div id="speed-src-container-video" style="display: none; flex-direction: column; gap: 8px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px;">

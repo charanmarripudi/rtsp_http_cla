@@ -382,9 +382,11 @@ class VehicleSpeedTracker:
         out = frame.copy()
         h, w = out.shape[:2]
 
-        # 1. Draw Subtle Timing Lines (No bulky text boxes on stream)
-        cv2.line(out, la_start, la_end, (255, 220, 0), 1)
-        cv2.line(out, lb_start, lb_end, (0, 255, 170), 1)
+        # 1. Draw Subtle Timing Lines ONLY if explicitly calibrated by user
+        has_lines = bool(self.config.get("line_a") and self.config.get("line_b"))
+        if has_lines:
+            cv2.line(out, la_start, la_end, (255, 220, 0), 1)
+            cv2.line(out, lb_start, lb_end, (0, 255, 170), 1)
 
         # 2. Draw Tracked Vehicles
         for (x1, y1, x2, y2, label, conf, track_id) in tracked_objects:
@@ -431,17 +433,42 @@ class VehicleSpeedTracker:
                 text_color = (255, 255, 255)
             else:
                 box_color = CLASS_COLORS.get(label.lower(), (0, 220, 255))
-                if trk.get("time_line_b") is not None:
-                    status_text = "PAST LINE B"
-                elif trk.get("time_line_a") is not None:
-                    status_text = "IN TRANSIT (A->B)"
+                if has_lines:
+                    if trk.get("time_line_b") is not None:
+                        status_text = "PAST LINE B"
+                    elif trk.get("time_line_a") is not None:
+                        status_text = "IN TRANSIT"
+                    else:
+                        status_text = "APPROACHING"
                 else:
-                    status_text = "APPROACHING LINE A"
+                    status_text = None
                 bg_color = (30, 30, 30)
                 text_color = (200, 200, 200)
 
             # Draw bounding box
             cv2.rectangle(out, (x1, y1), (x2, y2), box_color, 2)
+
+            # Label banner above bounding box
+            header = f"{label.upper()} #{track_id} ({conf:.0%})"
+            sub = status_text
+            
+            (tw1, th1), _ = cv2.getTextSize(header, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            if sub:
+                (tw2, th2), _ = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 2)
+                max_w = max(tw1, tw2) + 14
+                bg_y1 = max(0, y1 - 38)
+                bg_y2 = y1
+                cv2.rectangle(out, (x1, bg_y1), (x1 + max_w, bg_y2), bg_color, -1)
+                cv2.rectangle(out, (x1, bg_y1), (x1 + max_w, bg_y2), box_color, 1)
+                cv2.putText(out, header, (x1 + 5, bg_y1 + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.putText(out, sub, (x1 + 5, bg_y1 + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.44, text_color, 2, cv2.LINE_AA)
+            else:
+                max_w = tw1 + 12
+                bg_y1 = max(0, y1 - 20)
+                bg_y2 = y1
+                cv2.rectangle(out, (x1, bg_y1), (x1 + max_w, bg_y2), bg_color, -1)
+                cv2.rectangle(out, (x1, bg_y1), (x1 + max_w, bg_y2), box_color, 1)
+                cv2.putText(out, header, (x1 + 4, bg_y1 + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
 
             # Label banner above bounding box
             header = f"{label.upper()} #{track_id} ({conf:.0%})"

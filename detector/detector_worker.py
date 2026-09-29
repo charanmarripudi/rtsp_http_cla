@@ -444,8 +444,7 @@ class DetectorWorker:
         self.roi_polygon = None
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
-        is_speed_worker = (str(self.cam_id) == "speed" or any("speed" in str(mp).lower() or "vehicle" in str(mp).lower() for mp in (model_paths if isinstance(model_paths, list) else [model_paths])))
-        self.is_speed_worker = is_speed_worker
+        self.is_speed_worker = (str(self.cam_id) == "speed")
         self.fps = 10.0
         self.width, self.height = 640, 360
         self._latest_raw_frame = None
@@ -533,6 +532,9 @@ class DetectorWorker:
         # Reset EMA tracks when models change so stale boxes from old model don't linger
         self._ema_tracks = {}
         self._ema_next_id = 0
+        self._needs_immediate_inference = True
+        if not getattr(self, 'is_speed_worker', False):
+            GLOBAL_INFERENCE_SCHEDULER.register_worker(self)
         print(f"[WORKER-DYNAMIC-UPDATE] Camera {getattr(self, 'cam_id', '?')} dynamically updated models to {self.model_paths} in 0ms without restarting RTSP or FFmpeg", flush=True)
 
     def stop(self):
@@ -608,9 +610,10 @@ class DetectorWorker:
         """
         if not boxes:
             return []
+        sorted_boxes = sorted(boxes, key=lambda x: x[2], reverse=True)
         kept = []
         veh_kws = ("car", "truck", "bus", "van", "pickup", "bike", "vehicle")
-        for item in boxes:
+        for item in sorted_boxes:
             b1, col1, conf1, cls1 = item
             is_veh1 = any(vk in cls1.lower() for vk in veh_kws)
             suppress = False
@@ -1306,7 +1309,7 @@ class DetectorWorker:
                     continue
                 consecutive_fails = 0
                 with self._frame_lock:
-                    self._latest_raw_frame = f
+                    self._latest_raw_frame = f.copy()
                     self._last_frame_time  = time.time()
                     self._cap_ok = True
             except Exception:

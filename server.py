@@ -974,8 +974,6 @@ async def hls_options_handler(path: str = None, cam_id: str = None, filename: st
 async def serve_camera_virtual_file(cam_id: str, filename: str, request: Request = None):
     if cam_id in running:
         sub = f"stream{cam_id}_detected"
-    elif cam_id == "speed":
-        sub = f"stream{cam_id}_detected"
     else:
         sub = f"stream{cam_id}_raw"
     return await serve_hls(f"{sub}/{filename}", request=request)
@@ -2254,8 +2252,9 @@ def _get_speed_config():
         "road_distance_meters": 20.0,
         "line_a_ratio": 0.40,
         "line_b_ratio": 0.75,
-        "line_a": {"x1_pct": 5, "y1_pct": 40, "x2_pct": 95, "y2_pct": 40},
-        "line_b": {"x1_pct": 5, "y1_pct": 75, "x2_pct": 95, "y2_pct": 75}
+        "line_a": None,
+        "line_b": None,
+        "rtsp_url": ""
     }
     if os.path.exists(SPEED_CONFIG_FILE):
         try:
@@ -2273,7 +2272,7 @@ def get_speed_config():
 
 @app.post("/api/speed/config")
 def update_speed_config(d: dict = Body(...)):
-    """Dynamically updates speed limit, road distance, and line coordinates across running camera workers."""
+    """Dynamically updates speed limit, road distance, RTSP URL, and line coordinates."""
     cfg = _get_speed_config()
     if "speed_limit_kmh" in d:
         cfg["speed_limit_kmh"] = float(d["speed_limit_kmh"])
@@ -2283,20 +2282,28 @@ def update_speed_config(d: dict = Body(...)):
         cfg["line_a_ratio"] = float(d["line_a_ratio"])
     if "line_b_ratio" in d:
         cfg["line_b_ratio"] = float(d["line_b_ratio"])
-    if "line_a" in d and isinstance(d["line_a"], dict):
-        cfg["line_a"] = {
-            "x1_pct": float(d["line_a"].get("x1_pct", 5)),
-            "y1_pct": float(d["line_a"].get("y1_pct", 40)),
-            "x2_pct": float(d["line_a"].get("x2_pct", 95)),
-            "y2_pct": float(d["line_a"].get("y2_pct", 40))
-        }
-    if "line_b" in d and isinstance(d["line_b"], dict):
-        cfg["line_b"] = {
-            "x1_pct": float(d["line_b"].get("x1_pct", 5)),
-            "y1_pct": float(d["line_b"].get("y1_pct", 75)),
-            "x2_pct": float(d["line_b"].get("x2_pct", 95)),
-            "y2_pct": float(d["line_b"].get("y2_pct", 75))
-        }
+    if "rtsp_url" in d:
+        cfg["rtsp_url"] = str(d["rtsp_url"]).strip()
+    if "line_a" in d:
+        if d["line_a"] is None:
+            cfg["line_a"] = None
+        elif isinstance(d["line_a"], dict):
+            cfg["line_a"] = {
+                "x1_pct": float(d["line_a"].get("x1_pct", 5)),
+                "y1_pct": float(d["line_a"].get("y1_pct", 40)),
+                "x2_pct": float(d["line_a"].get("x2_pct", 95)),
+                "y2_pct": float(d["line_a"].get("y2_pct", 40))
+            }
+    if "line_b" in d:
+        if d["line_b"] is None:
+            cfg["line_b"] = None
+        elif isinstance(d["line_b"], dict):
+            cfg["line_b"] = {
+                "x1_pct": float(d["line_b"].get("x1_pct", 5)),
+                "y1_pct": float(d["line_b"].get("y1_pct", 75)),
+                "x2_pct": float(d["line_b"].get("x2_pct", 95)),
+                "y2_pct": float(d["line_b"].get("y2_pct", 75))
+            }
 
     with open(SPEED_CONFIG_FILE, "w") as f:
         json.dump(cfg, f, indent=2)
@@ -2312,10 +2319,8 @@ def update_speed_config(d: dict = Body(...)):
             if hasattr(w, "speed_tracker_engine") and w.speed_tracker_engine:
                 w.speed_tracker_engine.speed_limit_kmh = cfg["speed_limit_kmh"]
                 w.speed_tracker_engine.road_distance_meters = cfg["road_distance_meters"]
-                if "line_a" in cfg:
-                    w.speed_tracker_engine.config["line_a"] = cfg["line_a"]
-                if "line_b" in cfg:
-                    w.speed_tracker_engine.config["line_b"] = cfg["line_b"]
+                w.speed_tracker_engine.config["line_a"] = cfg.get("line_a")
+                w.speed_tracker_engine.config["line_b"] = cfg.get("line_b")
 
     return {"status": "updated", "config": cfg}
 
@@ -2441,6 +2446,32 @@ async def upload_speed_video(request: Request):
         buffer.write(body)
     return {"status": "ok", "filename": clean_name, "filepath": dest_path}
 
+@app.post("/api/speed/preview")
+def preview_speed_camera(d: dict = Body(...)):
+    """Starts or connects raw RTSP stream for preview in Speed Dashboard."""
+    rtsp = str(d.get("rtsp", "")).strip()
+    if not rtsp:
+        cfg = _get_speed_config()
+        rtsp = cfg.get("rtsp_url", "")
+    if not rtsp:
+        return {"status": "error", "message": "No RTSP stream URL provided"}
+    
+    # Save rtsp_url to speed_config
+    cfg = _get_speed_config()
+    cfg["rtsp_url"] = rtsp
+    try:
+        with open(SPEED_CONFIG_FILE, "w") as f:
+            json.dump(cfg, f, indent=2)
+    except: pass
+
+    # If detection is running on speed, stop detection first
+    if "speed" in running:
+        stop_detection({"camera": "speed"})
+        time.sleep(0.1)
+
+    start_raw_stream("speed", rtsp)
+    return {"status": "ok", "stream": "/hls/camera/speed/playlist.m3u8"}
+
 @app.post("/api/speed/start")
 def start_speed_tracker(d: dict = Body(...)):
     """Direct start for Vehicle Speed Tracking on a custom RTSP or test video file."""
@@ -2455,6 +2486,14 @@ def start_speed_tracker(d: dict = Body(...)):
 
     if not rtsp:
         return {"status": "error", "message": "No RTSP stream URL or video file provided"}
+
+    # Save rtsp_url to speed_config
+    cfg = _get_speed_config()
+    cfg["rtsp_url"] = rtsp
+    try:
+        with open(SPEED_CONFIG_FILE, "w") as f:
+            json.dump(cfg, f, indent=2)
+    except: pass
 
     models = d.get("models")
     if not models or not isinstance(models, list):
@@ -2488,8 +2527,15 @@ def start_speed_tracker(d: dict = Body(...)):
 
 @app.post("/api/speed/stop")
 def stop_speed_tracker(d: dict = Body(None)):
-    """Direct one-click stop for Vehicle Speed Tracking."""
-    return stop_detection({"camera": "speed"})
+    """Direct one-click stop for Vehicle Speed Tracking: stops detection and resumes normal raw stream."""
+    cfg = _get_speed_config()
+    rtsp = cfg.get("rtsp_url", "")
+    if "speed" in running:
+        rtsp = running["speed"].get("rtsp", rtsp)
+    stop_detection({"camera": "speed"})
+    if rtsp and is_valid_rtsp_url(rtsp):
+        start_raw_stream("speed", rtsp)
+    return {"status": "ok", "message": "Speed monitor stopped, raw stream active"}
 
 @app.get("/api/locations")
 async def get_locations(

@@ -541,7 +541,18 @@ class SpeedDashboard {
             const distInput = document.getElementById("speed-cfg-dist");
             if (distInput && cfg.road_distance_meters !== undefined) distInput.value = cfg.road_distance_meters;
 
-            // Keep canvas 100% clean on load - only update text labels
+            if (cfg.rtsp_url) {
+                const rtspInput = document.getElementById("speed-custom-rtsp-input");
+                if (rtspInput && !rtspInput.value) rtspInput.value = cfg.rtsp_url;
+            }
+
+            if (cfg.line_a && typeof cfg.line_a === "object") {
+                this.lineA = cfg.line_a;
+            }
+            if (cfg.line_b && typeof cfg.line_b === "object") {
+                this.lineB = cfg.line_b;
+            }
+
             this.updateLineLabels();
             this.renderCanvas();
         } catch (e) {
@@ -562,6 +573,9 @@ class SpeedDashboard {
 
         if (this.lineA) payload.line_a = this.lineA;
         if (this.lineB) payload.line_b = this.lineB;
+
+        const streamUrl = this._getStreamUrl();
+        if (streamUrl) payload.rtsp_url = streamUrl;
 
         try {
             if (statusSpan) statusSpan.textContent = "Applying...";
@@ -601,7 +615,7 @@ class SpeedDashboard {
         return "";
     }
 
-    async startPreview() {
+    async saveAndConnectStream() {
         const statusSpan = document.getElementById("speed-monitor-status");
         const streamUrl = this._getStreamUrl();
 
@@ -613,36 +627,36 @@ class SpeedDashboard {
             return;
         }
 
-        const payload = {
-            camera: "speed",
-            location: "Vehicle Speed Monitor",
-            source_type: this.sourceType,
-            rtsp: streamUrl,
-            models: this.availableModels.slice(0, 1),
-            conf: 0.25,
-            iou: 0.45
-        };
-
         try {
             if (statusSpan) {
-                statusSpan.textContent = "▶ Starting camera stream...";
+                statusSpan.textContent = "💾 Saving & Connecting stream...";
                 statusSpan.style.color = "#38bdf8";
             }
-            const res = await fetch("/api/speed/start", {
+            const res = await fetch("/api/speed/preview", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({ rtsp: streamUrl })
             });
-            if (res.ok) {
+            const data = await res.json();
+            if (res.ok && data.status === "ok") {
                 if (statusSpan) {
-                    statusSpan.textContent = "● Live Stream Active (Draw lines on video if needed)";
-                    statusSpan.style.color = "#38bdf8";
+                    statusSpan.textContent = "● Live Stream Active (Ready to Draw Lines / Start)";
+                    statusSpan.style.color = "#00ffaa";
                 }
                 this.attachHlsStream(true, 1);
+            } else {
+                if (statusSpan) {
+                    statusSpan.textContent = data.message || "Failed to connect stream";
+                    statusSpan.style.color = "#ff4444";
+                }
             }
         } catch (e) {
-            console.error("[SPEED-DASH] Preview start failed:", e);
+            console.error("[SPEED-DASH] Save & Connect failed:", e);
         }
+    }
+
+    async startPreview() {
+        return this.saveAndConnectStream();
     }
 
     async startMonitoring() {
@@ -744,7 +758,7 @@ class SpeedDashboard {
         }
 
         try {
-            if (statusSpan) statusSpan.textContent = "Stopping...";
+            if (statusSpan) statusSpan.textContent = "Stopping AI monitor...";
             const res = await fetch("/api/speed/stop", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -754,19 +768,11 @@ class SpeedDashboard {
 
             if (res.ok) {
                 if (statusSpan) {
-                    statusSpan.textContent = "○ Speed Monitor Stopped";
-                    statusSpan.style.color = "var(--muted)";
+                    statusSpan.textContent = "○ Speed Monitor Stopped (Normal Stream Live)";
+                    statusSpan.style.color = "#38bdf8";
                 }
-                if (this.hlsPlayer) {
-                    this.hlsPlayer.destroy();
-                    this.hlsPlayer = null;
-                }
-                const video = document.getElementById("speed-video-player");
-                if (video) {
-                    video.pause();
-                    video.removeAttribute("src");
-                    video.load();
-                }
+                // Continue showing live raw stream without black screen
+                this.attachHlsStream(true, 1);
             }
         } catch (e) {
             console.error("[SPEED-DASH] Stop failed:", e);
