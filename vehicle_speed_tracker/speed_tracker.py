@@ -401,23 +401,27 @@ class VehicleSpeedTracker:
             elif t_a is not None:
                 # Vehicle is currently traveling between Line A and Line B
                 line_dist_y = max(20, lb_start[1] - la_start[1])
-                y_prog = max(0.05, min(1.0, (y2 - la_start[1]) / float(line_dist_y)))
-                dt = max(0.05, now_t - t_a)
-                live_est = max(2.0, min(140.0, ((self.road_distance_meters * y_prog) / dt) * 3.6))
-                
-                # If vehicle is exceeding speed limit while in between lines, turn RED immediately!
-                if live_est > self.speed_limit_kmh:
-                    box_color = (0, 0, 255)   # RED for Over Speed
-                    status_text = f"OVER SPEED: ~{live_est:.1f} km/h (LIMIT: {self.speed_limit_kmh:.0f})"
-                    bg_color = (0, 0, 220)
-                    text_color = (255, 255, 255)
+                y_prog = max(0.01, min(1.0, (y2 - la_start[1]) / float(line_dist_y)))
+                dt = max(0.01, now_t - t_a)
+                if dt >= 0.5 and y_prog >= 0.15:
+                    live_est = max(2.0, min(140.0, ((self.road_distance_meters * y_prog) / dt) * 3.6))
+                    if live_est > self.speed_limit_kmh:
+                        box_color = (0, 0, 255)   # RED for Over Speed
+                        status_text = f"OVER SPEED: ~{live_est:.1f} km/h (LIMIT: {self.speed_limit_kmh:.0f})"
+                        bg_color = (0, 0, 220)
+                        text_color = (255, 255, 255)
+                    else:
+                        box_color = (0, 230, 100) # Green for compliant speed
+                        status_text = f"SPEED: ~{live_est:.1f} km/h"
+                        bg_color = (0, 160, 60)
+                        text_color = (255, 255, 255)
                 else:
-                    box_color = (0, 230, 100) # Green for compliant speed
-                    status_text = f"SPEED: ~{live_est:.1f} km/h"
-                    bg_color = (0, 160, 60)
-                    text_color = (255, 255, 255)
+                    box_color = (255, 200, 0) # Amber / Yellow for in-transit
+                    status_text = "IN TRANSIT (LINE A -> B)"
+                    bg_color = (30, 30, 30)
+                    text_color = (255, 220, 0)
             else:
-                box_color = CLASS_COLORS.get(label.lower(), (255, 180, 0))
+                box_color = CLASS_COLORS.get(label.lower(), (0, 220, 255))
                 if y2 >= lb_start[1]:
                     status_text = "PAST LINE B"
                 else:
