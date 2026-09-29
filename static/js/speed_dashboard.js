@@ -1,7 +1,7 @@
 /**
  * Dynamic Vehicle Speed & Count Dashboard Module
  * Plug-and-play AI Speed Enforcement & Telemetry
- * Supports: Real-time Camera Preview, Any-Angle Dual-Line Drawing, Zero Hardcoded Models/Paths
+ * Clean Stream, Minimalist Any-Angle Drawing, Zero Bulky Text Banners
  */
 
 class SpeedDashboard {
@@ -16,7 +16,7 @@ class SpeedDashboard {
         this.modelClassesCache = {};
         this.hlsRetryTimer = null;
 
-        // Any-Angle Line Calibration State (Starts empty until user draws)
+        // Any-Angle Line Calibration State (Default null for a 100% clean canvas)
         this.lineA = null;
         this.lineB = null;
         this.drawingMode = null; // 'line_a' | 'line_b' | null
@@ -119,7 +119,7 @@ class SpeedDashboard {
             const hint = document.getElementById("speed-draw-hint");
             const modeName = this.drawingMode === "line_a" ? "Line A (Gate)" : "Line B (Gantry)";
             if (hint) {
-                hint.textContent = `✓ ${modeName} Drawn! Click "Save Lines" or start detection.`;
+                hint.textContent = `✓ ${modeName} Set!`;
                 hint.style.color = "#00ffaa";
             }
             this.setDrawingMode(null);
@@ -154,13 +154,13 @@ class SpeedDashboard {
 
         if (mode === "line_a") {
             if (hint) {
-                hint.textContent = "✏️ Click & drag across the video to draw Line A (Gate Entry)";
+                hint.textContent = "✏️ Click & drag across the stream to draw Line A (Gate Entry)";
                 hint.style.color = "#ffdc00";
             }
             if (canvas) canvas.style.cursor = "crosshair";
         } else if (mode === "line_b") {
             if (hint) {
-                hint.textContent = "✏️ Click & drag across the video to draw Line B (Gantry Road)";
+                hint.textContent = "✏️ Click & drag across the stream to draw Line B (Gantry Road)";
                 hint.style.color = "#00ffaa";
             }
             if (canvas) canvas.style.cursor = "crosshair";
@@ -178,7 +178,7 @@ class SpeedDashboard {
         this.updateLineLabels();
         const hint = document.getElementById("speed-draw-hint");
         if (hint) {
-            hint.textContent = "Lines cleared. Click 'Draw Line A' or 'Draw Line B' to calibrate.";
+            hint.textContent = "Lines cleared from stream.";
             hint.style.color = "var(--muted)";
         }
     }
@@ -189,12 +189,12 @@ class SpeedDashboard {
         if (lblA) {
             lblA.textContent = this.lineA
                 ? `(${this.lineA.x1_pct}%, ${this.lineA.y1_pct}%) → (${this.lineA.x2_pct}%, ${this.lineA.y2_pct}%)`
-                : "Not Set (Click Draw Line A)";
+                : "Not Set";
         }
         if (lblB) {
             lblB.textContent = this.lineB
                 ? `(${this.lineB.x1_pct}%, ${this.lineB.y1_pct}%) → (${this.lineB.x2_pct}%, ${this.lineB.y2_pct}%)`
-                : "Not Set (Click Draw Line B)";
+                : "Not Set";
         }
     }
 
@@ -207,60 +207,48 @@ class SpeedDashboard {
 
         ctx.clearRect(0, 0, w, h);
 
-        const drawSegment = (line, color, label) => {
+        const drawCleanLine = (line, color, labelTag) => {
             if (!line) return;
             const x1 = (line.x1_pct / 100.0) * w;
             const y1 = (line.y1_pct / 100.0) * h;
             const x2 = (line.x2_pct / 100.0) * w;
             const y2 = (line.y2_pct / 100.0) * h;
 
-            // Line Shadow
+            // Subtle Drop Shadow
             ctx.beginPath();
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
-            ctx.strokeStyle = "rgba(0,0,0,0.8)";
-            ctx.lineWidth = 4;
+            ctx.strokeStyle = "rgba(0,0,0,0.6)";
+            ctx.lineWidth = 3;
             ctx.stroke();
 
-            // Main Line
+            // Sleek Crisp Line
             ctx.beginPath();
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
             ctx.strokeStyle = color;
-            ctx.lineWidth = 2.5;
+            ctx.lineWidth = 1.8;
             ctx.stroke();
 
-            // Endpoint Handles
+            // Small End Point Dots
             [ [x1, y1], [x2, y2] ].forEach(([px, py]) => {
                 ctx.beginPath();
-                ctx.arc(px, py, 5, 0, Math.PI * 2);
+                ctx.arc(px, py, 3.5, 0, Math.PI * 2);
                 ctx.fillStyle = color;
                 ctx.fill();
                 ctx.strokeStyle = "#000";
-                ctx.lineWidth = 1.5;
+                ctx.lineWidth = 1;
                 ctx.stroke();
             });
 
-            // Midpoint Label
-            const midX = (x1 + x2) / 2;
-            const midY = (y1 + y2) / 2;
-
-            ctx.font = "bold 11px monospace";
-            const textWidth = ctx.measureText(label).width;
-            ctx.fillStyle = "rgba(10, 15, 25, 0.85)";
-            ctx.fillRect(midX - textWidth / 2 - 5, midY - 18, textWidth + 10, 16);
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 1;
-            ctx.strokeRect(midX - textWidth / 2 - 5, midY - 18, textWidth + 10, 16);
-
+            // Small minimal corner tag (no bulky moving box)
+            ctx.font = "bold 10px monospace";
             ctx.fillStyle = color;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText(label, midX, midY - 10);
+            ctx.fillText(labelTag, x1 + 6, y1 - 4);
         };
 
-        if (this.lineA) drawSegment(this.lineA, "#ffdc00", "LINE A: GATE ENTRY");
-        if (this.lineB) drawSegment(this.lineB, "#00ffaa", "LINE B: GANTRY ROAD");
+        if (this.lineA) drawCleanLine(this.lineA, "#ffdc00", "Line A");
+        if (this.lineB) drawCleanLine(this.lineB, "#00ffaa", "Line B");
     }
 
     setSourceType(type) {
@@ -345,10 +333,9 @@ class SpeedDashboard {
                 models = data.models || [];
             }
 
-            // Dynamically select vehicle models present in the models directory (excluding general yolov8n.pt)
+            // Dynamically select models present in models folder without yolov8n
             let speedModels = models.filter(m => (m.toLowerCase().includes("vehicle") || m.toLowerCase().includes("speed") || m.toLowerCase().includes("car") || m.toLowerCase().includes("truck")) && m !== "yolov8n.pt");
             
-            // If no model has "vehicle" in the name, show all available models except yolov8n
             if (speedModels.length === 0) {
                 speedModels = models.filter(m => m !== "yolov8n.pt");
             }
@@ -358,7 +345,7 @@ class SpeedDashboard {
 
             this.availableModels = speedModels;
 
-            // Fetch classes directly from the model's metadata
+            // Fetch classes directly from the model metadata
             await Promise.all(speedModels.map(async (m) => {
                 try {
                     const r = await fetch(`/api/model-classes?model=${encodeURIComponent(m)}`);
@@ -554,13 +541,7 @@ class SpeedDashboard {
             const distInput = document.getElementById("speed-cfg-dist");
             if (distInput && cfg.road_distance_meters !== undefined) distInput.value = cfg.road_distance_meters;
 
-            if (cfg.line_a && typeof cfg.line_a === "object" && cfg.line_a.x1_pct !== undefined) {
-                this.lineA = cfg.line_a;
-            }
-            if (cfg.line_b && typeof cfg.line_b === "object" && cfg.line_b.x1_pct !== undefined) {
-                this.lineB = cfg.line_b;
-            }
-
+            // Keep canvas 100% clean on load - only update text labels
             this.updateLineLabels();
             this.renderCanvas();
         } catch (e) {
@@ -591,12 +572,12 @@ class SpeedDashboard {
             });
             if (res.ok) {
                 if (statusSpan) {
-                    statusSpan.textContent = "Saved & Applied Live!";
+                    statusSpan.textContent = "Saved Live!";
                     statusSpan.style.color = "#00ffaa";
                     setTimeout(() => { statusSpan.textContent = ""; }, 3000);
                 }
                 if (hintSpan) {
-                    hintSpan.textContent = "✓ Calibration lines active!";
+                    hintSpan.textContent = "✓ Calibration lines saved!";
                     hintSpan.style.color = "#00ffaa";
                 }
             }
@@ -644,7 +625,7 @@ class SpeedDashboard {
 
         try {
             if (statusSpan) {
-                statusSpan.textContent = "▶ Connecting live camera preview...";
+                statusSpan.textContent = "▶ Starting camera stream...";
                 statusSpan.style.color = "#38bdf8";
             }
             const res = await fetch("/api/speed/start", {
@@ -654,7 +635,7 @@ class SpeedDashboard {
             });
             if (res.ok) {
                 if (statusSpan) {
-                    statusSpan.textContent = "● Live Camera Preview Active (Draw Lines on Video)";
+                    statusSpan.textContent = "● Live Stream Active (Draw lines on video if needed)";
                     statusSpan.style.color = "#38bdf8";
                 }
                 this.attachHlsStream(true, 1);
@@ -676,7 +657,6 @@ class SpeedDashboard {
             return;
         }
 
-        // Collect selected models and their enabled classes
         const checkedModelBoxes = document.querySelectorAll(".speed-model-checkbox:checked");
         let selectedModels = Array.from(checkedModelBoxes).map(cb => cb.value);
         if (selectedModels.length === 0) selectedModels = this.availableModels.slice(0, 1);
@@ -705,8 +685,9 @@ class SpeedDashboard {
             };
         });
 
-        // Save active line configuration before starting
-        await this.saveConfig();
+        if (this.lineA || this.lineB) {
+            await this.saveConfig();
+        }
 
         const payload = {
             camera: "speed",
@@ -721,7 +702,7 @@ class SpeedDashboard {
 
         try {
             if (statusSpan) {
-                statusSpan.textContent = "⚡ Launching AI Speed Detection Tracker...";
+                statusSpan.textContent = "⚡ Launching AI Speed Monitor...";
                 statusSpan.style.color = "#38bdf8";
             }
             const res = await fetch("/api/speed/start", {
@@ -733,7 +714,7 @@ class SpeedDashboard {
 
             if (res.ok && (data.status === "started" || data.status === "ok")) {
                 if (statusSpan) {
-                    statusSpan.textContent = "● AI Speed Monitor Running (Live Detection)";
+                    statusSpan.textContent = "● AI Speed Monitor Running";
                     statusSpan.style.color = "#00ffaa";
                 }
                 this.attachHlsStream(true, 1);
@@ -797,8 +778,6 @@ class SpeedDashboard {
         const loader = document.getElementById("speed-video-loader");
         if (!video) return;
 
-        if (loader) loader.style.display = "flex";
-
         if (this.hlsRetryTimer) {
             clearTimeout(this.hlsRetryTimer);
             this.hlsRetryTimer = null;
@@ -806,25 +785,6 @@ class SpeedDashboard {
 
         const streamUrl = `/hls/camera/speed/playlist.m3u8?t=${Date.now()}`;
 
-        // Verify playlist is available before attaching to prevent black screen / error loop
-        fetch(streamUrl, { method: "HEAD" })
-            .then(res => {
-                if (res.ok) {
-                    this._playHls(video, streamUrl, loader);
-                } else {
-                    if (retry && attempt < 25) {
-                        this.hlsRetryTimer = setTimeout(() => this.attachHlsStream(true, attempt + 1), 500);
-                    }
-                }
-            })
-            .catch(() => {
-                if (retry && attempt < 25) {
-                    this.hlsRetryTimer = setTimeout(() => this.attachHlsStream(true, attempt + 1), 500);
-                }
-            });
-    }
-
-    _playHls(video, streamUrl, loader) {
         if (window.Hls && window.Hls.isSupported()) {
             if (this.hlsPlayer) {
                 this.hlsPlayer.destroy();
@@ -837,8 +797,8 @@ class SpeedDashboard {
                 liveSyncDurationCount: 1,
                 maxBufferLength: 2,
                 liveMaxLatencyDuration: 2.0,
-                manifestLoadingMaxRetry: 15,
-                manifestLoadingRetryDelay: 400
+                manifestLoadingMaxRetry: 20,
+                manifestLoadingRetryDelay: 350
             });
 
             hls.loadSource(streamUrl);
@@ -853,7 +813,11 @@ class SpeedDashboard {
                 if (data.fatal) {
                     switch (data.type) {
                         case window.Hls.ErrorTypes.NETWORK_ERROR:
-                            hls.startLoad();
+                            if (retry && attempt < 15) {
+                                this.hlsRetryTimer = setTimeout(() => this.attachHlsStream(true, attempt + 1), 400);
+                            } else {
+                                hls.startLoad();
+                            }
                             break;
                         case window.Hls.ErrorTypes.MEDIA_ERROR:
                             hls.recoverMediaError();

@@ -382,20 +382,9 @@ class VehicleSpeedTracker:
         out = frame.copy()
         h, w = out.shape[:2]
 
-        # 1. Draw Timing Lines
-        # Line A (Gate Entry) - Cyan/Yellow
-        cv2.line(out, la_start, la_end, (255, 220, 0), 2)
-        mid_a_x = (la_start[0] + la_end[0]) // 2
-        mid_a_y = (la_start[1] + la_end[1]) // 2
-        cv2.putText(out, "LINE A (GATE ENTRY)", (min(w - 180, max(10, mid_a_x - 60)), max(25, mid_a_y - 8)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 220, 0), 2, cv2.LINE_AA)
-
-        # Line B (Gantry Road) - Emerald Green
-        cv2.line(out, lb_start, lb_end, (0, 255, 170), 2)
-        mid_b_x = (lb_start[0] + lb_end[0]) // 2
-        mid_b_y = (lb_start[1] + lb_end[1]) // 2
-        cv2.putText(out, "LINE B (GANTRY ROAD)", (min(w - 180, max(10, mid_b_x - 60)), max(25, mid_b_y - 8)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 170), 2, cv2.LINE_AA)
+        # 1. Draw Subtle Timing Lines (No bulky text boxes on stream)
+        cv2.line(out, la_start, la_end, (255, 220, 0), 1)
+        cv2.line(out, lb_start, lb_end, (0, 255, 170), 1)
 
         # 2. Draw Tracked Vehicles
         for (x1, y1, x2, y2, label, conf, track_id) in tracked_objects:

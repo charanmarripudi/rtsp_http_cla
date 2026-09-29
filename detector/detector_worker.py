@@ -608,6 +608,7 @@ class DetectorWorker:
         """
         if not boxes:
             return []
+        kept = []
         veh_kws = ("car", "truck", "bus", "van", "pickup", "bike", "vehicle")
         for item in boxes:
             b1, col1, conf1, cls1 = item
