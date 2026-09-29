@@ -795,8 +795,8 @@ class SpeedDashboard {
                 enableWorker: true,
                 lowLatencyMode: true,
                 liveSyncDurationCount: 1,
+                liveMaxLatencyDurationCount: 3,
                 maxBufferLength: 2,
-                liveMaxLatencyDuration: 2.0,
                 manifestLoadingMaxRetry: 20,
                 manifestLoadingRetryDelay: 350
             });

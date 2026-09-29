@@ -404,6 +404,10 @@ class VehicleSpeedTracker:
                 dt_h = max(0.001, curr_t - ref_t)
                 disp_px = math.hypot(curr_cx - ref_cx, curr_cy - ref_cy)
                 if dt_h >= 0.08 and disp_px > 3:
+                    mid_a_x = (la_start[0] + la_end[0]) / 2.0
+                    mid_a_y = (la_start[1] + la_end[1]) / 2.0
+                    mid_b_x = (lb_start[0] + lb_end[0]) / 2.0
+                    mid_b_y = (lb_start[1] + lb_end[1]) / 2.0
                     line_dist_px = math.hypot(mid_b_x - mid_a_x, mid_b_y - mid_a_y)
                     meters_per_px = self.road_distance_meters / max(20.0, line_dist_px)
                     calc_v = (disp_px * meters_per_px / dt_h) * 3.6
