@@ -133,31 +133,30 @@ class VehicleSpeedTracker:
         self.config = config or {}
         model_path = self.config.get("model_path")
         if not model_path or not os.path.exists(model_path):
-            candidates = [
-                os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "vehicles.pt")),
-                os.path.abspath(os.path.join(os.path.dirname(__file__), "vehicles.pt")),
-                os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "vehicle_speed.pt")),
-                os.path.abspath(os.path.join(os.path.dirname(__file__), "best.pt")),
-                "models/vehicles.pt",
-                "models/vehicle_speed.pt"
-            ]
-            for c in candidates:
-                if os.path.exists(c):
-                    model_path = c
-                    break
-        self.model_path = model_path or "models/vehicles.pt"
+            models_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models"))
+            if os.path.exists(models_dir):
+                for f in sorted(os.listdir(models_dir)):
+                    if f.endswith(".pt") and ("vehicle" in f.lower() or "speed" in f.lower()):
+                        model_path = os.path.join(models_dir, f)
+                        break
+                if not model_path:
+                    for f in sorted(os.listdir(models_dir)):
+                        if f.endswith(".pt"):
+                            model_path = os.path.join(models_dir, f)
+                            break
+        self.model_path = model_path
         self.speed_limit_kmh = float(config.get("speed_limit_kmh", 10.0))
         self.road_distance_meters = float(config.get("road_distance_meters", 20.0))
         self.conf_thresh = float(config.get("confidence_threshold", 0.40))
         self.imgsz = int(config.get("imgsz", 416))
-        self.allowed_classes = [c.lower() for c in config.get("allowed_classes", ["truck", "car", "pickup truck", "bike"])]
+        self.allowed_classes = [c.lower() for c in config.get("allowed_classes", [])]
         self.alerts_dir = config.get("alerts_dir", "alerts")
         os.makedirs(self.alerts_dir, exist_ok=True)
         self.frame_skip = max(1, int(config.get("frame_skip", 1)))
         self._frame_count = 0
         self._last_detections: List[Tuple[int, int, int, int, str, float]] = []
 
-        print(f"[INIT] Loading YOLO Vehicle Model: {self.model_path} (imgsz={self.imgsz}, skip={self.frame_skip})...")
+        print(f"[INIT] Loading YOLO Vehicle Model from {self.model_path} (imgsz={self.imgsz}, skip={self.frame_skip})...")
         self.model = YOLO(self.model_path)
         self.tracker = LowCpuCentroidTracker(max_distance=150, max_missing_frames=20)
         

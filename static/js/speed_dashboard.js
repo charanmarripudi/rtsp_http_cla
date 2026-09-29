@@ -1,7 +1,7 @@
 /**
- * Plug-and-Play Vehicle Speed & Count Dashboard Module
- * Dedicated Tab for Real-Time Tank Truck Speed Enforcement & Telemetry
- * Supports: Custom RTSP URLs, Video Uploads, Model & Class Checkboxes, Any-Angle Dual-Line Calibration
+ * Dynamic Vehicle Speed & Count Dashboard Module
+ * Plug-and-play AI Speed Enforcement & Telemetry
+ * Supports: Real-time Camera Preview, Any-Angle Dual-Line Drawing, Zero Hardcoded Models/Paths
  */
 
 class SpeedDashboard {
@@ -16,9 +16,9 @@ class SpeedDashboard {
         this.modelClassesCache = {};
         this.hlsRetryTimer = null;
 
-        // Any-Angle Line Calibration State
-        this.lineA = { x1_pct: 5, y1_pct: 40, x2_pct: 95, y2_pct: 40 };
-        this.lineB = { x1_pct: 5, y1_pct: 75, x2_pct: 95, y2_pct: 75 };
+        // Any-Angle Line Calibration State (Starts empty until user draws)
+        this.lineA = null;
+        this.lineB = null;
         this.drawingMode = null; // 'line_a' | 'line_b' | null
         this.isDragging = false;
         this.dragStart = { x: 0, y: 0 };
@@ -102,10 +102,10 @@ class SpeedDashboard {
             if (!this.isDragging || !this.drawingMode) return;
             e.preventDefault();
             const curr = getPctCoords(e);
-            if (this.drawingMode === "line_a") {
+            if (this.drawingMode === "line_a" && this.lineA) {
                 this.lineA.x2_pct = curr.x_pct;
                 this.lineA.y2_pct = curr.y_pct;
-            } else if (this.drawingMode === "line_b") {
+            } else if (this.drawingMode === "line_b" && this.lineB) {
                 this.lineB.x2_pct = curr.x_pct;
                 this.lineB.y2_pct = curr.y_pct;
             }
@@ -119,7 +119,7 @@ class SpeedDashboard {
             const hint = document.getElementById("speed-draw-hint");
             const modeName = this.drawingMode === "line_a" ? "Line A (Gate)" : "Line B (Gantry)";
             if (hint) {
-                hint.textContent = `✓ ${modeName} Drawn! Click "Save Lines" to apply live.`;
+                hint.textContent = `✓ ${modeName} Drawn! Click "Save Lines" or start detection.`;
                 hint.style.color = "#00ffaa";
             }
             this.setDrawingMode(null);
@@ -154,13 +154,13 @@ class SpeedDashboard {
 
         if (mode === "line_a") {
             if (hint) {
-                hint.textContent = "✏️ Click and drag across the video to draw Line A (Gate Entry)";
+                hint.textContent = "✏️ Click & drag across the video to draw Line A (Gate Entry)";
                 hint.style.color = "#ffdc00";
             }
             if (canvas) canvas.style.cursor = "crosshair";
         } else if (mode === "line_b") {
             if (hint) {
-                hint.textContent = "✏️ Click and drag across the video to draw Line B (Gantry Road)";
+                hint.textContent = "✏️ Click & drag across the video to draw Line B (Gantry Road)";
                 hint.style.color = "#00ffaa";
             }
             if (canvas) canvas.style.cursor = "crosshair";
@@ -171,14 +171,14 @@ class SpeedDashboard {
     }
 
     resetLines() {
-        this.lineA = { x1_pct: 5, y1_pct: 40, x2_pct: 95, y2_pct: 40 };
-        this.lineB = { x1_pct: 5, y1_pct: 75, x2_pct: 95, y2_pct: 75 };
+        this.lineA = null;
+        this.lineB = null;
         this.setDrawingMode(null);
         this.renderCanvas();
         this.updateLineLabels();
         const hint = document.getElementById("speed-draw-hint");
         if (hint) {
-            hint.textContent = "Reset to default horizontal lines";
+            hint.textContent = "Lines cleared. Click 'Draw Line A' or 'Draw Line B' to calibrate.";
             hint.style.color = "var(--muted)";
         }
     }
@@ -186,11 +186,15 @@ class SpeedDashboard {
     updateLineLabels() {
         const lblA = document.getElementById("speed-lbl-line-a");
         const lblB = document.getElementById("speed-lbl-line-b");
-        if (lblA && this.lineA) {
-            lblA.textContent = `(${this.lineA.x1_pct}%, ${this.lineA.y1_pct}%) → (${this.lineA.x2_pct}%, ${this.lineA.y2_pct}%)`;
+        if (lblA) {
+            lblA.textContent = this.lineA
+                ? `(${this.lineA.x1_pct}%, ${this.lineA.y1_pct}%) → (${this.lineA.x2_pct}%, ${this.lineA.y2_pct}%)`
+                : "Not Set (Click Draw Line A)";
         }
-        if (lblB && this.lineB) {
-            lblB.textContent = `(${this.lineB.x1_pct}%, ${this.lineB.y1_pct}%) → (${this.lineB.x2_pct}%, ${this.lineB.y2_pct}%)`;
+        if (lblB) {
+            lblB.textContent = this.lineB
+                ? `(${this.lineB.x1_pct}%, ${this.lineB.y1_pct}%) → (${this.lineB.x2_pct}%, ${this.lineB.y2_pct}%)`
+                : "Not Set (Click Draw Line B)";
         }
     }
 
@@ -224,7 +228,6 @@ class SpeedDashboard {
             ctx.lineTo(x2, y2);
             ctx.strokeStyle = color;
             ctx.lineWidth = 2.5;
-            ctx.setLineDash([]);
             ctx.stroke();
 
             // Endpoint Handles
@@ -256,9 +259,8 @@ class SpeedDashboard {
             ctx.fillText(label, midX, midY - 10);
         };
 
-        // Render Line A (Yellow) and Line B (Emerald Green)
-        drawSegment(this.lineA, "#ffdc00", "LINE A: GATE ENTRY");
-        drawSegment(this.lineB, "#00ffaa", "LINE B: GANTRY ROAD");
+        if (this.lineA) drawSegment(this.lineA, "#ffdc00", "LINE A: GATE ENTRY");
+        if (this.lineB) drawSegment(this.lineB, "#00ffaa", "LINE B: GANTRY ROAD");
     }
 
     setSourceType(type) {
@@ -343,15 +345,20 @@ class SpeedDashboard {
                 models = data.models || [];
             }
 
-            // Exclude yolov8n.pt from Speed tab - only include vehicles.pt / vehicle_speed.pt
-            let speedModels = models.filter(m => (m === "vehicles.pt" || m === "vehicle_speed.pt" || m.toLowerCase().includes("vehicle")) && m !== "yolov8n.pt");
+            // Dynamically select vehicle models present in the models directory (excluding general yolov8n.pt)
+            let speedModels = models.filter(m => (m.toLowerCase().includes("vehicle") || m.toLowerCase().includes("speed") || m.toLowerCase().includes("car") || m.toLowerCase().includes("truck")) && m !== "yolov8n.pt");
+            
+            // If no model has "vehicle" in the name, show all available models except yolov8n
             if (speedModels.length === 0) {
-                speedModels = ["vehicles.pt"];
+                speedModels = models.filter(m => m !== "yolov8n.pt");
+            }
+            if (speedModels.length === 0 && models.length > 0) {
+                speedModels = [models[0]];
             }
 
             this.availableModels = speedModels;
 
-            // Fetch classes for vehicle models
+            // Fetch classes directly from the model's metadata
             await Promise.all(speedModels.map(async (m) => {
                 try {
                     const r = await fetch(`/api/model-classes?model=${encodeURIComponent(m)}`);
@@ -363,13 +370,6 @@ class SpeedDashboard {
                     this.modelClassesCache[m] = [];
                 }
             }));
-
-            if (!this.modelClassesCache["vehicles.pt"] || this.modelClassesCache["vehicles.pt"].length === 0) {
-                this.modelClassesCache["vehicles.pt"] = ["car", "bike", "truck", "pickup truck"];
-            }
-            if (!this.modelClassesCache["vehicle_speed.pt"] || this.modelClassesCache["vehicle_speed.pt"].length === 0) {
-                this.modelClassesCache["vehicle_speed.pt"] = ["truck", "car", "pickup truck", "bike", "tank truck", "van", "bus"];
-            }
 
             this.renderModelCards(speedModels);
 
@@ -385,10 +385,9 @@ class SpeedDashboard {
         if (!container) return;
         container.innerHTML = "";
 
-        models.forEach((m, idx) => {
+        models.forEach((m) => {
             const normName = m.replace(".pt", "");
-            const isSpeedDefault = true;
-            const classes = this.modelClassesCache[m] || ["truck", "car", "pickup truck", "bike"];
+            const classes = this.modelClassesCache[m] || [];
 
             const card = document.createElement("div");
             card.className = "speed-model-card";
@@ -481,42 +480,49 @@ class SpeedDashboard {
                 border-top: 1px solid rgba(255,255,255,0.06);
             `;
 
-            classes.forEach(c => {
-                const cLabel = document.createElement("label");
-                cLabel.style.cssText = `
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 5px;
-                    background: rgba(0,255,170,0.12);
-                    border: 1px solid #00ffaa;
-                    padding: 3px 8px;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    user-select: none;
-                    font-size: 0.72rem;
-                    font-family: var(--mono);
-                    transition: all 0.15s ease;
-                `;
+            if (classes.length === 0) {
+                const emptySpan = document.createElement("span");
+                emptySpan.style.cssText = "font-size: 0.70rem; color: var(--muted);";
+                emptySpan.textContent = "All model classes active";
+                classContainer.appendChild(emptySpan);
+            } else {
+                classes.forEach(c => {
+                    const cLabel = document.createElement("label");
+                    cLabel.style.cssText = `
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 5px;
+                        background: rgba(0,255,170,0.12);
+                        border: 1px solid #00ffaa;
+                        padding: 3px 8px;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        user-select: none;
+                        font-size: 0.72rem;
+                        font-family: var(--mono);
+                        transition: all 0.15s ease;
+                    `;
 
-                const cChk = document.createElement("input");
-                cChk.type = "checkbox";
-                cChk.className = `speed-class-checkbox class-chk-${normName}`;
-                cChk.value = c;
-                cChk.checked = true;
-                cChk.style.cursor = "pointer";
+                    const cChk = document.createElement("input");
+                    cChk.type = "checkbox";
+                    cChk.className = `speed-class-checkbox class-chk-${normName}`;
+                    cChk.value = c;
+                    cChk.checked = true;
+                    cChk.style.cursor = "pointer";
 
-                cChk.addEventListener("change", () => {
-                    cLabel.style.borderColor = cChk.checked ? "#00ffaa" : "var(--border)";
-                    cLabel.style.background = cChk.checked ? "rgba(0,255,170,0.12)" : "rgba(0,0,0,0.3)";
+                    cChk.addEventListener("change", () => {
+                        cLabel.style.borderColor = cChk.checked ? "#00ffaa" : "var(--border)";
+                        cLabel.style.background = cChk.checked ? "rgba(0,255,170,0.12)" : "rgba(0,0,0,0.3)";
+                    });
+
+                    const cSpan = document.createElement("span");
+                    cSpan.textContent = c;
+
+                    cLabel.appendChild(cChk);
+                    cLabel.appendChild(cSpan);
+                    classContainer.appendChild(cLabel);
                 });
-
-                const cSpan = document.createElement("span");
-                cSpan.textContent = c;
-
-                cLabel.appendChild(cChk);
-                cLabel.appendChild(cSpan);
-                classContainer.appendChild(cLabel);
-            });
+            }
 
             card.appendChild(headerRow);
             card.appendChild(classContainer);
@@ -548,10 +554,10 @@ class SpeedDashboard {
             const distInput = document.getElementById("speed-cfg-dist");
             if (distInput && cfg.road_distance_meters !== undefined) distInput.value = cfg.road_distance_meters;
 
-            if (cfg.line_a && typeof cfg.line_a === "object") {
+            if (cfg.line_a && typeof cfg.line_a === "object" && cfg.line_a.x1_pct !== undefined) {
                 this.lineA = cfg.line_a;
             }
-            if (cfg.line_b && typeof cfg.line_b === "object") {
+            if (cfg.line_b && typeof cfg.line_b === "object" && cfg.line_b.x1_pct !== undefined) {
                 this.lineB = cfg.line_b;
             }
 
@@ -571,9 +577,10 @@ class SpeedDashboard {
         const payload = {
             speed_limit_kmh: parseFloat(limitInput ? limitInput.value : 10.0),
             road_distance_meters: parseFloat(distInput ? distInput.value : 20.0),
-            line_a: this.lineA,
-            line_b: this.lineB,
         };
+
+        if (this.lineA) payload.line_a = this.lineA;
+        if (this.lineB) payload.line_b = this.lineB;
 
         try {
             if (statusSpan) statusSpan.textContent = "Applying...";
@@ -601,20 +608,78 @@ class SpeedDashboard {
         }
     }
 
-    async startMonitoring() {
-        const statusSpan = document.getElementById("speed-monitor-status");
-        
-        // 1. Collect selected models and their enabled classes
-        const checkedModelBoxes = document.querySelectorAll(".speed-model-checkbox:checked");
-        const selectedModels = Array.from(checkedModelBoxes).map(cb => cb.value);
+    _getStreamUrl() {
+        if (this.sourceType === "rtsp") {
+            const rtspInput = document.getElementById("speed-custom-rtsp-input");
+            return rtspInput ? (rtspInput.value.trim() || rtspInput.placeholder.trim()) : "";
+        } else if (this.sourceType === "video") {
+            const serverInput = document.getElementById("speed-server-video-input");
+            const manualPath = serverInput ? serverInput.value.trim() : "";
+            return manualPath || this.uploadedVideoPath;
+        }
+        return "";
+    }
 
-        if (selectedModels.length === 0) {
+    async startPreview() {
+        const statusSpan = document.getElementById("speed-monitor-status");
+        const streamUrl = this._getStreamUrl();
+
+        if (!streamUrl) {
             if (statusSpan) {
-                statusSpan.textContent = "Please select at least 1 model";
+                statusSpan.textContent = "Please enter an RTSP URL or select video";
                 statusSpan.style.color = "#ff4444";
             }
             return;
         }
+
+        const payload = {
+            camera: "speed",
+            location: "Vehicle Speed Monitor",
+            source_type: this.sourceType,
+            rtsp: streamUrl,
+            models: this.availableModels.slice(0, 1),
+            conf: 0.25,
+            iou: 0.45
+        };
+
+        try {
+            if (statusSpan) {
+                statusSpan.textContent = "▶ Connecting live camera preview...";
+                statusSpan.style.color = "#38bdf8";
+            }
+            const res = await fetch("/api/speed/start", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                if (statusSpan) {
+                    statusSpan.textContent = "● Live Camera Preview Active (Draw Lines on Video)";
+                    statusSpan.style.color = "#38bdf8";
+                }
+                this.attachHlsStream(true, 1);
+            }
+        } catch (e) {
+            console.error("[SPEED-DASH] Preview start failed:", e);
+        }
+    }
+
+    async startMonitoring() {
+        const statusSpan = document.getElementById("speed-monitor-status");
+        const streamUrl = this._getStreamUrl();
+
+        if (!streamUrl) {
+            if (statusSpan) {
+                statusSpan.textContent = "Please enter an RTSP URL or select video";
+                statusSpan.style.color = "#ff4444";
+            }
+            return;
+        }
+
+        // Collect selected models and their enabled classes
+        const checkedModelBoxes = document.querySelectorAll(".speed-model-checkbox:checked");
+        let selectedModels = Array.from(checkedModelBoxes).map(cb => cb.value);
+        if (selectedModels.length === 0) selectedModels = this.availableModels.slice(0, 1);
 
         const modelConfigs = {};
         let overallConf = 0.25;
@@ -633,37 +698,12 @@ class SpeedDashboard {
             overallIou = iou;
 
             modelConfigs[m] = {
-                enabled_classes: enabledClasses.length > 0 ? enabledClasses : ["truck", "car", "pickup truck", "bike", "tank truck", "van", "bus"],
+                enabled_classes: enabledClasses,
                 conf: conf,
                 iou: iou,
                 imgsz: 320
             };
         });
-
-        // 2. Determine RTSP or Video Source
-        let streamUrl = "";
-        if (this.sourceType === "rtsp") {
-            const rtspInput = document.getElementById("speed-custom-rtsp-input");
-            streamUrl = rtspInput ? (rtspInput.value.trim() || rtspInput.placeholder.trim()) : "";
-            if (!streamUrl) {
-                if (statusSpan) {
-                    statusSpan.textContent = "Please enter an RTSP URL";
-                    statusSpan.style.color = "#ff4444";
-                }
-                return;
-            }
-        } else if (this.sourceType === "video") {
-            const serverInput = document.getElementById("speed-server-video-input");
-            const manualPath = serverInput ? serverInput.value.trim() : "";
-            streamUrl = manualPath || this.uploadedVideoPath;
-            if (!streamUrl) {
-                if (statusSpan) {
-                    statusSpan.textContent = "Please upload or specify a video file";
-                    statusSpan.style.color = "#ff4444";
-                }
-                return;
-            }
-        }
 
         // Save active line configuration before starting
         await this.saveConfig();
@@ -679,11 +719,9 @@ class SpeedDashboard {
             model_configs: modelConfigs
         };
 
-        console.log("[SPEED-DASH] Starting Speed Monitor with payload:", payload);
-
         try {
             if (statusSpan) {
-                statusSpan.textContent = "⚡ Connecting to RTSP Stream & Launching AI Tracker...";
+                statusSpan.textContent = "⚡ Launching AI Speed Detection Tracker...";
                 statusSpan.style.color = "#38bdf8";
             }
             const res = await fetch("/api/speed/start", {
@@ -774,14 +812,14 @@ class SpeedDashboard {
                 if (res.ok) {
                     this._playHls(video, streamUrl, loader);
                 } else {
-                    if (retry && attempt < 20) {
-                        this.hlsRetryTimer = setTimeout(() => this.attachHlsStream(true, attempt + 1), 600);
+                    if (retry && attempt < 25) {
+                        this.hlsRetryTimer = setTimeout(() => this.attachHlsStream(true, attempt + 1), 500);
                     }
                 }
             })
             .catch(() => {
-                if (retry && attempt < 20) {
-                    this.hlsRetryTimer = setTimeout(() => this.attachHlsStream(true, attempt + 1), 600);
+                if (retry && attempt < 25) {
+                    this.hlsRetryTimer = setTimeout(() => this.attachHlsStream(true, attempt + 1), 500);
                 }
             });
     }

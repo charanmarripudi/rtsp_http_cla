@@ -1617,8 +1617,11 @@
           </div>
 
           <!-- Direct Start / Stop Actions -->
-          <div style="display: flex; gap: 12px;">
-            <button id="speed-start-btn" onclick="if(window.speedDashboard) window.speedDashboard.startMonitoring()" class="btn-primary" style="flex: 1; padding: 12px; font-size: 0.85rem; font-weight: 700; background: #00ffaa; color: #000; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 0 12px rgba(0,255,170,0.3);">
+          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button id="speed-preview-btn" onclick="if(window.speedDashboard) window.speedDashboard.startPreview()" class="btn-secondary" style="padding: 12px 18px; font-size: 0.85rem; font-weight: 700; color: #38bdf8; border: 1px solid rgba(56,189,248,0.4); background: rgba(56,189,248,0.12); border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
+              <span>▶</span> Preview Camera
+            </button>
+            <button id="speed-start-btn" onclick="if(window.speedDashboard) window.speedDashboard.startMonitoring()" class="btn-primary" style="flex: 1; min-width: 180px; padding: 12px; font-size: 0.85rem; font-weight: 700; background: #00ffaa; color: #000; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 0 12px rgba(0,255,170,0.3);">
               <span>⚡</span> Start Speed Monitor
             </button>
             <button id="speed-stop-btn" onclick="if(window.speedDashboard) window.speedDashboard.stopMonitoring()" class="btn-secondary" style="padding: 12px 20px; font-size: 0.85rem; color: #ff4444; border: 1px solid rgba(255,68,68,0.4); border-radius: 8px; cursor: pointer;">
