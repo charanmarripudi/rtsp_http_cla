@@ -2114,10 +2114,11 @@ def stop_detection(d: dict):
         # Remove stale detected .ts segments so HLS.js doesn't serve old frozen frames
         # when the video element switches back to the raw stream playlist.
         _clean_stale_detected_segments(cid)
-    urls = read_streams_conf()
-    if int(cid) < len(urls):
-        start_raw_stream(int(cid), urls[int(cid)])
-    return {"status": "stopped"}
+    if str(cid).isdigit():
+        urls = read_streams_conf()
+        if int(cid) < len(urls):
+            start_raw_stream(int(cid), urls[int(cid)])
+    return {"status": "stopped", "camera": cid}
 
 @app.post("/api/detection/start")
 def ds_alias(d: dict): return start_detection(d)
@@ -2417,9 +2418,14 @@ def start_speed_tracker(d: dict = Body(...)):
 
     models = d.get("models")
     if not models or not isinstance(models, list):
-        models = ["vehicle_speed.pt"]
+        if os.path.exists(os.path.join(BASE_DIR, "models", "vehicles.pt")):
+            models = ["vehicles.pt"]
+        elif os.path.exists(os.path.join(BASE_DIR, "models", "vehicle_speed.pt")):
+            models = ["vehicle_speed.pt"]
+        else:
+            models = ["vehicles.pt"]
 
-    conf = float(d.get("conf", 0.25))
+    conf = float(d.get("conf", 0.40))
     iou = float(d.get("iou", 0.45))
     model_configs = d.get("model_configs") or {}
     for m in models:
@@ -2427,7 +2433,7 @@ def start_speed_tracker(d: dict = Body(...)):
         if norm_m not in model_configs:
             model_configs[norm_m] = {
                 "enabled_classes": ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle", "van", "bus"],
-                "imgsz": 320
+                "imgsz": 416
             }
 
     return start_detection({

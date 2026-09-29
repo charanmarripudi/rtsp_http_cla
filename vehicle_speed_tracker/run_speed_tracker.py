@@ -155,8 +155,9 @@ def main():
     try:
         while True:
             if not paused:
-                if args.skip > 1 and not is_live_stream:
-                    for _ in range(args.skip - 1):
+                skip_n = args.skip if args.skip is not None else 1
+                if skip_n > 1 and not is_live_stream:
+                    for _ in range(skip_n - 1):
                         cap.grab()
                         frame_count += 1
 
