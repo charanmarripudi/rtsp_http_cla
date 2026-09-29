@@ -193,10 +193,10 @@ class VehicleSpeedTracker:
         should_infer = (self.frame_skip == 1) or (self._frame_count % self.frame_skip == 0) or not self._last_detections
 
         if should_infer:
-            # 1. Run YOLO detection with low-CPU imgsz (e.g. 416 or 320 on Pi)
+            # 1. Run YOLO detection with low-CPU imgsz (e.g. 320 or 416 on Pi)
             results = self.model.predict(
                 source=frame,
-                conf=max(0.42, self.conf_thresh),
+                conf=max(0.20, self.conf_thresh),
                 imgsz=self.imgsz,
                 verbose=False
             )
@@ -213,16 +213,16 @@ class VehicleSpeedTracker:
                         bw = x2 - x1
                         bh = y2 - y1
 
-                        # ── FILTER 1: Minimum confidence threshold ──
-                        if score < 0.45:
+                        # ── FILTER 1: Confidence threshold ──
+                        if score < max(0.20, self.conf_thresh):
                             continue
 
-                        # ── FILTER 2: Discard tiny noise (lane markings, dots, pebbles) ──
-                        if bw < 45 or bh < 38 or (bw * bh) < 2000:
+                        # ── FILTER 2: Discard tiny noise ──
+                        if bw < 25 or bh < 20 or (bw * bh) < 500:
                             continue
 
-                        # ── FILTER 3: Discard roadside reflector posts (tall thin vertical poles on edges) ──
-                        if (bh / max(1, bw)) > 2.8 and (x1 < w * 0.18 or x2 > w * 0.82):
+                        # ── FILTER 3: Discard roadside reflector posts ──
+                        if (bh / max(1, bw)) > 3.2 and (x1 < w * 0.12 or x2 > w * 0.88):
                             continue
 
                         # ── FILTER 4: Discard non-road tree foliage / off-road detections ──
@@ -456,19 +456,4 @@ class VehicleSpeedTracker:
             cv2.putText(out, header, (x1 + 6, bg_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
             # Sub text (Measured Speed)
             cv2.putText(out, sub, (x1 + 6, bg_y1 + 34), cv2.FONT_HERSHEY_SIMPLEX, 0.46, text_color, 2, cv2.LINE_AA)
-
-        # 3. Top Info Panel (Total Count & Speed Limit Indicator)
-        panel_w = 280
-        panel_h = 75 + len(self.counts) * 22
-        cv2.rectangle(out, (10, 10), (10 + panel_w, 10 + panel_h), (15, 15, 15), -1)
-        cv2.rectangle(out, (10, 10), (10 + panel_w, 10 + panel_h), (60, 60, 60), 1)
-
-        cv2.putText(out, "TERMINAL SPEED MONITOR", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 170), 2, cv2.LINE_AA)
-        cv2.putText(out, f"Speed Limit : {self.speed_limit_kmh:.0f} km/h (Gate-Gantry: {self.road_distance_meters:.0f}m)", (20, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1, cv2.LINE_AA)
-        cv2.putText(out, f"Total Count : {sum(self.counts.values())}", (20, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
-
-        for idx, (lbl, count) in enumerate(self.counts.items()):
-            col = CLASS_COLORS.get(lbl.lower(), (255, 255, 255))
-            cv2.putText(out, f"  - {lbl}: {count}", (25, 94 + idx * 22), cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1, cv2.LINE_AA)
-
         return out

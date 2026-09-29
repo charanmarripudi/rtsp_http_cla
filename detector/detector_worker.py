@@ -446,9 +446,10 @@ class DetectorWorker:
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         is_speed_worker = (str(self.cam_id) == "speed" or any("speed" in str(mp).lower() or "vehicle" in str(mp).lower() for mp in (model_paths if isinstance(model_paths, list) else [model_paths])))
         self.is_speed_worker = is_speed_worker
-        self.fps = 5.0 if is_speed_worker else 10.0
+        self.fps = 10.0
         self.width, self.height = 640, 360
         self._latest_raw_frame = None
+        self._latest_speed_frame = None
         self._tracked_boxes = []
         self._prev_inference_boxes = []
         self._frame_lock, self._box_lock = threading.Lock(), threading.Lock()
@@ -477,7 +478,7 @@ class DetectorWorker:
         self._ema_tracks = {}
         self._ema_next_id = 0
 
-        # Standalone VehicleSpeedTracker Engine (Same engine as CLI runner)
+        # Standalone VehicleSpeedTracker Engine (Low-CPU imgsz=320, skip=2)
         if self.is_speed_worker and VehicleSpeedTracker is not None:
             veh_model = self.model_paths[0] if (isinstance(self.model_paths, list) and self.model_paths) else str(self.model_paths)
             speed_cfg = {
@@ -485,15 +486,15 @@ class DetectorWorker:
                 "speed_limit_kmh": self.speed_limit_kmh,
                 "road_distance_meters": self.road_distance_meters,
                 "confidence_threshold": max(0.20, float(self.conf)),
-                "imgsz": 416,
-                "frame_skip": 1,
+                "imgsz": 320,
+                "frame_skip": 2,
                 "line_a": {"x1_pct": 5, "y1_pct": int(self.line_a_ratio * 100), "x2_pct": 95, "y2_pct": int(self.line_a_ratio * 100)},
                 "line_b": {"x1_pct": 5, "y1_pct": int(self.line_b_ratio * 100), "x2_pct": 95, "y2_pct": int(self.line_b_ratio * 100)},
                 "allowed_classes": ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle", "van", "bus"],
                 "alerts_dir": os.path.join(str(BASE_DIR), "alerts")
             }
             self.speed_tracker_engine = VehicleSpeedTracker(speed_cfg)
-            print(f"[SPEED-ENGINE] Initialized standalone VehicleSpeedTracker for Camera {self.cam_id} (imgsz=416, limit={self.speed_limit_kmh}km/h)", flush=True)
+            print(f"[SPEED-ENGINE] Initialized standalone VehicleSpeedTracker for Camera {self.cam_id} (imgsz=320, skip=2, limit={self.speed_limit_kmh}km/h)", flush=True)
         else:
             self.speed_tracker_engine = None
         print(f"[TIMER-START] Camera {self.cam_id} Start request initialized at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
