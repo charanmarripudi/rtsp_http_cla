@@ -1055,46 +1055,71 @@ class DetectorWorker:
             print(f"==================================================================\n", flush=True)
 
         # ── Snapshot for Alerts ───────────────────────────────────────────────
+        # ── Fully Annotated Snapshot for Alerts (Includes Timing Lines, HUD, and Speed) ──
         frame_snapshot = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
-        for t_box in display_boxes:
-            try:
-                x1, y1, x2, y2 = [int(v) for v in t_box['box']]
-                cv2.rectangle(frame_snapshot, (x1, y1), (x2, y2), t_box['color'], 2)
-                t_size = cv2.getTextSize(t_box['label'], cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
-                cv2.rectangle(frame_snapshot, (x1, max(0, y1 - t_size[1] - 6)), (x1 + t_size[0] + 6, max(0, y1)), t_box['color'], -1)
-                cv2.putText(frame_snapshot, t_box['label'], (x1 + 3, max(t_size[1] + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
-            except:
-                pass
+        snap_h, snap_w = frame_snapshot.shape[:2]
 
-        # ── Robust Alert Processing: M-of-N Temporal Voting + Per-Track Cooldown ──
-        for tid, trk in list(self._ema_tracks.items()):
-            c = trk.get('cls', '')
-            if not c:
-                continue
+        active_mods = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+        is_speed_model = (str(self.cam_id) == "speed" or any("speed" in str(mp).lower() or "vehicle" in str(mp).lower() for mp in active_mods))
 
-            # Non-alert baseline classes (persons/machinery) are not violation alerts
-            is_neg, core_type, cleaned_cls = extract_negation_and_core(c)
-            if cleaned_cls in ("person", "worker", "human", "man", "woman", "machinery", "vehicle"):
-                continue
+        if is_speed_model:
+            # Draw timing lines onto alert snapshot
+            la_y = int(snap_h * getattr(self, 'line_a_ratio', 0.40))
+            lb_y = int(snap_h * getattr(self, 'line_b_ratio', 0.75))
+            cv2.line(frame_snapshot, (int(snap_w * 0.05), la_y), (int(snap_w * 0.95), la_y), (255, 200, 0), 2)
+            cv2.putText(frame_snapshot, "LINE A (GATE ENTRY)", (int(snap_w * 0.06), la_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 200, 0), 1, cv2.LINE_AA)
+            cv2.line(frame_snapshot, (int(snap_w * 0.05), lb_y), (int(snap_w * 0.95), lb_y), (0, 255, 100), 2)
+            cv2.putText(frame_snapshot, "LINE B (GANTRY ROAD)", (int(snap_w * 0.06), lb_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 100), 1, cv2.LINE_AA)
 
-            # 1. Strict 30-Second Cooldown per class per camera
-            if not hasattr(self, 'alert_cooldowns'):
-                self.alert_cooldowns = {}
-            if (now_t - self.alert_cooldowns.get(c, 0.0)) < 30.0:
-                continue
+            # Top-Left Telemetry HUD
+            hud_w, hud_h = 240, 78
+            hud_x1, hud_y1 = 12, 12
+            overlay = frame_snapshot.copy()
+            cv2.rectangle(overlay, (hud_x1, hud_y1), (hud_x1 + hud_w, hud_y1 + hud_h), (15, 15, 15), -1)
+            cv2.addWeighted(overlay, 0.82, frame_snapshot, 0.18, 0, frame_snapshot)
+            cv2.rectangle(frame_snapshot, (hud_x1, hud_y1), (hud_x1 + hud_w, hud_y1 + hud_h), (60, 60, 60), 1)
 
-            # 2. Instant Alert Trigger with 30-Second Cooldown Gate:
-            # Triggers immediately on the very first valid detection (hits >= 1) without delay
-            total_hits = trk.get('hit_count', 0)
-            track_age = now_t - trk.get('first_seen', now_t)
+            v_counts = getattr(self, 'vehicle_counts', {})
+            trucks = v_counts.get('truck', 0) + v_counts.get('pickup truck', 0)
+            cars = v_counts.get('car', 0)
+            tot_cnt = sum(v_counts.values()) if v_counts else 0
+            sp_lim = getattr(self, 'speed_limit_kmh', 10.0)
+            dist_m = getattr(self, 'road_distance_meters', 20.0)
 
-            if total_hits >= 1:
-                self.alert_cooldowns[c] = now_t
-                trk['last_alert_time'] = now_t
-                print(f"[ALERT-TRIGGER] Instant alert generated: cam={self.cam_id}, class={c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
-                self._save_alert(c, frame_snapshot)
+            cv2.putText(frame_snapshot, "TERMINAL SPEED MONITOR", (hud_x1 + 10, hud_y1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 255, 170), 2, cv2.LINE_AA)
+            cv2.putText(frame_snapshot, f"Speed Limit : {sp_lim:.0f} km/h (Gate-Gantry: {dist_m:.0f}m)", (hud_x1 + 10, hud_y1 + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 200, 200), 1, cv2.LINE_AA)
+            cv2.putText(frame_snapshot, f"Total Count : {tot_cnt}", (hud_x1 + 10, hud_y1 + 54), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(frame_snapshot, f"  car: {cars}  truck: {trucks}", (hud_x1 + 10, hud_y1 + 70), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 190, 40), 1, cv2.LINE_AA)
 
-        # ── Over Speed Alert Trigger ──
+        # Draw all bounding boxes with vehicle IDs, types, and speed banners onto snapshot
+        DetectorWorker._draw_boxes(frame_snapshot, display_boxes)
+
+        # ── PPE Alert Processing (Excluded for speed monitor cameras and vehicle models) ──
+        if not is_speed_model:
+            for tid, trk in list(self._ema_tracks.items()):
+                c = trk.get('cls', '')
+                if not c:
+                    continue
+
+                # Non-alert baseline classes (persons/machinery/vehicles) are not violation alerts
+                is_neg, core_type, cleaned_cls = extract_negation_and_core(c)
+                if cleaned_cls in ("person", "worker", "human", "man", "woman", "machinery", "vehicle", "car", "truck", "bike", "pickup truck", "bus", "van"):
+                    continue
+
+                # 1. Strict 30-Second Cooldown per class per camera
+                if not hasattr(self, 'alert_cooldowns'):
+                    self.alert_cooldowns = {}
+                if (now_t - self.alert_cooldowns.get(c, 0.0)) < 30.0:
+                    continue
+
+                total_hits = trk.get('hit_count', 0)
+                if total_hits >= 1:
+                    self.alert_cooldowns[c] = now_t
+                    trk['last_alert_time'] = now_t
+                    print(f"[ALERT-TRIGGER] Instant alert generated: cam={self.cam_id}, class={c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
+                    self._save_alert(c, frame_snapshot)
+
+        # ── Over Speed Alert Trigger (ONLY triggers when measured speed > limit) ──
         for tid, trk in list(self._ema_tracks.items()):
             if trk.get('should_alert_overspeed') and not trk.get('overspeed_alerted'):
                 trk['overspeed_alerted'] = True
