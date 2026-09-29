@@ -498,14 +498,14 @@ class DetectorWorker:
                 "road_distance_meters": float(persisted_cfg.get("road_distance_meters", self.road_distance_meters)),
                 "confidence_threshold": max(0.20, float(self.conf)),
                 "imgsz": 320,
-                "frame_skip": 2,
+                "frame_skip": 1,
                 "line_a": line_a_cfg,
                 "line_b": line_b_cfg,
                 "allowed_classes": ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle", "van", "bus"],
                 "alerts_dir": os.path.join(str(BASE_DIR), "alerts")
             }
             self.speed_tracker_engine = VehicleSpeedTracker(speed_cfg)
-            print(f"[SPEED-ENGINE] Initialized standalone VehicleSpeedTracker for Camera {self.cam_id} (imgsz=320, skip=2, limit={self.speed_limit_kmh}km/h)", flush=True)
+            print(f"[SPEED-ENGINE] Initialized standalone VehicleSpeedTracker for Camera {self.cam_id} (imgsz=320, limit={self.speed_limit_kmh}km/h)", flush=True)
         else:
             self.speed_tracker_engine = None
         print(f"[TIMER-START] Camera {self.cam_id} Start request initialized at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
@@ -1194,12 +1194,15 @@ class DetectorWorker:
                 print(f"[ALERT-TRIGGER-SPEED] Over speed alert generated: cam={self.cam_id}, vehicle_id={tid}, class={trk.get('cls')}, speed={spd:.1f} km/h", flush=True)
                 self._save_alert(alert_cls, frame_snapshot)
 
-    def _save_alert(self, class_name, frame):
+    def _save_alert(self, class_name, frame, vehicle_label=None):
         try:
             now_dt = datetime.now()
             ts = now_dt.strftime("%Y%m%d_%H%M%S")
-            disp_name = "NO-PPE" if str(class_name).lower() == "none" else str(class_name)
-            safe_cls_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', disp_name)
+            if vehicle_label:
+                safe_cls_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', str(vehicle_label).lower().strip().replace(" ", "_"))
+            else:
+                disp_name = "NO-PPE" if str(class_name).lower() == "none" else str(class_name)
+                safe_cls_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', disp_name)
             filename = f"cam{self.cam_id}_{ts}_{safe_cls_filename}.jpg"
             adir = os.path.join(BASE_DIR, "alerts")
             os.makedirs(adir, exist_ok=True)
@@ -1212,10 +1215,12 @@ class DetectorWorker:
             else:
                 image_path = f"/hls/alerts/{filename}"
 
-            if "OVER SPEED" in str(disp_name).upper():
-                type_of_alert_str = str(disp_name)
+            if "OVER SPEED" in str(class_name).upper():
+                type_of_alert_str = str(class_name)
+            elif vehicle_label:
+                type_of_alert_str = f"{vehicle_label} Detected"
             else:
-                type_of_alert_str = f"{disp_name} Detected"
+                type_of_alert_str = f"{class_name} Detected"
 
             # 1. Append to alerts.json for immediate UI dashboard update
             alerts_json_file = os.path.join(adir, "alerts.json")
@@ -1489,6 +1494,10 @@ class DetectorWorker:
                                 if now - next_frame_time > 0.5:
                                     next_frame_time = now + target_interval
 
+                                # Skip intermediate frame for exact parity with CLI --skip 2
+                                cap.grab()
+                                frame_idx += 1
+
                             ret, raw_frame = cap.read()
                             if not ret or raw_frame is None:
                                 if is_local_file:
@@ -1533,9 +1542,10 @@ class DetectorWorker:
                                 if not hasattr(self, 'overspeed_count'): self.overspeed_count = 0
                                 self.overspeed_count += 1
                                 v_spd = v.get("speed_kmh", 0.0)
+                                v_lbl = v.get("label", "vehicle")
                                 alert_cls = f"OVER SPEED: {v_spd:.1f} km/h (Limit: {self.speed_limit_kmh:.0f} km/h)"
-                                print(f"🚨 [ALERT-TRIGGER-SPEED] Standalone Engine Over speed alert: cam={self.cam_id}, vehicle_id={v.get('track_id')}, class={v.get('label')}, speed={v_spd:.1f} km/h", flush=True)
-                                self._save_alert(alert_cls, pf)
+                                print(f"🚨 [ALERT-TRIGGER-SPEED] Standalone Engine Over speed alert: cam={self.cam_id}, vehicle_id={v.get('track_id')}, class={v_lbl}, speed={v_spd:.1f} km/h", flush=True)
+                                self._save_alert(alert_cls, pf, vehicle_label=v_lbl)
 
                             if ffmpeg.poll() is not None:
                                 break
