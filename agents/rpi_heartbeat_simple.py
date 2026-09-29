@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 # ---------------------- CONFIG ----------------------
 # Set these based on your setup
-BACKEND_URL = "http://charan.tail486a43.ts.net:8080/device/heartbeat"
+BACKEND_URL = "http://raspberrypi.tail486a43.ts.net:8080/device/heartbeat"
 DEVICE_ID = "algo"  # Must match device_id in locations.json
 OVERRIDE_IP = None  # Change to "192.168.96.78" if you want to force this specific IP
 # -------------------------------------------------
