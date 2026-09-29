@@ -1516,6 +1516,23 @@ class DetectorWorker:
                             cv2.putText(pf, f"Total Count : {tot_cnt}", (hud_x1 + 10, hud_y1 + 54), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1, cv2.LINE_AA)
                             cv2.putText(pf, f"  car: {cars}  truck: {trucks}", (hud_x1 + 10, hud_y1 + 70), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 190, 40), 1, cv2.LINE_AA)
 
+                        # Top-Right FPS Counter
+                        if not hasattr(self, '_frame_count_stat'):
+                            self._frame_count_stat = 0
+                            self._fps_start_t = time.time()
+                            self._stream_fps = float(self.fps)
+
+                        self._frame_count_stat += 1
+                        if self._frame_count_stat % 15 == 0:
+                            elapsed_fps = time.time() - self._fps_start_t
+                            if elapsed_fps > 0:
+                                self._stream_fps = 15.0 / elapsed_fps
+                            self._fps_start_t = time.time()
+
+                        disp_fps = getattr(self, '_stream_fps', self.fps)
+                        cv2.putText(pf, f"FPS: {disp_fps:.1f}", (int(f_w - 110), 30),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2, cv2.LINE_AA)
+
                         if ffmpeg.poll() is not None:
                             break
 
