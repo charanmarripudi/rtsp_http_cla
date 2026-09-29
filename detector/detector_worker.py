@@ -842,21 +842,28 @@ class DetectorWorker:
                 if 'truck' in str(self._ema_tracks[best_id]['cls']).lower() and 'car' in cls_name.lower():
                     assigned_cls = self._ema_tracks[best_id]['cls']
 
+                pos_hist = self._ema_tracks[best_id].get('pos_history', [])
+                pos_hist.append(((smoothed[0] + smoothed[2]) / 2.0, smoothed[3], now_t))
+                if len(pos_hist) > 25:
+                    pos_hist = pos_hist[-25:]
+
                 self._ema_tracks[best_id].update({
-                    'box':       smoothed,
-                    'color':     color_val,
-                    'conf':      conf_val,
-                    'cls':       assigned_cls,
-                    'last_seen': now_t,
-                    'hit_count': self._ema_tracks[best_id].get('hit_count', 0) + 1,
-                    'history':   hist,
+                    'box':         smoothed,
+                    'color':       color_val,
+                    'conf':        conf_val,
+                    'cls':         assigned_cls,
+                    'last_seen':   now_t,
+                    'hit_count':   self._ema_tracks[best_id].get('hit_count', 0) + 1,
+                    'history':     hist,
+                    'pos_history': pos_hist,
                 })
                 matched_ids.add(best_id)
             else:
                 new_id = self._ema_next_id
                 self._ema_next_id += 1
+                b_init = list(b_xyxy)
                 self._ema_tracks[new_id] = {
-                    'box':             list(b_xyxy),
+                    'box':             b_init,
                     'color':           color_val,
                     'conf':            conf_val,
                     'cls':             cls_name,
@@ -864,9 +871,11 @@ class DetectorWorker:
                     'first_seen':      now_t,
                     'hit_count':       1,
                     'history':         [1],
+                    'pos_history':     [((b_init[0] + b_init[2]) / 2.0, b_init[3], now_t)],
                     'time_a':          None,
                     'time_b':          None,
                     'speed_kmh':       None,
+                    'disp_speed':      None,
                     'is_over_speed':   False,
                     'last_alert_time': 0.0,
                 }
@@ -938,12 +947,39 @@ class DetectorWorker:
                                 self.counted_ids.add(tid)
                 self._last_side_b[tid] = side_b
 
+                # Continuous displacement speed estimation
+                pos_hist = trk.get('pos_history', [])
+                if len(pos_hist) >= 2:
+                    curr_cx, curr_cy, curr_t = pos_hist[-1]
+                    ref_cx, ref_cy, ref_t = pos_hist[0]
+                    for h_cx, h_cy, h_t in reversed(pos_hist[:-1]):
+                        if 0.10 <= (curr_t - h_t) <= 0.85:
+                            ref_cx, ref_cy, ref_t = h_cx, h_cy, h_t
+                            break
+                    dt_h = max(0.001, curr_t - ref_t)
+                    dy_h = curr_cy - ref_cy
+                    if dt_h >= 0.08 and dy_h > 2:
+                        dist_px = max(20, lb_y - la_y)
+                        meters_per_px = dist_m / float(dist_px)
+                        calc_v = (dy_h * meters_per_px / dt_h) * 3.6
+                        if 3.0 <= calc_v <= 150.0:
+                            old_disp = trk.get('disp_speed')
+                            if old_disp is not None:
+                                trk['disp_speed'] = old_disp * 0.35 + calc_v * 0.65
+                            else:
+                                trk['disp_speed'] = calc_v
+
                 # Compute Speed when both lines crossed (Gate -> Gantry or Gantry -> Gate)
-                if trk.get('time_a') is not None and trk.get('time_b') is not None and trk.get('speed_kmh') is None:
-                    delta_t = abs(trk['time_b'] - trk['time_a'])
-                    if 0.1 <= delta_t <= 10.0:
-                        v = (dist_m / delta_t) * 3.6
-                        trk['speed_kmh'] = v
+                if trk.get('time_b') is not None and trk.get('speed_kmh') is None:
+                    if trk.get('time_a') is not None:
+                        delta_t = abs(trk['time_b'] - trk['time_a'])
+                        if 0.1 <= delta_t <= 10.0:
+                            trk['speed_kmh'] = (dist_m / delta_t) * 3.6
+                    elif trk.get('disp_speed') is not None:
+                        trk['speed_kmh'] = trk['disp_speed']
+
+                    v = trk.get('speed_kmh')
+                    if v is not None:
                         if not hasattr(self, 'speed_records'): self.speed_records = []
                         self.speed_records.append({
                             "vehicle_id": tid,
@@ -960,7 +996,7 @@ class DetectorWorker:
                             trk['color'] = (0, 0, 255)  # Pure Red Alert
                             if not hasattr(self, 'overspeed_count'): self.overspeed_count = 0
                             self.overspeed_count += 1
-                            print(f"🚨 [SPEED-VIOLATION] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Limit: {speed_limit:.0f} km/h, Δt: {delta_t:.2f}s)!", flush=True)
+                            print(f"🚨 [SPEED-VIOLATION] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Limit: {speed_limit:.0f} km/h)!", flush=True)
                             trk['should_alert_overspeed'] = True
 
                             # Save alert snapshot
@@ -975,7 +1011,7 @@ class DetectorWorker:
                                 print(f"[ALERT-SNAP-ERR] Failed to save speed snapshot: {e_snap}", flush=True)
                         else:
                             trk['color'] = (0, 255, 100)  # Green Normal
-                            print(f"[SPEED-NORMAL] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Δt: {delta_t:.2f}s)", flush=True)
+                            print(f"[SPEED-NORMAL] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h", flush=True)
 
         # Build display list from live EMA tracks
         display_boxes = []
@@ -989,11 +1025,10 @@ class DetectorWorker:
             cur_cls.add(trk_cls)
             
             # Format speed label
-            speed_val = trk.get('speed_kmh')
+            speed_val = trk.get('speed_kmh') or trk.get('disp_speed')
             conf_pct = trk.get('conf', 0.8)
             box_header = f"{trk_cls.upper()} #{tid} ({conf_pct:.0%})"
             sub_lbl = None
-            t_a = trk.get('time_a')
             bx = trk.get('box', [0, 0, 0, 0])
             by2 = bx[3]
 
@@ -1004,23 +1039,7 @@ class DetectorWorker:
                 sub_lbl = f"SPEED: {speed_val:.1f} km/h"
                 box_col = (0, 255, 100)  # Bright Green
             elif is_veh:
-                if t_a is not None:
-                    # Vehicle is traveling between Line A and Line B
-                    dist_px = max(20, lb_y - la_y)
-                    y_prog = max(0.01, min(1.0, (by2 - la_y) / float(dist_px)))
-                    dt = max(0.01, now_t - t_a)
-                    if dt >= 0.4 and y_prog >= 0.10:
-                        live_est = max(2.0, min(140.0, ((dist_m * y_prog) / dt) * 3.6))
-                        if live_est > speed_limit:
-                            sub_lbl = f"OVER SPEED: ~{live_est:.1f} km/h (LIMIT: {speed_limit:.0f})"
-                            box_col = (0, 0, 255)  # Bright Red
-                        else:
-                            sub_lbl = f"SPEED: ~{live_est:.1f} km/h"
-                            box_col = (0, 230, 100)  # Compliant Green
-                    else:
-                        sub_lbl = "IN TRANSIT (LINE A -> B)"
-                        box_col = (255, 200, 0)  # Yellow In-Transit
-                elif by2 >= lb_y:
+                if by2 >= lb_y:
                     sub_lbl = "PAST LINE B"
                     box_col = (180, 180, 180)
                 else:

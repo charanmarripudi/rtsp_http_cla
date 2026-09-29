@@ -10,6 +10,10 @@ stream*_detected/
 
 # Alert images (large binary files)
 # alerts.json is kept to preserve alert history
+vehicle_speed_tracker/alerts/
+vehicle_speed_tracker/*.mp4
+vehicle_speed_tracker/*.avi
+alerts/
 
 # Logs
 logs/

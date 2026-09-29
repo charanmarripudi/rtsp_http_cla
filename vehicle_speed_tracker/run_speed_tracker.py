@@ -95,7 +95,7 @@ def main():
     if args.imgsz is not None:
         cfg["imgsz"] = args.imgsz
     if args.skip is not None:
-        cfg["frame_skip"] = args.skip
+        cfg["frame_skip"] = 1
 
     should_loop = args.loop or cfg.get("loop_video", False)
     is_live_stream = is_rtsp_stream(source)
@@ -155,6 +155,11 @@ def main():
     try:
         while True:
             if not paused:
+                if args.skip > 1 and not is_live_stream:
+                    for _ in range(args.skip - 1):
+                        cap.grab()
+                        frame_count += 1
+
                 ret, frame = cap.read()
                 if not ret or frame is None:
                     if should_loop and not is_live_stream:

@@ -82,7 +82,10 @@ class LowCpuCentroidTracker:
                 trk["label"] = label
                 trk["conf"] = conf
                 trk["missing"] = 0
-                trk["history"].append((cx, cy, timestamp))
+                
+                # Only append to history if position moved or first entry
+                if not trk["history"] or (trk["history"][-1][0] != cx or trk["history"][-1][1] != cy):
+                    trk["history"].append((cx, cy, timestamp))
                 if len(trk["history"]) > 30:
                     trk["history"] = trk["history"][-30:]
                 used_track_ids.add(best_id)
@@ -299,18 +302,22 @@ class VehicleSpeedTracker:
             if side_b != 0:
                 self.last_side_b[track_id] = side_b
 
-            # 4. Calculate Speed ONLY when BOTH lines have been crossed (Line A -> Line B)
-            if trk["time_line_a"] is not None and trk["time_line_b"] is not None and trk["speed_kmh"] is None:
-                delta_t = abs(trk["time_line_b"] - trk["time_line_a"])
-                if delta_t >= 0.35:  # Require realistic physical transit time
-                    # Speed (km/h) = (Distance in meters / delta_t in seconds) * 3.6
-                    speed_kmh = (self.road_distance_meters / delta_t) * 3.6
-                    trk["speed_kmh"] = speed_kmh
+            # 4. Calculate Speed: Dual-Line Crossing or Continuous Displacement
+            if trk["time_line_b"] is not None and trk["speed_kmh"] is None:
+                if trk["time_line_a"] is not None:
+                    delta_t = abs(trk["time_line_b"] - trk["time_line_a"])
+                    if delta_t >= 0.25:  # Realistic physical transit time
+                        speed_kmh = (self.road_distance_meters / delta_t) * 3.6
+                        trk["speed_kmh"] = speed_kmh
+                elif trk.get("disp_speed") is not None:
+                    trk["speed_kmh"] = trk["disp_speed"]
 
+                if trk["speed_kmh"] is not None:
+                    speed_kmh = trk["speed_kmh"]
                     # Trigger alert ONLY if speed exceeds the limit (e.g. > 10.0 km/h)
                     if speed_kmh > self.speed_limit_kmh:
                         trk["is_speed_violation"] = True
-                        print(f"\n🚨 [SPEED-VIOLATION] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h, Transit Time: {delta_t:.2f}s)!")
+                        print(f"\n🚨 [SPEED-VIOLATION] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h)!")
                         
                         # Prepare alert record (snapshot saved below after annotation)
                         if not trk["alert_recorded"]:
@@ -386,40 +393,40 @@ class VehicleSpeedTracker:
             trk = self.tracker.tracks.get(track_id, {})
             speed = trk.get("speed_kmh")
             is_violation = trk.get("is_speed_violation", False)
-            t_a = trk.get("time_line_a")
 
-            if is_violation or (speed is not None and speed > self.speed_limit_kmh):
+            # Continuous motion displacement speed estimation
+            hist = trk.get("history", [])
+            if len(hist) >= 2:
+                curr_cx, curr_cy, curr_t = hist[-1]
+                ref_cx, ref_cy, ref_t = hist[0]
+                for h_cx, h_cy, h_t in reversed(hist[:-1]):
+                    if 0.10 <= (curr_t - h_t) <= 0.85:
+                        ref_cx, ref_cy, ref_t = h_cx, h_cy, h_t
+                        break
+                dt_h = max(0.001, curr_t - ref_t)
+                dy_h = curr_cy - ref_cy
+                if dt_h >= 0.08 and dy_h > 2:
+                    line_dist_y = max(20, lb_start[1] - la_start[1])
+                    meters_per_px = self.road_distance_meters / float(line_dist_y)
+                    calc_v = (dy_h * meters_per_px / dt_h) * 3.6
+                    if 3.0 <= calc_v <= 150.0:
+                        old_v = trk.get("disp_speed")
+                        if old_v is not None:
+                            trk["disp_speed"] = old_v * 0.35 + calc_v * 0.65
+                        else:
+                            trk["disp_speed"] = calc_v
+
+            display_speed = speed or trk.get("disp_speed")
+            if is_violation or (display_speed is not None and display_speed > self.speed_limit_kmh):
                 box_color = (0, 0, 255)       # Pure Red for Over Speed
-                status_text = f"OVER SPEED: {speed:.1f} km/h (LIMIT: {self.speed_limit_kmh:.0f})"
+                status_text = f"OVER SPEED: {display_speed:.1f} km/h (LIMIT: {self.speed_limit_kmh:.0f})"
                 bg_color = (0, 0, 220)
                 text_color = (255, 255, 255)
-            elif speed is not None:
+            elif display_speed is not None:
                 box_color = (0, 230, 100)     # Green for Normal Speed
-                status_text = f"SPEED: {speed:.1f} km/h"
+                status_text = f"SPEED: {display_speed:.1f} km/h"
                 bg_color = (0, 160, 60)
                 text_color = (255, 255, 255)
-            elif t_a is not None:
-                # Vehicle is currently traveling between Line A and Line B
-                line_dist_y = max(20, lb_start[1] - la_start[1])
-                y_prog = max(0.01, min(1.0, (y2 - la_start[1]) / float(line_dist_y)))
-                dt = max(0.01, now_t - t_a)
-                if dt >= 0.5 and y_prog >= 0.15:
-                    live_est = max(2.0, min(140.0, ((self.road_distance_meters * y_prog) / dt) * 3.6))
-                    if live_est > self.speed_limit_kmh:
-                        box_color = (0, 0, 255)   # RED for Over Speed
-                        status_text = f"OVER SPEED: ~{live_est:.1f} km/h (LIMIT: {self.speed_limit_kmh:.0f})"
-                        bg_color = (0, 0, 220)
-                        text_color = (255, 255, 255)
-                    else:
-                        box_color = (0, 230, 100) # Green for compliant speed
-                        status_text = f"SPEED: ~{live_est:.1f} km/h"
-                        bg_color = (0, 160, 60)
-                        text_color = (255, 255, 255)
-                else:
-                    box_color = (255, 200, 0) # Amber / Yellow for in-transit
-                    status_text = "IN TRANSIT (LINE A -> B)"
-                    bg_color = (30, 30, 30)
-                    text_color = (255, 220, 0)
             else:
                 box_color = CLASS_COLORS.get(label.lower(), (0, 220, 255))
                 if y2 >= lb_start[1]:
@@ -429,7 +436,7 @@ class VehicleSpeedTracker:
                 bg_color = (30, 30, 30)
                 text_color = (200, 200, 200)
 
-            # Draw bounding box (clean without dot artifacts)
+            # Draw bounding box
             cv2.rectangle(out, (x1, y1), (x2, y2), box_color, 2)
 
             # Label banner above bounding box
