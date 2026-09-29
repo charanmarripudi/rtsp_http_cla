@@ -819,11 +819,12 @@ def start_raw_stream(i, u):
     try: os.remove(log_file)
     except: pass
     session_id = int(time.time())
+    is_file = os.path.isfile(normalized_rtsp) or (not normalized_rtsp.lower().startswith("rtsp") and not normalized_rtsp.lower().startswith("http"))
+    input_args = ["-stream_loop", "-1", "-re"] if is_file else ["-rtsp_transport", "tcp", "-probesize", "1M", "-analyzeduration", "1M"]
 
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
-        "-rtsp_transport", "tcp",
-        "-probesize", "1M", "-analyzeduration", "1M",
+        *input_args,
         "-i", normalized_rtsp,
         "-map", "0:v:0",
         "-an",
@@ -2448,8 +2449,33 @@ async def upload_speed_video(request: Request):
 
 @app.post("/api/speed/preview")
 def preview_speed_camera(d: dict = Body(...)):
-    """Starts or connects raw RTSP stream for preview in Speed Dashboard."""
-    rtsp = str(d.get("rtsp", "")).strip()
+    """Starts or connects raw RTSP stream for preview in Speed Dashboard, or clears if empty."""
+    rtsp = str(d.get("rtsp", "")).strip() if d and "rtsp" in d else None
+    
+    # If explicitly passed empty string, clear the stream and stop playback
+    if rtsp == "":
+        cfg = _get_speed_config()
+        cfg["rtsp_url"] = ""
+        try:
+            with open(SPEED_CONFIG_FILE, "w") as f:
+                json.dump(cfg, f, indent=2)
+        except: pass
+
+        if "speed" in running:
+            stop_detection({"camera": "speed"})
+            time.sleep(0.1)
+
+        _kill_raw_ffmpeg_for_camera("speed")
+        sd = os.path.join(HLS_DIR, "streamspeed_raw")
+        if os.path.exists(sd):
+            import shutil
+            try:
+                if os.path.islink(sd): os.unlink(sd)
+                else: shutil.rmtree(sd)
+            except: pass
+        print("[SPEED] Cleared and disconnected speed camera preview stream")
+        return {"status": "cleared", "message": "Stream disconnected and cleared"}
+
     if not rtsp:
         cfg = _get_speed_config()
         rtsp = cfg.get("rtsp_url", "")

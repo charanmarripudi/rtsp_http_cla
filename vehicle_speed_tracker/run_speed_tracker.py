@@ -183,6 +183,63 @@ def main():
                 # Process frame with speed tracker engine
                 annotated_frame, violations = tracker_engine.process_frame(frame, curr_time)
 
+                # Persist speed violations into PostgreSQL DB and alerts.json
+                for v in violations:
+                    try:
+                        v_spd = v.get("speed_kmh", 0.0)
+                        v_lbl = v.get("label", "vehicle")
+                        v_tid = v.get("track_id", 0)
+                        snap_path = v.get("snapshot", "")
+                        snap_fn = os.path.basename(snap_path) if snap_path else f"speed_violation_{int(time.time())}.jpg"
+                        
+                        base_url = ""
+                        pub_file = CURR_DIR.parent / "public_url.txt"
+                        if os.path.exists(pub_file):
+                            try:
+                                with open(pub_file, "r") as pf:
+                                    base_url = pf.read().strip()
+                            except: pass
+
+                        img_url = f"{base_url.rstrip('/')}/hls/alerts/{snap_fn}" if base_url else f"/hls/alerts/{snap_fn}"
+                        alert_type_str = f"Over Speed Detected ({v_spd:.1f} km/h)"
+                        now_dt = datetime.now()
+
+                        # 1. Append to alerts.json
+                        adir = CURR_DIR.parent / "alerts"
+                        os.makedirs(adir, exist_ok=True)
+                        alerts_json_file = adir / "alerts.json"
+                        alert_entry = {
+                            "id": int(time.time() * 1000),
+                            "camera_id": "speed",
+                            "location": "Vehicle Speed Monitor",
+                            "type_of_alert": alert_type_str,
+                            "image": img_url,
+                            "created_at": now_dt.strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        try:
+                            aj_data = []
+                            if os.path.exists(alerts_json_file):
+                                with open(alerts_json_file, "r") as ajf:
+                                    try: aj_data = json.load(ajf)
+                                    except: aj_data = []
+                            if not isinstance(aj_data, list): aj_data = []
+                            aj_data.insert(0, alert_entry)
+                            with open(alerts_json_file, "w") as ajf:
+                                json.dump(aj_data[:100], ajf, indent=2)
+                        except Exception: pass
+
+                        # 2. Store in PostgreSQL DB
+                        if str(CURR_DIR.parent) not in sys.path:
+                            sys.path.insert(0, str(CURR_DIR.parent))
+                        try:
+                            from alert_store import insert_alert_via_psql
+                            insert_alert_via_psql("speed", "Vehicle Speed Monitor", alert_type_str, img_url, now_dt)
+                            print(f"  💾 [ALERT-DB] Stored alert in DB: '{alert_type_str}' -> {img_url}")
+                        except Exception as dbe:
+                            print(f"  ⚠️ [ALERT-DB-ERR] DB insert failed: {dbe}")
+                    except Exception as ex:
+                        print(f"  ⚠️ [ALERT-ERR] Failed saving alert record: {ex}")
+
                 # Compute FPS and overlay stats
                 elapsed = time.time() - t_start
                 proc_fps = frame_count / max(0.001, elapsed)

@@ -207,10 +207,6 @@ class SpeedDashboard {
 
         ctx.clearRect(0, 0, w, h);
 
-        // Only draw interactive canvas lines during active drawing / editing mode
-        // When monitoring/streaming, the video stream itself renders the calibrated lines with zero duplicate overlay
-        if (!this.drawingMode && !this.isDragging) return;
-
         const drawCleanLine = (line, color) => {
             if (!line) return;
             const x1 = (line.x1_pct / 100.0) * w;
@@ -620,7 +616,7 @@ class SpeedDashboard {
     _getStreamUrl() {
         if (this.sourceType === "rtsp") {
             const rtspInput = document.getElementById("speed-custom-rtsp-input");
-            return rtspInput ? (rtspInput.value.trim() || rtspInput.placeholder.trim()) : "";
+            return rtspInput ? rtspInput.value.trim() : "";
         } else if (this.sourceType === "video") {
             const serverInput = document.getElementById("speed-server-video-input");
             const manualPath = serverInput ? serverInput.value.trim() : "";
@@ -634,9 +630,33 @@ class SpeedDashboard {
         const streamUrl = this._getStreamUrl();
 
         if (!streamUrl) {
-            if (statusSpan) {
-                statusSpan.textContent = "Please enter an RTSP URL or select video";
-                statusSpan.style.color = "#ff4444";
+            // User cleared input or wants to disconnect stream
+            try {
+                if (statusSpan) {
+                    statusSpan.textContent = "Disconnecting & clearing stream...";
+                    statusSpan.style.color = "#38bdf8";
+                }
+                await fetch("/api/speed/preview", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ rtsp: "" })
+                });
+                if (this.hlsPlayer) {
+                    this.hlsPlayer.destroy();
+                    this.hlsPlayer = null;
+                }
+                const video = document.getElementById("speed-video-player");
+                if (video) {
+                    video.pause();
+                    video.removeAttribute("src");
+                    video.load();
+                }
+                if (statusSpan) {
+                    statusSpan.textContent = "○ Stream Disconnected & Cleared";
+                    statusSpan.style.color = "var(--muted)";
+                }
+            } catch (e) {
+                console.error("[SPEED-DASH] Clear stream failed:", e);
             }
             return;
         }
