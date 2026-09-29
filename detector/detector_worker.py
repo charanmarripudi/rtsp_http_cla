@@ -52,6 +52,14 @@ import re
 
 from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db, insert_alert_via_psql
 
+try:
+    from vehicle_speed_tracker.speed_tracker import VehicleSpeedTracker
+except ImportError:
+    try:
+        from speed_tracker import VehicleSpeedTracker
+    except ImportError:
+        VehicleSpeedTracker = None
+
 YOLO_CACHE = {}
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -437,6 +445,7 @@ class DetectorWorker:
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         is_speed_worker = (str(self.cam_id) == "speed" or any("speed" in str(mp).lower() or "vehicle" in str(mp).lower() for mp in (model_paths if isinstance(model_paths, list) else [model_paths])))
+        self.is_speed_worker = is_speed_worker
         self.fps = 5.0 if is_speed_worker else 10.0
         self.width, self.height = 640, 360
         self._latest_raw_frame = None
@@ -465,10 +474,28 @@ class DetectorWorker:
         self._start_time = time.time()
         self._models_active_time = None
         self._first_box_logged = False
-        # EMA smoothing state: maps a stable track_id → smoothed box coords
-        # Each entry: {'box': [x1,y1,x2,y2], 'cls': str, 'color': tuple, 'conf': float, 'last_seen': float}
         self._ema_tracks = {}
         self._ema_next_id = 0
+
+        # Standalone VehicleSpeedTracker Engine (Same engine as CLI runner)
+        if self.is_speed_worker and VehicleSpeedTracker is not None:
+            veh_model = self.model_paths[0] if (isinstance(self.model_paths, list) and self.model_paths) else str(self.model_paths)
+            speed_cfg = {
+                "model_path": veh_model,
+                "speed_limit_kmh": self.speed_limit_kmh,
+                "road_distance_meters": self.road_distance_meters,
+                "confidence_threshold": max(0.20, float(self.conf)),
+                "imgsz": 416,
+                "frame_skip": 1,
+                "line_a": {"x1_pct": 5, "y1_pct": int(self.line_a_ratio * 100), "x2_pct": 95, "y2_pct": int(self.line_a_ratio * 100)},
+                "line_b": {"x1_pct": 5, "y1_pct": int(self.line_b_ratio * 100), "x2_pct": 95, "y2_pct": int(self.line_b_ratio * 100)},
+                "allowed_classes": ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle", "van", "bus"],
+                "alerts_dir": os.path.join(str(BASE_DIR), "alerts")
+            }
+            self.speed_tracker_engine = VehicleSpeedTracker(speed_cfg)
+            print(f"[SPEED-ENGINE] Initialized standalone VehicleSpeedTracker for Camera {self.cam_id} (imgsz=416, limit={self.speed_limit_kmh}km/h)", flush=True)
+        else:
+            self.speed_tracker_engine = None
         print(f"[TIMER-START] Camera {self.cam_id} Start request initialized at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
 
     def update_models(self, model_paths, model_configs=None, conf=None, iou=None, location=None):
@@ -1398,7 +1425,8 @@ class DetectorWorker:
                 ffmpeg = None
 
         try:
-            GLOBAL_INFERENCE_SCHEDULER.register_worker(self)
+            if not getattr(self, 'is_speed_worker', False):
+                GLOBAL_INFERENCE_SCHEDULER.register_worker(self)
 
             while not self._stop_event.is_set():
                 cleanup_subthreads()
@@ -1456,78 +1484,51 @@ class DetectorWorker:
                             time.sleep(0.02)
                             continue
 
-                        pf = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
-                        f_h, f_w = pf.shape[:2]
-
-                        # Draw ROI boundary if configured
-                        if self.roi_polygon and len(self.roi_polygon) == 2:
-                            try:
-                                min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0])
-                                max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0])
-                                min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1])
-                                max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
-                                rx1, ry1 = int(min_x * f_w), int(min_y * f_h)
-                                rx2, ry2 = int(max_x * f_w), int(max_y * f_h)
-                                cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
-                            except: pass
-
-                        # Draw latest tracked bounding boxes from Central Inference Scheduler
-                        with self._box_lock:
-                            display_boxes = list(self._tracked_boxes)
-
-                        DetectorWorker._draw_boxes(pf, display_boxes)
-
-                        # Draw vehicle speed timing lines & telemetry HUD if vehicle speed or yolov8n model is active
-                        active_mods = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
-                        is_speed_model = (str(self.cam_id) == "speed" or any("speed" in str(mp).lower() or "vehicle" in str(mp).lower() for mp in active_mods))
-                        if is_speed_model:
-                            la_y = int(f_h * getattr(self, 'line_a_ratio', 0.40))
-                            lb_y = int(f_h * getattr(self, 'line_b_ratio', 0.75))
+                        if getattr(self, 'speed_tracker_engine', None) is not None:
+                            now_t = time.time()
+                            pf, violations = self.speed_tracker_engine.process_frame(raw_frame, now_t)
+                            if (self.width, self.height) != (pf.shape[1], pf.shape[0]):
+                                pf = cv2.resize(pf, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
                             
-                            # Line A (Gate Entry) - Electric Cyan
-                            cv2.line(pf, (int(f_w * 0.05), la_y), (int(f_w * 0.95), la_y), (255, 200, 0), 2)
-                            cv2.putText(pf, "LINE A (GATE ENTRY)", (int(f_w * 0.06), la_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 200, 0), 1, cv2.LINE_AA)
-                            
-                            # Line B (Gantry Road) - Lime Green
-                            cv2.line(pf, (int(f_w * 0.05), lb_y), (int(f_w * 0.95), lb_y), (0, 255, 100), 2)
-                            cv2.putText(pf, "LINE B (GANTRY ROAD)", (int(f_w * 0.06), lb_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 100), 1, cv2.LINE_AA)
+                            self.vehicle_counts = self.speed_tracker_engine.counts
 
-                            # Top-Left Telemetry HUD (Matches Terminal Speed Tracker)
-                            hud_w, hud_h = 240, 78
-                            hud_x1, hud_y1 = 12, 12
-                            overlay = pf.copy()
-                            cv2.rectangle(overlay, (hud_x1, hud_y1), (hud_x1 + hud_w, hud_y1 + hud_h), (15, 15, 15), -1)
-                            cv2.addWeighted(overlay, 0.82, pf, 0.18, 0, pf)
-                            cv2.rectangle(pf, (hud_x1, hud_y1), (hud_x1 + hud_w, hud_y1 + hud_h), (60, 60, 60), 1)
+                            # Top-Right FPS Counter
+                            if not hasattr(self, '_frame_count_stat'):
+                                self._frame_count_stat = 0
+                                self._fps_start_t = time.time()
+                                self._stream_fps = float(self.fps)
 
-                            v_counts = getattr(self, 'vehicle_counts', {})
-                            trucks = v_counts.get('truck', 0) + v_counts.get('pickup truck', 0)
-                            cars = v_counts.get('car', 0)
-                            tot_cnt = sum(v_counts.values()) if v_counts else 0
-                            sp_lim = getattr(self, 'speed_limit_kmh', 10.0)
-                            dist_m = getattr(self, 'road_distance_meters', 20.0)
+                            self._frame_count_stat += 1
+                            if self._frame_count_stat % 10 == 0:
+                                elapsed_fps = time.time() - self._fps_start_t
+                                if elapsed_fps > 0:
+                                    self._stream_fps = 10.0 / elapsed_fps
+                                self._fps_start_t = time.time()
 
-                            cv2.putText(pf, "TERMINAL SPEED MONITOR", (hud_x1 + 10, hud_y1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 255, 170), 2, cv2.LINE_AA)
-                            cv2.putText(pf, f"Speed Limit : {sp_lim:.0f} km/h (Gate-Gantry: {dist_m:.0f}m)", (hud_x1 + 10, hud_y1 + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 200, 200), 1, cv2.LINE_AA)
-                            cv2.putText(pf, f"Total Count : {tot_cnt}", (hud_x1 + 10, hud_y1 + 54), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1, cv2.LINE_AA)
-                            cv2.putText(pf, f"  car: {cars}  truck: {trucks}", (hud_x1 + 10, hud_y1 + 70), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 190, 40), 1, cv2.LINE_AA)
+                            disp_fps = getattr(self, '_stream_fps', self.fps)
+                            cv2.putText(pf, f"FPS: {disp_fps:.1f}", (int(self.width - 110), 30),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2, cv2.LINE_AA)
+                        else:
+                            pf = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                            f_h, f_w = pf.shape[:2]
 
-                        # Top-Right FPS Counter
-                        if not hasattr(self, '_frame_count_stat'):
-                            self._frame_count_stat = 0
-                            self._fps_start_t = time.time()
-                            self._stream_fps = float(self.fps)
+                            # Draw ROI boundary if configured
+                            if self.roi_polygon and len(self.roi_polygon) == 2:
+                                try:
+                                    min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                                    max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                                    min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                                    max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                                    rx1, ry1 = int(min_x * f_w), int(min_y * f_h)
+                                    rx2, ry2 = int(max_x * f_w), int(max_y * f_h)
+                                    cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
+                                except: pass
 
-                        self._frame_count_stat += 1
-                        if self._frame_count_stat % 15 == 0:
-                            elapsed_fps = time.time() - self._fps_start_t
-                            if elapsed_fps > 0:
-                                self._stream_fps = 15.0 / elapsed_fps
-                            self._fps_start_t = time.time()
+                            # Draw latest tracked bounding boxes from Central Inference Scheduler
+                            with self._box_lock:
+                                display_boxes = list(self._tracked_boxes)
 
-                        disp_fps = getattr(self, '_stream_fps', self.fps)
-                        cv2.putText(pf, f"FPS: {disp_fps:.1f}", (int(f_w - 110), 30),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2, cv2.LINE_AA)
+                            DetectorWorker._draw_boxes(pf, display_boxes)
 
                         if ffmpeg.poll() is not None:
                             break
@@ -1542,4 +1543,5 @@ class DetectorWorker:
                     traceback.print_exc()
         finally:
             cleanup_subthreads()
-            GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)
+            if not getattr(self, 'is_speed_worker', False):
+                GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)
