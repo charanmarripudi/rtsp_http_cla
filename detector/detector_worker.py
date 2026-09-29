@@ -564,24 +564,24 @@ class DetectorWorker:
                 pass
 
         session_id = int(time.time())
+        out_fps = 15 if getattr(self, 'is_speed_worker', False) else int(self.fps)
+        hls_seg_time = "1" if getattr(self, 'is_speed_worker', False) else "2"
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
-            "-r", str(int(self.fps)), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
+            "-r", str(out_fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "baseline", "-level:v", "3.1",
             "-b:v", "800k", "-maxrate", "1200k", "-bufsize", "2000k",
-            "-g", str(int(self.fps)), 
-            "-keyint_min", str(int(self.fps)), "-sc_threshold", "0",
-            "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
+            "-g", str(out_fps), 
+            "-keyint_min", str(out_fps), "-sc_threshold", "0",
+            "-f", "hls", "-hls_time", hls_seg_time, "-hls_list_size", "6",
             "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
             "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
-        # NOTE: hls_list_size=6 keeps 6×2s = 12s of segments for remote viewers to buffer
-        # without stuttering over high-latency tunnels (ngrok/cloudflare).
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
-        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 350k (max 450k)", flush=True)
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {out_fps}, Bitrate: 800k (max 1200k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL, bufsize=10*1024*1024)
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -1473,17 +1473,26 @@ class DetectorWorker:
                         if src_fps <= 0 or src_fps > 120:
                             src_fps = 25.0
                         
-                        target_interval = 1.0 / self.fps
+                        target_fps = 15.0 if is_local_file else self.fps
+                        target_interval = 1.0 / target_fps
                         next_frame_time = time.time()
                         frame_idx = 0
+                        skip_n = max(1, int(round(src_fps / target_fps))) if is_local_file else 1
 
                         while not self._stop_event.is_set():
                             if is_local_file:
+                                # Skip non-sampled frames for high-FPS video files to keep real-time sync (matching --skip 2 in CLI)
+                                if skip_n > 1:
+                                    for _ in range(skip_n - 1):
+                                        if not cap.grab():
+                                            break
+                                        frame_idx += 1
+
                                 now = time.time()
                                 if now < next_frame_time:
                                     time.sleep(max(0.001, next_frame_time - now))
                                 next_frame_time += target_interval
-                                if now - next_frame_time > 0.5:
+                                if now - next_frame_time > 0.4:
                                     next_frame_time = now + target_interval
 
                             ret, raw_frame = cap.read()

@@ -207,6 +207,10 @@ class SpeedDashboard {
 
         ctx.clearRect(0, 0, w, h);
 
+        // Only draw interactive canvas lines during active drawing / editing mode
+        // When monitoring/streaming, the video stream itself renders the calibrated lines with zero duplicate overlay
+        if (!this.drawingMode && !this.isDragging) return;
+
         const drawCleanLine = (line, color) => {
             if (!line) return;
             const x1 = (line.x1_pct / 100.0) * w;
