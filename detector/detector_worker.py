@@ -568,17 +568,20 @@ class DetectorWorker:
         """
         if not boxes:
             return []
-        boxes = sorted(boxes, key=lambda x: x[2], reverse=True)
-        kept = []
+        veh_kws = ("car", "truck", "bus", "van", "pickup", "bike", "vehicle")
         for item in boxes:
             b1, col1, conf1, cls1 = item
+            is_veh1 = any(vk in cls1.lower() for vk in veh_kws)
             suppress = False
             for k_item in kept:
                 b2, col2, conf2, cls2 = k_item
+                is_veh2 = any(vk in cls2.lower() for vk in veh_kws)
                 iou, io_min = DetectorWorker._box_iou_and_io_min(b1, b2)
                 is_same = match_class(cls1, cls2)
                 is_opp  = is_opposite_class(cls1, cls2)
                 if is_same and (iou >= NMS_SAME_IOU_THRESH or io_min >= NMS_SAME_IO_MIN_THRESH):
+                    suppress = True; break
+                if is_veh1 and is_veh2 and (iou >= 0.40 or io_min >= 0.50):
                     suppress = True; break
                 if is_opp and (iou >= NMS_OPP_IOU_THRESH or io_min >= NMS_OPP_IO_MIN_THRESH):
                     suppress = True; break
@@ -1004,21 +1007,25 @@ class DetectorWorker:
                 if t_a is not None:
                     # Vehicle is traveling between Line A and Line B
                     dist_px = max(20, lb_y - la_y)
-                    y_prog = max(0.05, min(1.0, (by2 - la_y) / float(dist_px)))
-                    dt = max(0.05, now_t - t_a)
-                    live_est = max(2.0, min(140.0, ((dist_m * y_prog) / dt) * 3.6))
-                    if live_est > speed_limit:
-                        sub_lbl = f"OVER SPEED: ~{live_est:.1f} km/h (LIMIT: {speed_limit:.0f})"
-                        box_col = (0, 0, 255)  # Bright Red
+                    y_prog = max(0.01, min(1.0, (by2 - la_y) / float(dist_px)))
+                    dt = max(0.01, now_t - t_a)
+                    if dt >= 0.4 and y_prog >= 0.10:
+                        live_est = max(2.0, min(140.0, ((dist_m * y_prog) / dt) * 3.6))
+                        if live_est > speed_limit:
+                            sub_lbl = f"OVER SPEED: ~{live_est:.1f} km/h (LIMIT: {speed_limit:.0f})"
+                            box_col = (0, 0, 255)  # Bright Red
+                        else:
+                            sub_lbl = f"SPEED: ~{live_est:.1f} km/h"
+                            box_col = (0, 230, 100)  # Compliant Green
                     else:
-                        sub_lbl = f"SPEED: ~{live_est:.1f} km/h"
-                        box_col = (0, 230, 100)  # Compliant Green
+                        sub_lbl = "IN TRANSIT (LINE A -> B)"
+                        box_col = (255, 200, 0)  # Yellow In-Transit
                 elif by2 >= lb_y:
                     sub_lbl = "PAST LINE B"
                     box_col = (180, 180, 180)
                 else:
                     sub_lbl = "APPROACHING LINE A"
-                    box_col = (255, 180, 0)
+                    box_col = (0, 220, 255)
             else:
                 box_header = f"{trk_cls} {conf_pct:.2f}"
                 box_col = trk.get('color', (0, 255, 0))
