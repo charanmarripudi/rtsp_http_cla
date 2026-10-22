@@ -9,12 +9,21 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.join(PROJECT_ROOT, "backend")
 
-if BACKEND_DIR not in sys.path:
-    sys.path.insert(0, BACKEND_DIR)
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+# Ensure PROJECT_ROOT is strictly first in sys.path so 'backend' is recognized as a package
+if PROJECT_ROOT in sys.path:
+    sys.path.remove(PROJECT_ROOT)
+sys.path.insert(0, PROJECT_ROOT)
 
-from backend.server import app, main
+if BACKEND_DIR not in sys.path:
+    sys.path.append(BACKEND_DIR)
+
+try:
+    from backend.server import app, main
+except (ImportError, ModuleNotFoundError):
+    import server as backend_server
+    app = backend_server.app
+    main = backend_server.main
 
 if __name__ == "__main__":
     main()
+
