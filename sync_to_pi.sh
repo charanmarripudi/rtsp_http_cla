@@ -14,10 +14,12 @@ echo "========================================="
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 echo "[INFO] Current branch is: $CURRENT_BRANCH"
 
+COMMIT_MSG="${1:-sync: update code from local workspace $(date '+%Y-%m-%d %H:%M:%S')}"
+
 if [[ -n $(git status -s) ]]; then
-    echo "[INFO] Staging and committing modified tracked files..."
+    echo "[INFO] Staging and committing modified files with message: '$COMMIT_MSG'..."
     git add -u
-    git commit -m "sync: update model class rendering and sync with pi" || true
+    git commit -m "$COMMIT_MSG" || true
 fi
 
 echo "[INFO] Pushing $BRANCH to origin..."
