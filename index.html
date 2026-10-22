@@ -2498,26 +2498,7 @@
 
             const specFileNames = specializedModels.map(s => s.file);
 
-            // Parent checkboxes for remaining models (e.g. yolov8n.pt)
-            allModels.forEach(m => {
-              if (specFileNames.includes(m)) return;
-              const checked = assignedModels.includes(m) ? 'checked' : '';
-              const cleanName = m.replace(".pt", "");
-              const lbl = document.createElement("label");
-              lbl.className = checked ? 'model-chip checked' : 'model-chip';
-              lbl.style.cssText = "margin: 0; display: inline-flex; cursor: pointer;";
-              lbl.innerHTML = `
-                <input type="checkbox" class="parent-model-checkbox" value="${m}" ${checked} data-cam="${idx}" style="cursor:pointer;accent-color:#00ffaa;margin:0;margin-right:4px;">
-                <span>${cleanName}</span>
-              `;
-              listContainer.appendChild(lbl);
-              const cb = lbl.querySelector(".parent-model-checkbox");
-              cb.onchange = () => {
-                lbl.classList.toggle('checked', cb.checked);
-              };
-            });
-
-            // Render class checkboxes for all custom specialized models
+            // Function to render class checkboxes for any custom specialized model
             function renderPpeSection(modelFile, labelText, accentColor, classList) {
               const cleanName = modelFile.replace(".pt", "");
               const cfg = streamMeta.model_configs[modelFile] || streamMeta.model_configs[cleanName] || {};
@@ -2545,8 +2526,38 @@
               });
             }
 
+            // 1. Render predefined custom specialized models
             specializedModels.forEach(spec => {
               renderPpeSection(spec.file, spec.label, spec.color, spec.classes);
+            });
+
+            // 2. Dynamically render class checkboxes for ANY newly added .pt models!
+            allModels.forEach((m, mIdx) => {
+              if (specFileNames.includes(m)) return;
+              const cleanName = m.replace(".pt", "");
+              const cachedInfo = modelClassesCache[m];
+
+              // If model has specific classes (e.g. dome, valve_box, leakage), render class checkboxes dynamically!
+              if (cachedInfo && cachedInfo.classes && cachedInfo.classes.length > 0 && cachedInfo.classes.length <= 25 && m !== "yolov8n.pt") {
+                const autoColor = cachedInfo.color || MODEL_ACCENT_COLORS[mIdx % MODEL_ACCENT_COLORS.length];
+                const autoLabel = cleanName.replace(/_/g, " ").toUpperCase() + " CLASSES";
+                renderPpeSection(m, autoLabel, autoColor, cachedInfo.classes);
+              } else {
+                // For general 80-class base models like yolov8n.pt, render single parent checkbox
+                const checked = assignedModels.includes(m) ? 'checked' : '';
+                const lbl = document.createElement("label");
+                lbl.className = checked ? 'model-chip checked' : 'model-chip';
+                lbl.style.cssText = "margin: 0; display: inline-flex; cursor: pointer;";
+                lbl.innerHTML = `
+                  <input type="checkbox" class="parent-model-checkbox" value="${m}" ${checked} data-cam="${idx}" style="cursor:pointer;accent-color:#00ffaa;margin:0;margin-right:4px;">
+                  <span>${cleanName}</span>
+                `;
+                listContainer.appendChild(lbl);
+                const cb = lbl.querySelector(".parent-model-checkbox");
+                cb.onchange = () => {
+                  lbl.classList.toggle('checked', cb.checked);
+                };
+              }
             });
 
             modelRow.appendChild(listContainer);
