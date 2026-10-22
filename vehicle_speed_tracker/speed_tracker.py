@@ -218,19 +218,19 @@ class VehicleSpeedTracker:
                         bw = x2 - x1
                         bh = y2 - y1
 
-                        # ── FILTER 1: Confidence threshold ──
+                        # -- FILTER 1: Confidence threshold --
                         if score < max(0.20, self.conf_thresh):
                             continue
 
-                        # ── FILTER 2: Discard tiny noise ──
+                        # -- FILTER 2: Discard tiny noise --
                         if bw < 25 or bh < 20 or (bw * bh) < 500:
                             continue
 
-                        # ── FILTER 3: Discard roadside reflector posts ──
+                        # -- FILTER 3: Discard roadside reflector posts --
                         if (bh / max(1, bw)) > 3.2 and (x1 < w * 0.12 or x2 > w * 0.88):
                             continue
 
-                        # ── FILTER 4: Discard non-road tree foliage / off-road detections ──
+                        # -- FILTER 4: Discard non-road tree foliage / off-road detections --
                         # Top-right tree foliage area (y2 < 0.40*h and x1 > 0.65*w)
                         if y2 < h * 0.40 and x1 > w * 0.65:
                             continue
@@ -242,7 +242,7 @@ class VehicleSpeedTracker:
                         if not self.allowed_classes or any(c in label for c in self.allowed_classes):
                             raw_detections.append((x1, y1, x2, y2, label, score))
 
-            # ── FILTER 5: Suppress nested sub-boxes and overlapping partial detections ──
+            # -- FILTER 5: Suppress nested sub-boxes and overlapping partial detections --
             detections = []
             for d in raw_detections:
                 dx1, dy1, dx2, dy2, dlbl, dscore = d
@@ -322,7 +322,7 @@ class VehicleSpeedTracker:
                     # Trigger alert ONLY if speed exceeds the limit (e.g. > 10.0 km/h)
                     if speed_kmh > self.speed_limit_kmh:
                         trk["is_speed_violation"] = True
-                        print(f"\n🚨 [SPEED-VIOLATION] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h)!")
+                        print(f"\n[ALERT] [SPEED-VIOLATION] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Limit: {self.speed_limit_kmh} km/h)!")
                         
                         # Prepare alert record (snapshot saved below after annotation)
                         if not trk["alert_recorded"]:
@@ -343,7 +343,7 @@ class VehicleSpeedTracker:
                                 "timestamp": datetime.now().isoformat()
                             })
                     else:
-                        print(f"✓ [SPEED-NORMAL] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Compliant with {self.speed_limit_kmh} km/h limit)")
+                        print(f"[OK] [SPEED-NORMAL] Vehicle #{track_id} ({label}): {speed_kmh:.1f} km/h (Compliant with {self.speed_limit_kmh} km/h limit)")
 
         # 5. Render Visual Overlay with BBoxes, Vehicle Type, ID, and Speed HUD
         annotated_frame = self._draw_annotations(frame, tracked_objects, la_start, la_end, lb_start, lb_end, now_t)

@@ -1,5 +1,5 @@
 """
-video_tester.py — Edge AI Video Testing Engine for RTSP & Edge Server.
+video_tester.py - Edge AI Video Testing Engine for RTSP & Edge Server.
 Supports both Instant Live Stream Mode (real-time MJPEG detection playback with live slider tuning)
 and Offline Web-Compatible H.264 MP4 export.
 """
@@ -13,6 +13,8 @@ import shutil
 import logging
 import threading
 import subprocess
+import re
+import hashlib
 from datetime import datetime
 from pathlib import Path
 import cv2
@@ -49,12 +51,10 @@ except ImportError:
         YOLO_CACHE = {}
         def get_yolo_model(model_path):
             if model_path not in YOLO_CACHE:
-                from ultralytics import YOLO
                 YOLO_CACHE[model_path] = YOLO(model_path)
             return YOLO_CACHE[model_path]
 
     def clean_str(s):
-        import re
         res = re.sub(r'[^a-z0-9]', '', str(s).lower())
         return res.replace("saftey", "safety")
 
@@ -141,7 +141,6 @@ except ImportError:
             return (0, 255, 255)
         is_neg, core, cleaned = extract_negation_and_core(class_name)
         is_hazard = is_neg or any(w in cleaned for w in ("fire", "smoke", "fall", "danger", "hazard", "violation", "unauthorized"))
-        import hashlib
         if is_hazard:
             hazard_palette = [
                 (0, 0, 255),      # Bright Alert Red (BGR)
@@ -187,7 +186,7 @@ LIVE_STREAMERS_LOCK = threading.Lock()
 
 
 # =========================================================================
-# 🔴 INSTANT LIVE VIDEO DETECTION STREAMER (REAL-TIME MJPEG)
+# [LIVE] INSTANT LIVE VIDEO DETECTION STREAMER (REAL-TIME MJPEG)
 # =========================================================================
 class LiveVideoTestStreamer:
     def __init__(self, session_id: str, raw_filename: str, model_name: str, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None, frame_step=1):
@@ -429,7 +428,7 @@ def stop_live_streamer(session_id: str):
 
 
 # =========================================================================
-# 📁 BATCH JOB ENGINE (EXPORT H.264 MP4)
+# [BATCH] BATCH JOB ENGINE (EXPORT H.264 MP4)
 # =========================================================================
 class VideoTestJob:
     def __init__(self, job_id, raw_filename, model_name, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None, frame_skip=1):

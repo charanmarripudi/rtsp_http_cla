@@ -100,9 +100,9 @@ def main():
     should_loop = args.loop or cfg.get("loop_video", False)
     is_live_stream = is_rtsp_stream(source)
 
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("------------------------------------------------------------")
     print("  TERMINAL TANK TRUCK SPEED & COUNT MONITOR")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("------------------------------------------------------------")
     print(f"  Mode                 : {'LIVE RTSP STREAM' if is_live_stream else 'VIDEO FILE / WEBCAM'}")
     print(f"  Source Input         : {source}")
     print(f"  Auto-Loop Video      : {'ENABLED' if (should_loop and not is_live_stream) else 'DISABLED'}")
@@ -110,7 +110,7 @@ def main():
     print(f"  Speed Limit          : {cfg.get('speed_limit_kmh')} km/h")
     print(f"  Gate-Gantry Distance : {cfg.get('road_distance_meters')} meters")
     print(f"  Inference Image Size : {cfg.get('imgsz')} px (Low-CPU optimized)")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    print("------------------------------------------------------------\n")
 
     tracker_engine = VehicleSpeedTracker(cfg)
 
@@ -127,7 +127,7 @@ def main():
 
     cap = open_capture()
     if not cap.isOpened():
-        print(f"❌ [ERROR] Could not open source: {source}")
+        print(f"[ERROR] [ERROR] Could not open source: {source}")
         return
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
@@ -138,7 +138,7 @@ def main():
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     print(f"[STREAM] Connected. Resolution: {width}x{height} @ {fps:.1f} FPS" + (f" ({total_frames} total frames)" if total_frames > 0 else ""))
-    print("💡 [CONTROLS] Press 'Q' or ESC to exit | 'P' to pause/resume | 'S' to save snapshot\n")
+    print("[NOTE] [CONTROLS] Press 'Q' or ESC to exit | 'P' to pause/resume | 'S' to save snapshot\n")
 
     writer = None
     if args.output:
@@ -234,11 +234,11 @@ def main():
                         try:
                             from alert_store import insert_alert_via_psql
                             insert_alert_via_psql("speed", "Vehicle Speed Monitor", alert_type_str, img_url, now_dt)
-                            print(f"  💾 [ALERT-DB] Stored alert in DB: '{alert_type_str}' -> {img_url}")
+                            print(f"  [SAVE] [ALERT-DB] Stored alert in DB: '{alert_type_str}' -> {img_url}")
                         except Exception as dbe:
-                            print(f"  ⚠️ [ALERT-DB-ERR] DB insert failed: {dbe}")
+                            print(f"  [WARN] [ALERT-DB-ERR] DB insert failed: {dbe}")
                     except Exception as ex:
-                        print(f"  ⚠️ [ALERT-ERR] Failed saving alert record: {ex}")
+                        print(f"  [WARN] [ALERT-ERR] Failed saving alert record: {ex}")
 
                 # Compute FPS and overlay stats
                 elapsed = time.time() - t_start
@@ -252,7 +252,7 @@ def main():
                 # Show live processing progress in terminal every 25 frames
                 if frame_count % 25 == 0:
                     pct_str = f"({frame_count/total_frames*100:.1f}%)" if total_frames > 0 else ""
-                    print(f"  ⏳ [PROCESSING] Frame {frame_count}/{total_frames} {pct_str} | Speed: {proc_fps:.1f} FPS | Active Tracks: {len(tracker_engine.tracker.tracks)}", flush=True)
+                    print(f"  [WAIT] [PROCESSING] Frame {frame_count}/{total_frames} {pct_str} | Speed: {proc_fps:.1f} FPS | Active Tracks: {len(tracker_engine.tracker.tracks)}", flush=True)
 
             if has_display:
                 try:
@@ -283,12 +283,12 @@ def main():
                 cv2.destroyAllWindows()
         except Exception:
             pass
-        print(f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print(f"\n------------------------------------------------------------")
         print(f"  FINAL SUMMARY: Total Vehicles Counted = {sum(tracker_engine.counts.values())}")
-        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print(f"------------------------------------------------------------")
         for lbl, cnt in tracker_engine.counts.items():
-            print(f"  • {lbl}: {cnt}")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+            print(f"  -  {lbl}: {cnt}")
+        print("------------------------------------------------------------\n")
 
 
 if __name__ == "__main__":

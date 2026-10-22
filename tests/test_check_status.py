@@ -46,7 +46,7 @@ async def test_check_all():
                 print(f"  device_manager check: {is_online_dm}")
                 
                 if is_online_dm:
-                    print("  ✓ Should return online!")
+                    print("  [OK] Should return online!")
                     results.append((True, "test"))
                     continue
         

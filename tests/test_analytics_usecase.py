@@ -94,13 +94,13 @@ def get_analytics_mapping_core(location: str = None, models: list = None):
         print(f"- Cam {cam['id']}: loc={repr(cam_location)}, models={repr(cam_models)}")
         
         if f_location and cam_location_key != f_location: 
-            print("  → SKIP (location filter)")
+            print("  -> SKIP (location filter)")
             continue 
         if f_models: 
             if not any(_model_matches(model, cam_models) for model in f_models): 
-                print("  → SKIP (model filter)")
+                print("  -> SKIP (model filter)")
                 continue 
-        print("  → INCLUDED")
+        print("  -> INCLUDED")
         matching_cameras += 1 
         
         if cam_location not in by_location: 

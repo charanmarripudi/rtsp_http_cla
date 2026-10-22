@@ -8,7 +8,7 @@ os.environ["TORCH_NUM_THREADS"] = "2"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
 
-import cv2, subprocess, time, threading, queue, json, math
+import cv2, subprocess, time, threading, queue, json, math, glob, hashlib, traceback
 from collections import Counter
 import numpy as np
 try:
@@ -62,9 +62,9 @@ except ImportError:
 
 YOLO_CACHE = {}
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # TUNABLE KNOBS
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Shorter track age (1.0s) ensures snappy box movement that tracks moving people cleanly
 TRACK_MAX_AGE_S = 1.0
 
@@ -83,7 +83,7 @@ NMS_OPP_IO_MIN_THRESH = 0.30
 # Hard floor for YOLO confidence passed to model.predict().
 # Keeping this at 0.06 lets us catch low-confidence detections for per-class
 # post-filtering, but we apply a stricter per-class gate afterwards.
-PREDICT_CONF_FLOOR = 0.10   # raised from 0.06 → fewer ghost boxes fed into NMS
+PREDICT_CONF_FLOOR = 0.10   # raised from 0.06 -> fewer ghost boxes fed into NMS
 
 # Scheduler inter-camera sleep (seconds). Allows CPU cooldown and prevents thermal throttling.
 SCHEDULER_SLEEP_S = 0.06
@@ -208,7 +208,7 @@ def get_yolo_model(model_path):
             else:
                 return None
         else:
-            # File is not on disk — return None to prevent Ultralytics from freezing with GitHub 429 errors
+            # File is not on disk  -  return None to prevent Ultralytics from freezing with GitHub 429 errors
             return None
 
     if resolved_path not in YOLO_CACHE:
@@ -329,7 +329,6 @@ def get_dynamic_class_color(class_name):
         if k in norm_name or norm_name in k:
             return v
             
-    import hashlib
     h = int(hashlib.md5(norm_name.encode('utf-8')).hexdigest(), 16)
     palette = [
         (0, 140, 255),   # Vivid Orange
@@ -555,7 +554,6 @@ class DetectorWorker:
 
     def _create_ffmpeg(self):
         os.makedirs(self.output_dir, exist_ok=True)
-        import glob
         for f in glob.glob(os.path.join(self.output_dir, "*")):
             try:
                 if os.path.isfile(f) or os.path.islink(f):
@@ -578,15 +576,15 @@ class DetectorWorker:
             "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
             os.path.join(self.output_dir, "playlist.m3u8")
         ]
-        # NOTE: hls_list_size=6 keeps 6×2s = 12s of segments for remote viewers to buffer
+        # NOTE: hls_list_size=6 keeps 6x2s = 12s of segments for remote viewers to buffer
         # without stuttering over high-latency tunnels (ngrok/cloudflare).
         log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
         print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 350k (max 450k)", flush=True)
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL, bufsize=10*1024*1024)
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     # NMS HELPERS
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     @staticmethod
     def _box_iou_and_io_min(b1, b2):
         """Compute IoU and intersection-over-min-area for two [x1,y1,x2,y2] boxes."""
@@ -604,7 +602,7 @@ class DetectorWorker:
     def _apply_nms(boxes):
         """
         Full multi-class NMS pass over a list of (xyxy, color, conf, cls_name) tuples.
-        - Boxes sorted by confidence (high→low).
+        - Boxes sorted by confidence (high->low).
         - Same-class duplicates removed when IoU >= NMS_SAME_IOU_THRESH or io_min >= NMS_SAME_IO_MIN_THRESH.
         - Opposite-class pairs resolved by keeping the higher-confidence box when
           IoU >= NMS_OPP_IOU_THRESH or io_min >= NMS_OPP_IO_MIN_THRESH.
@@ -651,7 +649,7 @@ class DetectorWorker:
         if f is None:
             return
 
-        # ── Resolve output canvas size ──────────────────────────────────────
+        # -- Resolve output canvas size --------------------------------------
         orig_h, orig_w = f.shape[:2]
         # We run inference on the ORIGINAL raw frame so YOLO gets best quality.
         # We then scale coordinates to the output stream resolution afterward.
@@ -757,7 +755,7 @@ class DetectorWorker:
                         if conf_val < req_conf:
                             continue
 
-                        # Scale coordinates from original raw frame space → output stream resolution
+                        # Scale coordinates from original raw frame space -> output stream resolution
                         box_raw = b.xyxy[0].cpu().numpy().tolist()
                         rx1, ry1, rx2, ry2 = box_raw
                         x1 = max(0, min(self.width  - 1, rx1 * scale_x))
@@ -770,13 +768,13 @@ class DetectorWorker:
                         bh = max(0, y2 - y1)
                         is_veh_cls = any(vk in cls.lower() for vk in ("car", "truck", "bus", "van", "pickup", "tank truck", "vehicle", "bike"))
                         if is_veh_cls:
-                            # ── Filter 1: Min area / box size for 640x360 stream canvas ──
+                            # -- Filter 1: Min area / box size for 640x360 stream canvas --
                             if bw < 14 or bh < 12 or (bw * bh) < 180:
                                 continue
-                            # ── Filter 2: Roadside reflector poles on image borders ──
+                            # -- Filter 2: Roadside reflector poles on image borders --
                             if (bh / max(1, bw)) > 3.2 and (x1 < self.width * 0.10 or x2 > self.width * 0.90):
                                 continue
-                            # ── Filter 3: Sky filter ──
+                            # -- Filter 3: Sky filter --
                             if y2 < self.height * 0.16:
                                 continue
                         elif bw < 10 or bh < 10:
@@ -805,10 +803,10 @@ class DetectorWorker:
                         color_val = get_dynamic_class_color(cls)
                         raw_boxes.append((box_xyxy, color_val, conf_val, cls))
 
-        # ── Multi-Model NMS ───────────────────────────────────────────────────
+        # -- Multi-Model NMS ---------------------------------------------------
         kept_items = self._apply_nms(raw_boxes)
 
-        # ── Robust Vehicle Centroid & Ground Tracking Engine ──────────────────
+        # -- Robust Vehicle Centroid & Ground Tracking Engine ------------------
         now_t = time.time()
         if not hasattr(self, '_ema_tracks'):
             self._ema_tracks = {}
@@ -942,7 +940,7 @@ class DetectorWorker:
                 if hasattr(self, '_last_side_b') and tid in self._last_side_b:
                     del self._last_side_b[tid]
 
-        # ── Vehicle Speed Estimation & Dual-Line Timing ──
+        # -- Vehicle Speed Estimation & Dual-Line Timing --
         la_y = int(self.height * getattr(self, 'line_a_ratio', 0.40))
         lb_y = int(self.height * getattr(self, 'line_b_ratio', 0.75))
 
@@ -1036,7 +1034,7 @@ class DetectorWorker:
                             trk['color'] = (0, 0, 255)  # Pure Red Alert
                             if not hasattr(self, 'overspeed_count'): self.overspeed_count = 0
                             self.overspeed_count += 1
-                            print(f"🚨 [SPEED-VIOLATION] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Limit: {speed_limit:.0f} km/h)!", flush=True)
+                            print(f"[ALERT] [SPEED-VIOLATION] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Limit: {speed_limit:.0f} km/h)!", flush=True)
                             trk['should_alert_overspeed'] = True
 
                             # Save alert snapshot
@@ -1120,8 +1118,8 @@ class DetectorWorker:
             print(f" -> Delay from Model Active : {delay_from_active_ms}ms ({delay_from_active_ms/1000.0:.2f}s)", flush=True)
             print(f"==================================================================\n", flush=True)
 
-        # ── Snapshot for Alerts ───────────────────────────────────────────────
-        # ── Fully Annotated Snapshot for Alerts (Includes Timing Lines, HUD, and Speed) ──
+        # -- Snapshot for Alerts -----------------------------------------------
+        # -- Fully Annotated Snapshot for Alerts (Includes Timing Lines, HUD, and Speed) --
         frame_snapshot = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
         snap_h, snap_w = frame_snapshot.shape[:2]
 
@@ -1160,7 +1158,7 @@ class DetectorWorker:
         # Draw all bounding boxes with vehicle IDs, types, and speed banners onto snapshot
         DetectorWorker._draw_boxes(frame_snapshot, display_boxes)
 
-        # ── PPE Alert Processing (Excluded for speed monitor cameras and vehicle models) ──
+        # -- PPE Alert Processing (Excluded for speed monitor cameras and vehicle models) --
         if not is_speed_model:
             for tid, trk in list(self._ema_tracks.items()):
                 c = trk.get('cls', '')
@@ -1185,7 +1183,7 @@ class DetectorWorker:
                     print(f"[ALERT-TRIGGER] Instant alert generated: cam={self.cam_id}, class={c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
                     self._save_alert(c, frame_snapshot)
 
-        # ── Over Speed Alert Trigger (ONLY triggers when measured speed > limit) ──
+        # -- Over Speed Alert Trigger (ONLY triggers when measured speed > limit) --
         for tid, trk in list(self._ema_tracks.items()):
             if trk.get('should_alert_overspeed') and not trk.get('overspeed_alerted'):
                 trk['overspeed_alerted'] = True
@@ -1313,19 +1311,19 @@ class DetectorWorker:
             except Exception:
                 time.sleep(0.02)
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     # DRAWING HELPER
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     @staticmethod
     def _draw_boxes(pf, display_boxes):
         """
         Draw all bounding boxes and labels onto pf (in-place).
 
         Features:
-          • Area-based z-order so small PPE boxes render on top of large person boxes.
-          • Thick border (2 px) + black inner glow (1 px outline trick) for visibility.
-          • Larger, bolder labels with padded background panels.
-          • Vertical label stacking to avoid overlapping label text when two boxes
+          -  Area-based z-order so small PPE boxes render on top of large person boxes.
+          -  Thick border (2 px) + black inner glow (1 px outline trick) for visibility.
+          -  Larger, bolder labels with padded background panels.
+          -  Vertical label stacking to avoid overlapping label text when two boxes
             share the same top-left corner region.
         """
         if not display_boxes:
@@ -1333,7 +1331,7 @@ class DetectorWorker:
 
         f_h, f_w = pf.shape[:2]
 
-        # Sort: large boxes first (person/body) → drawn below; small boxes last → drawn on top
+        # Sort: large boxes first (person/body) -> drawn below; small boxes last -> drawn on top
         sorted_boxes = sorted(
             display_boxes,
             key=lambda b: max(0, b['box'][2] - b['box'][0]) * max(0, b['box'][3] - b['box'][1]),
@@ -1473,9 +1471,9 @@ class DetectorWorker:
                     print(f"[WORKER-TIMER] Camera {self.cam_id} RTSP connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
 
                     if self.is_speed_worker and getattr(self, 'speed_tracker_engine', None) is not None:
-                        # ──────────────────────────────────────────────────────────
+                        # ----------------------------------------------------------
                         # DEDICATED SPEED TRACKER PIPELINE (MATCHES run_speed_tracker.py)
-                        # ──────────────────────────────────────────────────────────
+                        # ----------------------------------------------------------
                         is_local_file = os.path.isfile(str(self.rtsp_url)) or not str(self.rtsp_url).lower().startswith("rtsp")
                         src_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
                         if src_fps <= 0 or src_fps > 120:
@@ -1544,7 +1542,7 @@ class DetectorWorker:
                                 v_spd = v.get("speed_kmh", 0.0)
                                 v_lbl = v.get("label", "vehicle")
                                 alert_cls = f"OVER SPEED: {v_spd:.1f} km/h (Limit: {self.speed_limit_kmh:.0f} km/h)"
-                                print(f"🚨 [ALERT-TRIGGER-SPEED] Standalone Engine Over speed alert: cam={self.cam_id}, vehicle_id={v.get('track_id')}, class={v_lbl}, speed={v_spd:.1f} km/h", flush=True)
+                                print(f"[ALERT] [ALERT-TRIGGER-SPEED] Standalone Engine Over speed alert: cam={self.cam_id}, vehicle_id={v.get('track_id')}, class={v_lbl}, speed={v_spd:.1f} km/h", flush=True)
                                 self._save_alert(alert_cls, pf, vehicle_label=v_lbl)
 
                             if ffmpeg.poll() is not None:
@@ -1556,9 +1554,9 @@ class DetectorWorker:
                             except Exception:
                                 break
                     else:
-                        # ──────────────────────────────────────────────────────────
+                        # ----------------------------------------------------------
                         # LOCATION CAMERAS PIPELINE (CENTRAL INFERENCE SCHEDULER)
-                        # ──────────────────────────────────────────────────────────
+                        # ----------------------------------------------------------
                         cap_t = threading.Thread(target=self._capture_thread, args=(cap, cap_stop_evt), daemon=True)
                         cap_t.start()
 
@@ -1615,7 +1613,6 @@ class DetectorWorker:
                             except:
                                 break
                 except:
-                    import traceback
                     traceback.print_exc()
         finally:
             cleanup_subthreads()

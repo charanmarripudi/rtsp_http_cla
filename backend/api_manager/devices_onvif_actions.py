@@ -22,6 +22,11 @@ try:
 except ImportError:
     from onvif_controller import OnvifController
 
+try:
+    from onvif_client import OnvifPtzClient
+except ImportError:
+    OnvifPtzClient = None
+
 router = fastapi.APIRouter(prefix='/devices', tags=['Devices'])
 
 
@@ -119,12 +124,12 @@ async def devices_control_pan_tilt(data: DevicesControlPanTiltParams):
         return False, "Not found in database and no direct IP provided"
 
     try:
-        from onvif_client import OnvifPtzClient
-        client = OnvifPtzClient(ip=onvif_creds['ip'], port=onvif_creds['port'], username=onvif_creds['username'], password=onvif_creds['password'])
-        direction = str(data.position).lower()
-        res = client.step(direction, 0.5, 0.35)
-        if res and isinstance(res, dict) and res.get("status") in ["success", "ok"]:
-            return True, "pan_tilt operation successful"
+        if OnvifPtzClient:
+            client = OnvifPtzClient(ip=onvif_creds['ip'], port=onvif_creds['port'], username=onvif_creds['username'], password=onvif_creds['password'])
+            direction = str(data.position).lower()
+            res = client.step(direction, 0.5, 0.35)
+            if res and isinstance(res, dict) and res.get("status") in ["success", "ok"]:
+                return True, "pan_tilt operation successful"
     except Exception:
         pass
 
@@ -182,12 +187,12 @@ async def devices_control_zoom(data: DevicesControlZoomParams):
         return {"status": "error", "message": "Not found in database and no direct IP provided"}
 
     try:
-        from onvif_client import OnvifPtzClient
-        client = OnvifPtzClient(ip=onvif_creds['ip'], port=onvif_creds['port'], username=onvif_creds['username'], password=onvif_creds['password'])
-        z_dir = "zoom_in" if zoom_val > 0 else "zoom_out"
-        res = client.zoom_step(z_dir, 0.5, 0.8)
-        if res and isinstance(res, dict) and res.get("status") in ["success", "ok"]:
-            return {"status": "success", "zoom": zoom_val, "message": "Zoom operation successful"}
+        if OnvifPtzClient:
+            client = OnvifPtzClient(ip=onvif_creds['ip'], port=onvif_creds['port'], username=onvif_creds['username'], password=onvif_creds['password'])
+            z_dir = "zoom_in" if zoom_val > 0 else "zoom_out"
+            res = client.zoom_step(z_dir, 0.5, 0.8)
+            if res and isinstance(res, dict) and res.get("status") in ["success", "ok"]:
+                return {"status": "success", "zoom": zoom_val, "message": "Zoom operation successful"}
     except Exception:
         pass
 
@@ -200,19 +205,22 @@ async def devices_control_zoom(data: DevicesControlZoomParams):
             return {"status": "success", "zoom": zoom_val, "message": str(msg)}
         else:
             try:
-                from onvif_client import OnvifPtzClient
-                client = OnvifPtzClient(ip=onvif_creds['ip'], port=onvif_creds['port'], username=onvif_creds['username'], password=onvif_creds['password'])
-                return client.zoom_step(z_dir, 0.5, 0.8)
+                if OnvifPtzClient:
+                    client = OnvifPtzClient(ip=onvif_creds['ip'], port=onvif_creds['port'], username=onvif_creds['username'], password=onvif_creds['password'])
+                    return client.zoom_step(z_dir, 0.5, 0.8)
+                return {"status": "error", "zoom": zoom_val, "message": str(msg)}
             except Exception:
                 return {"status": "error", "zoom": zoom_val, "message": str(msg)}
     except Exception as e:
         print(f"Zoom error: {e}")
         try:
-            from onvif_client import OnvifPtzClient
-            client = OnvifPtzClient(ip=onvif_creds['ip'], port=onvif_creds['port'], username=onvif_creds['username'], password=onvif_creds['password'])
-            return client.zoom_step(z_dir, 0.5, 0.8)
+            if OnvifPtzClient:
+                client = OnvifPtzClient(ip=onvif_creds['ip'], port=onvif_creds['port'], username=onvif_creds['username'], password=onvif_creds['password'])
+                return client.zoom_step(z_dir, 0.5, 0.8)
+            return {"status": "error", "message": f"Zoom exception: {str(e)}"}
         except Exception:
             return {"status": "error", "message": f"Zoom exception: {str(e)}"}
+
 
 
 # =====================================================================

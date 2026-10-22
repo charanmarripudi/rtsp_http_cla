@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_detection.py — Standalone detection tester for RTSP streams
+test_detection.py  -  Standalone detection tester for RTSP streams
 
 Run this INDEPENDENTLY (no cleanstart.sh, no server.py needed).
 Opens an OpenCV window showing live detections from one or more YOLO models.
@@ -22,9 +22,9 @@ USAGE:
   python3 test_detection.py --rtsp "rtsp://admin:pass@192.168.1.10:554/stream" --models ppe_new.pt
 
 KEYBOARD SHORTCUTS (in the OpenCV window):
-  Q or ESC  — quit
-  S         — save current frame as screenshot (saved to test_screenshots/)
-  +/-       — increase/decrease confidence threshold by 0.05
+  Q or ESC   -  quit
+  S          -  save current frame as screenshot (saved to test_screenshots/)
+  +/-        -  increase/decrease confidence threshold by 0.05
 """
 
 import argparse
@@ -37,7 +37,7 @@ import cv2
 import numpy as np
 from datetime import datetime
 
-# ── Resolve paths relative to this script ────────────────────────────────────
+# -- Resolve paths relative to this script ------------------------------------
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR   = os.path.join(BASE_DIR, "models")
 STREAMS_CONF = os.path.join(BASE_DIR, "streams.conf")
@@ -59,14 +59,14 @@ def list_available():
     streams = load_streams()
     models  = [f for f in os.listdir(MODELS_DIR) if f.endswith(".pt")] if os.path.exists(MODELS_DIR) else []
 
-    print("\n── STREAMS (from streams.conf) ──────────────────────")
+    print("\n-- STREAMS (from streams.conf) ----------------------")
     if streams:
         for i, url in enumerate(streams):
             print(f"  cam {i}: {url}")
     else:
         print("  (no streams.conf found)")
 
-    print("\n── MODELS (from models/) ────────────────────────────")
+    print("\n-- MODELS (from models/) ----------------------------")
     if models:
         for m in sorted(models):
             print(f"  {m}")
@@ -75,7 +75,7 @@ def list_available():
     print()
 
 
-# ── YOLO loader ───────────────────────────────────────────────────────────────
+# -- YOLO loader ---------------------------------------------------------------
 def load_models(model_names: list) -> list:
     from ultralytics import YOLO
     loaded = []
@@ -84,13 +84,13 @@ def load_models(model_names: list) -> list:
         if not os.path.exists(path):
             print(f"[ERROR] Model not found: {path}")
             sys.exit(1)
-        print(f"[test]  Loading {name}…", end=" ", flush=True)
+        print(f"[test]  Loading {name}...", end=" ", flush=True)
         loaded.append((name.replace(".pt", ""), YOLO(path)))
         print("ready")
     return loaded
 
 
-# ── Multi-model inference on a single frame ───────────────────────────────────
+# -- Multi-model inference on a single frame -----------------------------------
 def run_all_models(frame, models, conf, iou):
     """
     Run every model on `frame` and draw ALL bounding boxes simultaneously.
@@ -132,7 +132,7 @@ def run_all_models(frame, models, conf, iou):
         return frame, {}
 
 
-# ── Draw HUD overlay ─────────────────────────────────────────────────────────
+# -- Draw HUD overlay ---------------------------------------------------------
 def draw_hud(frame, fps, conf, iou, counts, model_names):
     h, w = frame.shape[:2]
     overlay = frame.copy()
@@ -163,7 +163,7 @@ def draw_hud(frame, fps, conf, iou, counts, model_names):
     return frame
 
 
-# ── Capture thread ────────────────────────────────────────────────────────────
+# -- Capture thread ------------------------------------------------------------
 class RTSPCapture:
     def __init__(self, url):
         self.url          = url
@@ -180,7 +180,7 @@ class RTSPCapture:
         while not self._stop.is_set():
             ret, frame = cap.read()
             if not ret:
-                print("[test] Stream read failed — reconnecting in 3s…")
+                print("[test] Stream read failed  -  reconnecting in 3s...")
                 cap.release()
                 time.sleep(3)
                 cap = cv2.VideoCapture(self.url)
@@ -198,7 +198,7 @@ class RTSPCapture:
         self._stop.set()
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# -- Main ----------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
         description="Standalone multi-model YOLO detection tester",
@@ -225,7 +225,7 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # ── Resolve RTSP URL ──────────────────────────────────────────────────
+    # -- Resolve RTSP URL --------------------------------------------------
     if args.rtsp:
         rtsp_url = args.rtsp
     else:
@@ -243,13 +243,13 @@ def main():
     print(f"[test] Conf={args.conf}  IoU={args.iou}  FPS cap={args.fps}")
     print(f"[test] Window  : {'headless' if args.no_window else 'OpenCV (press Q to quit)'}\n")
 
-    # ── Load models ───────────────────────────────────────────────────────
+    # -- Load models -------------------------------------------------------
     models      = load_models(args.models)
     model_names = [n for n, _ in models]
 
-    # ── Start capture ─────────────────────────────────────────────────────
+    # -- Start capture -----------------------------------------------------
     capture = RTSPCapture(rtsp_url)
-    print("[test] Waiting for first frame…")
+    print("[test] Waiting for first frame...")
     while capture.read() is None:
         time.sleep(0.2)
     print("[test] Stream connected. Starting detection loop.\n")
@@ -265,7 +265,7 @@ def main():
     current_fps   = 0.0
     last_counts   = {n: 0 for n in model_names}
 
-    window_name = f"RTSP Detection Test — {', '.join(model_names)}"
+    window_name = f"RTSP Detection Test  -  {', '.join(model_names)}"
     if not args.no_window:
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(window_name, 1280, 720)
@@ -312,10 +312,10 @@ def main():
                     print(f"[test] Screenshot saved: {path}")
                 elif key == ord("+"):
                     conf = min(0.99, round(conf + 0.05, 2))
-                    print(f"[test] Conf → {conf:.2f}")
+                    print(f"[test] Conf -> {conf:.2f}")
                 elif key == ord("-"):
                     conf = max(0.01, round(conf - 0.05, 2))
-                    print(f"[test] Conf → {conf:.2f}")
+                    print(f"[test] Conf -> {conf:.2f}")
 
     except KeyboardInterrupt:
         print("\n[test] Interrupted.")

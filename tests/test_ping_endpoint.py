@@ -10,7 +10,7 @@ test_payload = {
     "device_ip": "192.168.96.78"
 }
 
-print("📡 Testing POST /api/devices/ping...")
+print("[TEST] Testing POST /api/devices/ping...")
 print(f"Payload: {json.dumps(test_payload, indent=2)}")
 
 try:

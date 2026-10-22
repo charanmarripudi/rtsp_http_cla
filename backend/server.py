@@ -8,6 +8,24 @@ os.environ["TORCH_NUM_THREADS"] = "1"
 os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+import glob
+import json
+import mimetypes
+import re
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import threading
+import time
+from typing import Any, Dict, List, Optional, Tuple, Union
+from urllib.parse import urlparse
+import uuid
+
 import cv2
 try:
     cv2.setNumThreads(1)
@@ -23,22 +41,94 @@ try:
 except Exception:
     pass
 
-from fastapi import FastAPI, Body, Query, Request, HTTPException
-from typing import Optional, Tuple, Any
-from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
-import asyncio
-import httpx
-import re
-import shutil
-
-# Load .env file
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass  # If dotenv not installed, just use system env vars
+    pass
+
+from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+import httpx
+from pydantic import BaseModel
+import requests
+import uvicorn
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
+
+try:
+    import psycopg2
+    import psycopg2.extras
+    from psycopg2 import pool as pg_pool
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    psycopg2 = None
+    pg_pool = None
+    PSYCOPG2_AVAILABLE = False
+
+# Application directory resolution
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(BACKEND_DIR)
+DETECTOR_DIR = os.path.join(BACKEND_DIR, "detector")
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
+
+if DETECTOR_DIR not in sys.path:
+    sys.path.insert(0, DETECTOR_DIR)
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
+
+# Priority local api_manager inclusion
+local_api_dir = os.path.abspath(BASE_DIR)
+if local_api_dir not in sys.path:
+    sys.path.insert(0, local_api_dir)
+ptz_pkg_dir = os.path.abspath(os.path.join(BASE_DIR, "..", "onvif_ptz_zoom_package"))
+if os.path.exists(ptz_pkg_dir) and ptz_pkg_dir not in sys.path:
+    sys.path.append(ptz_pkg_dir)
+
+from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db
+import device_manager
+from onvif_client import OnvifPtzClient
+from detector_worker import DetectorWorker, get_yolo_model, INFERENCE_LOCK
+
+try:
+    from video_tester import (
+        create_job, get_job, delete_job, start_video_test,
+        get_or_create_live_streamer, get_live_streamer, stop_live_streamer,
+        RAW_DIR, RESULTS_DIR, JOBS
+    )
+except ImportError:
+    try:
+        from detector.video_tester import (
+            create_job, get_job, delete_job, start_video_test,
+            get_or_create_live_streamer, get_live_streamer, stop_live_streamer,
+            RAW_DIR, RESULTS_DIR, JOBS
+        )
+    except ImportError:
+        pass
+
+try:
+    from api_manager.devices_onvif_actions import (
+        router as devices_router,
+        devices_control_zoom,
+        DevicesControlZoomParams
+    )
+except ImportError:
+    devices_router = None
+    devices_control_zoom = None
+    DevicesControlZoomParams = None
+
+try:
+    from utilities.onvif_controller import OnvifController
+except ImportError:
+    OnvifController = None
 
 
 class DevicePingRequest(BaseModel):
@@ -60,42 +150,7 @@ class DeviceHeartbeat(BaseModel):
     device_id: str
     device_ip: str
 
-# Store for RPI heartbeats
 DEVICE_STATUS = {}
-
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response, FileResponse, JSONResponse, StreamingResponse
-import os, glob, subprocess, mimetypes, signal, json, socket, time, threading, sys, uuid
-
-# Import DetectorWorker to pre-load PyTorch/YOLO libraries at server boot time (takes ~25s once on boot)
-# so that camera detection starts instantly (in under 3 seconds) when clicking Start in the browser.
-try:
-    BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-    BASE_DIR = os.path.dirname(BACKEND_DIR)
-    DETECTOR_DIR = os.path.join(BACKEND_DIR, "detector")
-    if DETECTOR_DIR not in sys.path:
-        sys.path.insert(0, DETECTOR_DIR)
-    if BACKEND_DIR not in sys.path:
-        sys.path.insert(0, BACKEND_DIR)
-    from detector_worker import DetectorWorker
-except Exception as e:
-    print(f"[ERROR] Failed to pre-import DetectorWorker: {e}")
-
-try:
-    from video_tester import (
-        create_job, get_job, delete_job, start_video_test,
-        get_or_create_live_streamer, get_live_streamer, stop_live_streamer,
-        RAW_DIR, RESULTS_DIR, JOBS
-    )
-except Exception as e:
-    try:
-        from detector.video_tester import (
-            create_job, get_job, delete_job, start_video_test,
-            get_or_create_live_streamer, get_live_streamer, stop_live_streamer,
-            RAW_DIR, RESULTS_DIR, JOBS
-        )
-    except Exception as e2:
-        print(f"[ERROR] Failed to import video_tester: {e2}")
 
 class ThreadProcWrapper:
     """Wrapper that mimics a subprocess.Popen object so that running worker threads
@@ -105,7 +160,6 @@ class ThreadProcWrapper:
         self.thread = thread
         self.pid = 99999  # Dummy PID for logs
     def poll(self):
-        # Returns None if worker thread is running, or 0 if finished/stopped
         return None if (self.thread.is_alive() and not self.worker._stop_event.is_set()) else 0
     def kill(self):
         self.worker.stop()
@@ -114,7 +168,6 @@ class ThreadProcWrapper:
 
 def get_alerts_base_url():
     try:
-        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
         public_url_file = os.path.join(BASE_DIR, "hls", "public_url.txt")
         if os.path.exists(public_url_file):
             with open(public_url_file) as f:
@@ -123,13 +176,8 @@ def get_alerts_base_url():
                     return val
     except: pass
     return os.getenv("ALERTS_BASE_URL", "")
-from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlparse
-from datetime import datetime, timezone
-from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db
-import device_manager
-DEVICE_HEARTBEAT_TTL = device_manager.DEVICE_HEARTBEAT_TTL  # configurable via env var (default 90s)
 
+DEVICE_HEARTBEAT_TTL = device_manager.DEVICE_HEARTBEAT_TTL  # configurable via env var (default 90s)
 
 # --- New Async Check Functions ---
 SSH_PORT = 22
@@ -306,14 +354,8 @@ def _attach_last_communicated_time(updated_loc: dict, loc: dict) -> None:
 
 
 
-# ── Optional DB import ──
-try:
-    import psycopg2
-    import psycopg2.extras
-    from psycopg2 import pool as pg_pool
-    PSYCOPG2_AVAILABLE = True
-except ImportError:
-    PSYCOPG2_AVAILABLE = False
+# -- Optional DB import --
+# psycopg2 initialized at top of file
 
 mimetypes.add_type("application/vnd.apple.mpegurl", ".m3u8")
 mimetypes.add_type("video/mp2t", ".ts")
@@ -333,7 +375,6 @@ try:
         if os.path.islink(HLS_DIR):
             os.unlink(HLS_DIR)
         elif os.path.isdir(HLS_DIR):
-            import shutil
             shutil.rmtree(HLS_DIR)
         else:
             os.remove(HLS_DIR)
@@ -356,9 +397,9 @@ _streams_metadata_cache = None
 _streams_location_index_cache = None
 config_cache_lock = threading.Lock()
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # DB CONFIG
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 _db_pool = None
 
 def get_db_pool():
@@ -387,9 +428,9 @@ def init_db():
     except Exception as e: print(f"[DB] init error: {e}"); conn.rollback()
     finally: release_db_conn(conn)
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # SETUP
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 os.makedirs(ALERTS_DIR, exist_ok=True)
 if not os.path.exists(ALERTS_JSON): json.dump([], open(ALERTS_JSON, "w"))
 
@@ -422,24 +463,16 @@ app.add_middleware(
 )
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
-try:
-    # Priority 1: local api_manager inside rtsp_rpi (always in sync with Pi's git pull)
-    local_api_dir = os.path.abspath(os.path.join(BASE_DIR))
-    if local_api_dir not in sys.path:
-        sys.path.insert(0, local_api_dir)
-    # Priority 2: sibling onvif_ptz_zoom_package (may not exist on Pi)
-    ptz_pkg_dir = os.path.abspath(os.path.join(BASE_DIR, "..", "onvif_ptz_zoom_package"))
-    if os.path.exists(ptz_pkg_dir) and ptz_pkg_dir not in sys.path:
-        sys.path.append(ptz_pkg_dir)  # append, not insert — local copy takes priority
-    from api_manager.devices_onvif_actions import router as devices_router
-    app.include_router(devices_router)
-    print("[SERVER] Loaded /devices ONVIF PTZ & Zoom router successfully.")
-except Exception as _e:
-    print(f"[WARN] Could not load devices_onvif_actions router: {_e}")
+if devices_router:
+    try:
+        app.include_router(devices_router)
+        print("[SERVER] Loaded /devices ONVIF PTZ & Zoom router successfully.")
+    except Exception as _e:
+        print(f"[WARN] Could not load devices_onvif_actions router: {_e}")
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # HELPERS
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 def read_streams_conf():
     if not os.path.exists(STREAMS_CONF): return []
     return [l.strip() for l in open(STREAMS_CONF) if l.strip() and not l.strip().startswith("#")]
@@ -654,7 +687,7 @@ def _async_kill(proc):
 def _kill_raw_ffmpeg_for_camera(cid: str):
     """Kill the raw FFmpeg for a camera without cleaning its HLS directory.
     Called before starting detection so the detector's RTSP connection is the
-    only one consuming camera bandwidth — prevents slow-motion caused by two
+    only one consuming camera bandwidth  -  prevents slow-motion caused by two
     concurrent RTSP connections competing for the same stream."""
     cid = str(cid)
     proc_info = raw_streams_procs.get(cid)
@@ -689,7 +722,6 @@ def _clean_camera_dirs(camera: str):
         if os.path.islink(raw_dir):
             os.unlink(raw_dir)
         else:
-            import shutil
             shutil.rmtree(raw_dir)
     os.makedirs(raw_dir, exist_ok=True)
     
@@ -700,8 +732,7 @@ def _clean_camera_dirs(camera: str):
             if os.path.islink(det_dir):
                 os.unlink(det_dir)
             else:
-                import shutil
-                shutil.rmtree(det_dir)
+                    shutil.rmtree(det_dir)
         os.makedirs(det_dir, exist_ok=True)
 
 def _extract_ip_port(u):
@@ -712,7 +743,6 @@ def _extract_ip_port(u):
 
 def check_pi_heartbeat_sync(ip: str, port: int, timeout: float = 3.0) -> Tuple[bool, str]:
     try:
-        import requests
         response = requests.get(f"http://{ip}:{port}/health", timeout=timeout)
         if response.status_code == 200:
             return True, "Heartbeat OK"
@@ -761,9 +791,9 @@ def check_device_online(ip: str, timeout: float = 3.0, expected_device_id: Optio
     except (socket.timeout, ConnectionRefusedError, OSError):
         return False
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # CAMERA STATE
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 running = {}
 raw_streams_procs = {}
 
@@ -783,7 +813,6 @@ def start_raw_stream(i, u):
             except: pass
             del raw_streams_procs[cid]
 
-    import shutil
     sd = os.path.join(HLS_DIR, f"stream{cid}_raw")
 
     # Clean existing symlink or directory for cid
@@ -902,7 +931,6 @@ def monitor_raw_streams_loop():
 
 def stop_raw_stream(i, **kwargs):
     cid = str(i)
-    import shutil
     if cid in running:
         proc_info = running.get(cid)
         if proc_info:
@@ -942,7 +970,6 @@ async def startup_event():
     def preload_all_models():
         try:
             print("[STARTUP] Initializing background model weight preloading...")
-            from detector.detector_worker import get_yolo_model, INFERENCE_LOCK
             model_dir = os.path.join(BASE_DIR, "models")
             if os.path.exists(model_dir):
                 pts = sorted([f for f in os.listdir(model_dir) if f.endswith(".pt")])
@@ -962,9 +989,9 @@ async def startup_event():
 
     threading.Thread(target=preload_all_models, daemon=True).start()
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # ROUTES
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 @app.options("/hls/{path:path}")
 @app.options("/hls/camera/{cam_id}/{filename}")
 async def hls_options_handler(path: str = None, cam_id: str = None, filename: str = None):
@@ -1071,8 +1098,8 @@ async def serve_hls(path: str, request: Request = None):
     if not os.path.exists(fp): return Response(status_code=404, headers=headers)
     mt = "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t" if path.endswith(".ts") else "application/octet-stream"
 
-    # .m3u8 playlist must NEVER be cached — it changes every 2 seconds.
-    # .ts segments are immutable once written — allow clients to cache them for
+    # .m3u8 playlist must NEVER be cached  -  it changes every 2 seconds.
+    # .ts segments are immutable once written  -  allow clients to cache them for
     # up to 30 seconds so remote viewers (ngrok/cloudflare) don't re-request
     # completed segments and stop stuttering/buffering.
     if path.endswith(".ts"):
@@ -1257,7 +1284,6 @@ def get_model_classes(model_name: str):
     if clean_name in MODEL_CLASSES_CACHE:
         return MODEL_CLASSES_CACHE[clean_name]
     try:
-        from ultralytics import YOLO
         m_path = os.path.join(MODEL_DIR, model_name)
         if not os.path.exists(m_path):
             m_path = os.path.join(MODEL_DIR, norm_name)
@@ -2090,7 +2116,7 @@ def start_detection(d: dict):
 
         # Otherwise, stop previous worker before starting new worker.
         # Wait 3s (not 2s) for old inference thread to fully exit model.predict()
-        # before new thread starts — concurrent predict() on same model = SIGABRT.
+        # before new thread starts  -  concurrent predict() on same model = SIGABRT.
         if existing_proc:
             try:
                 existing_proc.kill()
@@ -2105,7 +2131,6 @@ def start_detection(d: dict):
         if os.path.islink(det_dir):
             os.unlink(det_dir)
         else:
-            import shutil
             shutil.rmtree(det_dir)
     os.makedirs(det_dir, exist_ok=True)
 
@@ -2265,9 +2290,9 @@ def save_cm(d: dict = Body(...)):
 
     return {"status": "saved"}
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # SPEED TRACKER REST APIS FOR OFFICE UI & CENTRAL DASHBOARD
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 SPEED_CONFIG_FILE = os.path.join(BASE_DIR, "speed_config.json")
 
 def _get_speed_config():
@@ -2491,7 +2516,6 @@ def preview_speed_camera(d: dict = Body(...)):
         _kill_raw_ffmpeg_for_camera("speed")
         sd = os.path.join(HLS_DIR, "streamspeed_raw")
         if os.path.exists(sd):
-            import shutil
             try:
                 if os.path.islink(sd): os.unlink(sd)
                 else: shutil.rmtree(sd)
@@ -2602,8 +2626,8 @@ async def get_locations(
     """
     Returns all locations with real-time device status.
     - If 'location' is provided, it treats it as an 'add/update' request for convenience (GET method).
-    - check_status=True  → async network ping per device (slow but accurate)
-    - check_status=False → heartbeat-only status check (fast, default)
+    - check_status=True  -> async network ping per device (slow but accurate)
+    - check_status=False -> heartbeat-only status check (fast, default)
     """
     # 1. If location is provided, treat as an ADD request (matching UI team usage)
     if location:
@@ -2913,9 +2937,9 @@ def delete_location(
 
     return {"status": "not_found", "message": "Location not found matching provided parameters."}
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # DEVICES & ALERTS
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 @app.get("/api/devices")
 async def get_devices(use_heartbeat: bool = True, check_status: bool = False):
     res = []
@@ -3066,7 +3090,6 @@ async def ping_device(d: DevicePingRequest, use_heartbeat: bool = True):
             break
 
     if not target_loc:
-        from fastapi import HTTPException
         raise HTTPException(
             status_code=403, 
             detail="Access Denied: The provided Device ID, IP, and Location name do not match any registered Raspberry Pi in our database."
@@ -3472,9 +3495,9 @@ def get_alert_image(filename: str):
         return Response(status_code=400)
     return FileResponse(fp, headers={"Access-Control-Allow-Origin": "*"}) if os.path.exists(fp) else Response(status_code=404)
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # ANALYTICS ENDPOINTS
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 def _norm_filter_value(value): 
     return str(value or "").strip().lower() 
 
@@ -3582,13 +3605,12 @@ def get_analytics_by_usecase(d: dict = Body(default={})):
     res = get_analytics_mapping_core(location=d.get("location"), models=models)
     return res.get("by_usecase", {}) 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # ONVIF PTZ CAMERA CONTROL APIS
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # ONVIF PTZ CAMERA CONTROL & MULTI-CAMERA APIS
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 try:
-    from onvif_client import OnvifPtzClient
     _ptz_clients = {}
 
     PTZ_CAMERAS_USER_FILE = os.path.join(BASE_DIR, "ptz_cameras_user.json")
@@ -3631,7 +3653,6 @@ try:
         return rtsp_url
 
     def parse_rtsp_for_onvif(rtsp_url):
-        import re
         rtsp_url = normalize_ptz_rtsp(rtsp_url)
         match = re.search(r'rtsp://(?:([^:]+)(?::([^@]*))?@)?([^:/]+)(?::(\d+))?', rtsp_url)
         if match:
@@ -3754,7 +3775,6 @@ try:
         except Exception as e:
             print(f"[PTZ-MOVE-FAST-FAIL] {e}, falling back to OnvifController")
         try:
-            from utilities.onvif_controller import OnvifController
             ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
             ctrl.connect()
             ctrl.move_direction(direction, duration=1.0)
@@ -3780,7 +3800,6 @@ try:
         except Exception as e:
             print(f"[PTZ-STEP-FAST-FAIL] {e}, falling back to OnvifController")
         try:
-            from utilities.onvif_controller import OnvifController
             ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
             ctrl.connect()
             ctrl.move_direction(direction, duration=duration)
@@ -3803,7 +3822,6 @@ try:
         except Exception as e:
             print(f"[PTZ-STOP-FAST-FAIL] {e}, falling back to OnvifController")
         try:
-            from utilities.onvif_controller import OnvifController
             ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
             ctrl.connect()
             ctrl.stop()
@@ -3821,7 +3839,6 @@ try:
         user = d.get("username", d.get("onvif_username", "admin"))
         pwd = d.get("password", d.get("onvif_password", ""))
         try:
-            from api_manager.devices_onvif_actions import devices_control_zoom, DevicesControlZoomParams
             params = DevicesControlZoomParams(
                 device_ip=ip,
                 onvif_port=port,
@@ -3845,7 +3862,6 @@ try:
         pwd = d.get("password", "")
         zoom_val = 0.5 if direction in ["in", "zoomin", "zoom_in"] else -0.5
         try:
-            from utilities.onvif_controller import OnvifController
             ctrl = OnvifController(ip=ip, port=port, username=user, password=pwd)
             ctrl.connect()
             ctrl.zoom(zoom_val)
@@ -3972,7 +3988,6 @@ for _html in _HTML_FILES:
         app.head(f"/{_html}")(_make_route(_html_path))
 
 def main():
-    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080, reload=False, log_level="warning", timeout_keep_alive=30, limit_concurrency=200, backlog=2048)
 
 if __name__ == "__main__":

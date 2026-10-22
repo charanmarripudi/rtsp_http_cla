@@ -62,13 +62,13 @@ print("\n=== Step 3: Checking for existing entry ===")
 for i, loc in enumerate(current_locations):
     print(f"  Checking loc {i}: id={repr(loc.get('id'))}, name={repr(loc.get('location'))}")
     if loc.get("location") == new_entry["location"] or loc.get("id") == new_entry["id"]:
-        print(f"  → MATCH! Updating index {i}")
+        print(f"  -> MATCH! Updating index {i}")
         current_locations[i] = new_entry
         exists = True
         break
 
 if not exists:
-    print("  → No match, appending new entry")
+    print("  -> No match, appending new entry")
     current_locations.append(new_entry)
 
 final_locations = current_locations

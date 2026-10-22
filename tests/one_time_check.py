@@ -11,7 +11,7 @@ endpoints = [
 ]
 
 for endpoint in endpoints:
-    print(f"\ Testing {endpoint}...")
+    print(f"Testing {endpoint}...")
     try:
         response = requests.get(f"{BASE_URL}{endpoint}", timeout=10)
         print(f"Status Code: {response.status_code}")

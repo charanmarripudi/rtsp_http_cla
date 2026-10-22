@@ -29,26 +29,26 @@ PASS = ""
 def single_action(action: str):
     controller = OnvifController(ip=IP, port=PORT, username=USER, password=PASS)
     act_lower = action.lower()
-    print(f"▶ Executing: '{act_lower}' on {IP}:{PORT}...")
+    print(f"> Executing: '{act_lower}' on {IP}:{PORT}...")
 
     if act_lower in ["in", "+", "zoomin", "zoom_in"]:
         controller.zoom(0.5)
-        print("✅ Zoom In (+) step completed!")
+        print("[SUCCESS] Zoom In (+) step completed!")
     elif act_lower in ["out", "-", "zoomout", "zoom_out"]:
         controller.zoom(-0.5)
-        print("✅ Zoom Out (-) step completed!")
+        print("[SUCCESS] Zoom Out (-) step completed!")
     elif act_lower in ["up", "top", "w"]:
         controller.pan_tilt(0.0, 0.5)
-        print("✅ Move Up step completed!")
+        print("[SUCCESS] Move Up step completed!")
     elif act_lower in ["down", "bottom", "s"]:
         controller.pan_tilt(0.0, -0.5)
-        print("✅ Move Down step completed!")
+        print("[SUCCESS] Move Down step completed!")
     elif act_lower in ["left", "a"]:
         controller.pan_tilt(-0.5, 0.0)
-        print("✅ Move Left step completed!")
+        print("[SUCCESS] Move Left step completed!")
     elif act_lower in ["right", "d"]:
         controller.pan_tilt(0.5, 0.0)
-        print("✅ Move Right step completed!")
+        print("[SUCCESS] Move Right step completed!")
     else:
         print(f"Unknown action: {action}")
 
@@ -75,27 +75,27 @@ def interactive_mode():
                 print("Exiting interactive mode.")
                 break
             elif cmd in ['+', 'i', 'in']:
-                print("▶ Zooming In (+)...")
+                print("> Zooming In (+)...")
                 controller.zoom(0.5)
                 print("  Done!")
             elif cmd in ['-', 'o', 'out']:
-                print("▶ Zooming Out (-)...")
+                print("> Zooming Out (-)...")
                 controller.zoom(-0.5)
                 print("  Done!")
             elif cmd in ['w', 'u', 'up']:
-                print("▶ Moving Up...")
+                print("> Moving Up...")
                 controller.pan_tilt(0.0, 0.5)
                 print("  Done!")
             elif cmd in ['s', 'down']:
-                print("▶ Moving Down...")
+                print("> Moving Down...")
                 controller.pan_tilt(0.0, -0.5)
                 print("  Done!")
             elif cmd in ['a', 'left']:
-                print("▶ Moving Left...")
+                print("> Moving Left...")
                 controller.pan_tilt(-0.5, 0.0)
                 print("  Done!")
             elif cmd in ['d', 'right']:
-                print("▶ Moving Right...")
+                print("> Moving Right...")
                 controller.pan_tilt(0.5, 0.0)
                 print("  Done!")
             else:

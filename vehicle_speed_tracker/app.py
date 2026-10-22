@@ -17,9 +17,9 @@ import streamlit as st
 
 from speed_tracker import VehicleSpeedTracker, CLASS_COLORS
 
-st.set_page_config(page_title="Terminal Vehicle Speed & Count Monitor", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="Terminal Vehicle Speed & Count Monitor", page_icon="[TRUCK]", layout="wide")
 
-st.title("🚛 Terminal Tank Truck Speed & Count Tracking")
+st.title("[TRUCK] Terminal Tank Truck Speed & Count Tracking")
 st.caption("Monitor vehicle counts and enforce 10 km/h speed limits between Gate and Gantry. Optimized for Raspberry Pi 4 & Edge AI.")
 
 CURR_DIR = Path(__file__).resolve().parent
@@ -27,22 +27,22 @@ default_weights = CURR_DIR.parent / "Vehicle_Detector_Tracking_Counter" / "best.
 if not default_weights.is_file():
     default_weights = CURR_DIR.parent / "rtsp_rpi" / "models" / "yolov8n.pt"
 
-# ── Sidebar Settings ──────────────────────────────────────────────────────────
+# -- Sidebar Settings ----------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ Configuration")
+    st.header("[CONFIG] Configuration")
     
     input_mode = st.radio("Input Source Mode", ["Upload Video File", "Live RTSP Stream"], index=0)
     
     weights_path = st.text_input("YOLO Weights Path", value=str(default_weights))
     
-    st.subheader("🏎️ Speed Limit & Calibration")
+    st.subheader("[CAR] Speed Limit & Calibration")
     speed_limit = st.slider("Speed Limit (km/h)", min_value=5.0, max_value=40.0, value=10.0, step=0.5)
     road_distance = st.slider("Gate-Gantry Distance (Meters)", min_value=5.0, max_value=100.0, value=20.0, step=1.0)
     confidence = st.slider("Detection Confidence", min_value=0.10, max_value=0.90, value=0.30, step=0.05)
     imgsz = st.select_slider("Inference Image Size (px)", options=[320, 384, 416, 480, 640], value=416)
     
     st.divider()
-    st.subheader("📏 Timing Line Calibration")
+    st.subheader("[CALIBRATION] Timing Line Calibration")
     st.caption("Line A (Gate Entry Line)")
     la_y = st.slider("Line A Y Position (%)", 0, 100, 40)
     la_x1 = st.slider("Line A Start X (%)", 0, 100, 10)
@@ -67,7 +67,7 @@ config = {
     "enable_anpr_hook": False
 }
 
-# ── Execution Logic ───────────────────────────────────────────────────────────
+# -- Execution Logic -----------------------------------------------------------
 if input_mode == "Upload Video File":
     uploaded = st.file_uploader("Upload Test Video", type=["mp4", "avi", "mov", "mkv"])
     if uploaded is None:
@@ -144,7 +144,7 @@ if input_mode == "Upload Video File":
 
     progress_bar.progress(1.0, text="Processing Complete!")
     st.download_button(
-        "📥 Download Processed Annotated Video",
+        "[INPUT] Download Processed Annotated Video",
         data=Path(out_path).read_bytes(),
         file_name="speed_tracked_video.mp4",
         mime="video/mp4"
