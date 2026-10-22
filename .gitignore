@@ -1,5 +1,6 @@
 # HLS live stream segments & playlists (auto-generated, very large)
 hls/
+hls
 !hls/.gitkeep
 
 # Live stream segment directories
