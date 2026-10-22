@@ -1731,8 +1731,8 @@
     </div>
   </div>
 
-  <script src="/static/js/detection.js?v=7.1"></script>
-  <script src="/static/js/location_dashboard.js?v=6.1"></script>
+  <script src="/static/js/detection.js?v=7.2"></script>
+  <script src="/static/js/location_dashboard.js?v=6.2"></script>
   <script src="/static/js/ptz_controller.js?v=5.0_dynamic"></script>
   <script src="/static/js/speed_dashboard.js?v=6.1"></script>
 
@@ -2493,7 +2493,9 @@
               { file: "120_spillage_best.pt", label: "SPILLAGE DETECTION CLASSES", color: "#06b6d4", classes: ["spillage"] },
               { file: "best_tape.pt", label: "REFLECTIVE TAPE CLASSES", color: "#10b981", classes: ["reflective_tape_floor","reflective_tape_person","reflective_tape_vehicles","traffic_tape_bollards","traffic_tape_cone"] },
               { file: "sand_ext_chocks.pt", label: "SAND EXT CHOCKS CLASSES", color: "#84cc16", classes: ["Fire_Extinguisher","Sand-Bucket","wheel-choke"] },
-              { file: "tyre_final.pt", label: "TYRE INSPECTION CLASSES", color: "#6366f1", classes: ["Defective","Good_tyre"] }
+              { file: "tyre_final.pt", label: "TYRE INSPECTION CLASSES", color: "#6366f1", classes: ["Defective","Good_tyre"] },
+              { file: "Valve_box_best.pt", label: "VALVE BOX CLASSES", color: "#38bdf8", classes: ["Valve_Box_Close", "Valve_Box_Open"] },
+              { file: "dome_open_closed_best.pt", label: "DOME OPEN/CLOSED CLASSES", color: "#14b8a6", classes: ["Dome_Closed", "Dome_Opened"] }
             ];
 
             const specFileNames = specializedModels.map(s => s.file);

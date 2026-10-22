@@ -694,16 +694,41 @@ class LocationDashboard {
         const modelsWithClasses = [];
         const modelsWithoutClasses = [];
 
-        this.allModels.forEach((model, idx) => {
-            const cleanM = model.replace(".pt", "");
-            const normM = `${cleanM}.pt`;
-            let classes = (this.modelClasses && (this.modelClasses[normM] || this.modelClasses[model] || this.modelClasses[cleanM]));
-            if (!classes || !Array.isArray(classes) || classes.length === 0) {
-                classes = fallbackModelClasses[normM] || fallbackModelClasses[model] || fallbackModelClasses[cleanM] || [];
+        const findClasses = (dict, targetName) => {
+            if (!dict || typeof dict !== "object") return null;
+            const targetLower = String(targetName || "").toLowerCase();
+            const targetClean = targetLower.replace(/\.pt$/, "");
+            for (const key of Object.keys(dict)) {
+                const kLower = key.toLowerCase();
+                const kClean = kLower.replace(/\.pt$/, "");
+                if (kLower === targetLower || kClean === targetClean) {
+                    if (Array.isArray(dict[key]) && dict[key].length > 0) return dict[key];
+                }
             }
+            return null;
+        };
+
+        const findMeta = (dict, targetName) => {
+            if (!dict || typeof dict !== "object") return null;
+            const targetLower = String(targetName || "").toLowerCase();
+            const targetClean = targetLower.replace(/\.pt$/, "");
+            for (const key of Object.keys(dict)) {
+                const kLower = key.toLowerCase();
+                const kClean = kLower.replace(/\.pt$/, "");
+                if (kLower === targetLower || kClean === targetClean) {
+                    return dict[key];
+                }
+            }
+            return null;
+        };
+
+        this.allModels.forEach((model, idx) => {
+            const cleanM = model.replace(/\.pt$/i, "");
+            const normM = `${cleanM}.pt`;
+            let classes = findClasses(this.modelClasses, model) || findClasses(fallbackModelClasses, model);
 
             if (Array.isArray(classes) && classes.length > 0) {
-                const meta = customMeta[normM] || customMeta[model] || customMeta[cleanM] || {
+                const meta = findMeta(customMeta, model) || {
                     label: `${cleanM.replace(/_/g, " ").toUpperCase()} CLASSES`,
                     color: palette[idx % palette.length]
                 };
