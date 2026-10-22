@@ -250,7 +250,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
             const specializedModelNames = [
                 "ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt",
                 "hansung_ppe_violations.pt", "construction.pt", "fire_smoke.pt", "Final_Fire_smoke.pt",
-                "150_firehose_best.pt", "120_spillage_best.pt", "best_tape.pt", "sand_ext_chocks.pt", "tyre_final.pt"
+                "150_firehose_best.pt", "120_spillage_best.pt", "best_tape.pt", "sand_ext_chocks.pt", "tyre_final.pt",
+                "Valve_box_best.pt", "dome_open_closed_best.pt"
             ];
             uniqueAssigned.forEach(m => {
                 const cleanName = m.replace(".pt", "");
@@ -258,9 +259,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                 const mCfg = modelConfigs[m] || modelConfigs[cleanName] || {};
                 const enabled = Array.from(new Set(mCfg.enabled_classes || []));
 
-                if (specializedModelNames.includes(normM)) {
-                    if (enabled.length > 0) {
-                        enabled.forEach(cls => {
+                if (enabled.length > 0) {
+                    enabled.forEach(cls => {
                             const existingCard = chipsList.querySelector(`[data-model-clean="${cleanName}"][data-class="${cls}"]`);
                             if (existingCard) return;
 
@@ -324,7 +324,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                 };
                             }
                         });
-                    }
                 } else {
                     const cVal = mCfg.conf !== undefined ? parseFloat(mCfg.conf).toFixed(2) : (meta.conf !== undefined ? parseFloat(meta.conf).toFixed(2) : "0.40");
                     const iVal = mCfg.iou !== undefined ? parseFloat(mCfg.iou).toFixed(2) : (meta.iou !== undefined ? parseFloat(meta.iou).toFixed(2) : "0.45");

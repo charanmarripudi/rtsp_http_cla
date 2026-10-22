@@ -1229,24 +1229,36 @@ MODEL_CLASSES_CACHE = {
     ],
     "tyre_final.pt": [
         "Defective", "Good_tyre"
+    ],
+    "Valve_box_best.pt": [
+        "Valve_Box_Close", "Valve_Box_Open"
+    ],
+    "dome_open_closed_best.pt": [
+        "Dome_Closed", "Dome_Opened"
     ]
 }
 
 def get_model_classes(model_name: str):
+    if not model_name:
+        return []
+    clean_name = model_name.replace(".pt", "")
+    norm_name = f"{clean_name}.pt"
+    if norm_name in MODEL_CLASSES_CACHE:
+        return MODEL_CLASSES_CACHE[norm_name]
     if model_name in MODEL_CLASSES_CACHE:
         return MODEL_CLASSES_CACHE[model_name]
-    clean_name = model_name.replace(".pt", "")
-    if clean_name + ".pt" in MODEL_CLASSES_CACHE:
-        return MODEL_CLASSES_CACHE[clean_name + ".pt"]
+    if clean_name in MODEL_CLASSES_CACHE:
+        return MODEL_CLASSES_CACHE[clean_name]
     try:
         from ultralytics import YOLO
         m_path = os.path.join(MODEL_DIR, model_name)
         if not os.path.exists(m_path):
-            m_path = os.path.join(MODEL_DIR, clean_name + ".pt")
+            m_path = os.path.join(MODEL_DIR, norm_name)
         if os.path.exists(m_path):
             yolo = YOLO(m_path)
             classes = list(yolo.names.values())
-            MODEL_CLASSES_CACHE[model_name] = classes
+            MODEL_CLASSES_CACHE[norm_name] = classes
+            MODEL_CLASSES_CACHE[clean_name] = classes
             return classes
     except Exception as e:
         print(f"[ERROR] Failed to load classes for model {model_name}: {e}")
@@ -1256,7 +1268,11 @@ def get_model_classes(model_name: str):
 def get_model_classes_endpoint(model: Optional[str] = Query(default=None), model_name: Optional[str] = Query(default=None)):
     target_model = model or model_name
     if not target_model:
-        return {"classes": ALL_MODEL_CLASSES if 'ALL_MODEL_CLASSES' in globals() else {}}
+        all_models = [f for f in os.listdir(MODEL_DIR) if f.endswith(".pt")] if os.path.exists(MODEL_DIR) else []
+        result = {}
+        for m in all_models:
+            result[m] = get_model_classes(m)
+        return {"models": result, "classes": result}
     return {"model": target_model, "classes": get_model_classes(target_model)}
 
 # ---------------------------------------------------------

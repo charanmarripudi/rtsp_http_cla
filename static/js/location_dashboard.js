@@ -85,17 +85,28 @@ class LocationDashboardTemplates {
 class LocationDashboardApi {
     async loadAll() {
         const t = Date.now();
-        const [locRes, streamRes, modelRes, cameraModelRes] = await Promise.all([
+        const [locRes, streamRes, modelRes, cameraModelRes, modelClassesRes] = await Promise.all([
             fetch(`/api/locations?t=${t}`, { cache: "no-store" }),
             fetch(`/api/streams?t=${t}`, { cache: "no-store" }),
             fetch(`/api/models?t=${t}`, { cache: "no-store" }),
-            fetch(`/api/camera-models?t=${t}`, { cache: "no-store" })
+            fetch(`/api/camera-models?t=${t}`, { cache: "no-store" }),
+            fetch(`/api/model-classes?t=${t}`, { cache: "no-store" }).catch(() => null)
         ]);
+        let modelClassesData = {};
+        if (modelClassesRes && modelClassesRes.ok) {
+            try {
+                const json = await modelClassesRes.json();
+                modelClassesData = json.models || json.classes || {};
+            } catch (e) {
+                console.warn("Failed to parse model-classes:", e);
+            }
+        }
         return {
             locations: locRes.ok ? (await locRes.json()).locations || [] : [],
             streams: streamRes.ok ? await streamRes.json() : [],
             models: modelRes.ok ? (await modelRes.json()).models || [] : [],
-            cameraModels: cameraModelRes.ok ? await cameraModelRes.json() : {}
+            cameraModels: cameraModelRes.ok ? await cameraModelRes.json() : {},
+            modelClasses: modelClassesData
         };
     }
 
@@ -163,6 +174,7 @@ class LocationDashboardStore {
         this.streams = [];
         this.allModels = [];
         this.cameraModels = {};
+        this.modelClasses = {};
     }
 
     load(data) {
@@ -170,6 +182,7 @@ class LocationDashboardStore {
         this.streams = Array.isArray(data.streams) ? data.streams : [];
         this.allModels = Array.isArray(data.models) ? data.models : [];
         this.cameraModels = (data.cameraModels && typeof data.cameraModels === "object") ? data.cameraModels : {};
+        this.modelClasses = (data.modelClasses && typeof data.modelClasses === "object") ? data.modelClasses : {};
     }
 
     loadOffline() {
@@ -268,6 +281,7 @@ class LocationDashboard {
         window.streamsArray = value;
     }
     get allModels() { return this.store.allModels; }
+    get modelClasses() { return this.store.modelClasses || {}; }
     get cameraModels() { return this.store.cameraModels; }
     set cameraModels(value) {
         this.store.cameraModels = value;
@@ -636,24 +650,76 @@ class LocationDashboard {
 
         let html = "";
 
-        const specializedModels = [
-            { file: "ppe_new.pt", label: "PPE-NEW CLASSES", color: "#00ffaa", classes: ["Cap-Lamp","Gloves","Gum-Boots","Hard-Hat","Mask","NO-Mask","No-Cap-Lamp","No-Gloves","No-Gum-Boots","No-Hard-Hat","No-Saftey-Belt","No-Saftey-Vest","Saftey-Belt","Saftey-Vest"] },
-            { file: "nik_ppe_best.pt", label: "NIK-PPE CLASSES", color: "#f5a623", classes: ["Fall-Detected","Gloves","Goggles","Helmet","Mask","NO-Mask","No_Gloves","No_Goggles","No_Harness","No_boots","No_helmet","No_safety_vest","Safety Vest","boots","harness"] },
-            { file: "hansung_ppe_violations.pt", label: "HANSUNG VIOLATIONS CLASSES", color: "#fb7185", classes: ["Hardhat","Mask","NO-Hardhat","NO-Mask","NO-Safety Vest","Person","Safety Cone","Safety Vest","machinery","vehicle"] },
-            { file: "construction.pt", label: "CONSTRUCTION PPE CLASSES", color: "#eab308", classes: ["helmet","gloves","vest","boots","goggles","none","Person","no_helmet","no_goggle","no_gloves","no_boots"] },
-            { file: "hf_ppe_detection.pt", label: "HF PPE DETECTION CLASSES", color: "#a78bfa", classes: ["helmet","human","no-helmet","vest"] },
-            { file: "fire_smoke.pt", label: "FIRE & SMOKE CLASSES", color: "#f97316", classes: ["Fire","Smoke"] },
-            { file: "Final_Fire_smoke.pt", label: "FINAL FIRE & SMOKE CLASSES", color: "#ef4444", classes: ["fire","smoke","Gas"] },
-            { file: "150_firehose_best.pt", label: "FIREHOSE DETECTION CLASSES", color: "#ec4899", classes: ["fire_hose","firehose_box"] },
-            { file: "120_spillage_best.pt", label: "SPILLAGE DETECTION CLASSES", color: "#06b6d4", classes: ["spillage"] },
-            { file: "best_tape.pt", label: "REFLECTIVE TAPE CLASSES", color: "#10b981", classes: ["reflective_tape_floor","reflective_tape_person","reflective_tape_vehicles","traffic_tape_bollards","traffic_tape_cone"] },
-            { file: "sand_ext_chocks.pt", label: "SAND EXT CHOCKS CLASSES", color: "#84cc16", classes: ["Fire_Extinguisher","Sand-Bucket","wheel-choke"] },
-            { file: "tyre_final.pt", label: "TYRE INSPECTION CLASSES", color: "#6366f1", classes: ["Defective","Good_tyre"] }
+        const palette = [
+            "#00ffaa", "#f5a623", "#fb7185", "#eab308", "#a78bfa",
+            "#f97316", "#ef4444", "#ec4899", "#06b6d4", "#10b981",
+            "#84cc16", "#6366f1", "#38bdf8", "#14b8a6", "#d946ef",
+            "#f43f5e", "#8b5cf6", "#0ea5e9", "#22c55e", "#e11d48"
         ];
 
-        const specFileNames = specializedModels.map(s => s.file);
-        this.allModels.forEach(model => {
-            if (specFileNames.includes(model)) return;
+        const fallbackModelClasses = {
+            "ppe_new.pt": ["Cap-Lamp","Gloves","Gum-Boots","Hard-Hat","Mask","NO-Mask","No-Cap-Lamp","No-Gloves","No-Gum-Boots","No-Hard-Hat","No-Saftey-Belt","No-Saftey-Vest","Saftey-Belt","Saftey-Vest"],
+            "nik_ppe_best.pt": ["Fall-Detected","Gloves","Goggles","Helmet","Mask","NO-Mask","No_Gloves","No_Goggles","No_Harness","No_boots","No_helmet","No_safety_vest","Safety Vest","boots","harness"],
+            "hansung_ppe_violations.pt": ["Hardhat","Mask","NO-Hardhat","NO-Mask","NO-Safety Vest","Person","Safety Cone","Safety Vest","machinery","vehicle"],
+            "construction.pt": ["helmet","gloves","vest","boots","goggles","none","Person","no_helmet","no_goggle","no_gloves","no_boots"],
+            "hf_ppe_detection.pt": ["helmet","human","no-helmet","vest"],
+            "fire_smoke.pt": ["Fire","Smoke"],
+            "Final_Fire_smoke.pt": ["fire","smoke","Gas"],
+            "150_firehose_best.pt": ["fire_hose","firehose_box"],
+            "120_spillage_best.pt": ["spillage"],
+            "best_tape.pt": ["reflective_tape_floor","reflective_tape_person","reflective_tape_vehicles","traffic_tape_bollards","traffic_tape_cone"],
+            "sand_ext_chocks.pt": ["Fire_Extinguisher","Sand-Bucket","wheel-choke"],
+            "tyre_final.pt": ["Defective","Good_tyre"],
+            "Valve_box_best.pt": ["Valve_Box_Close","Valve_Box_Open"],
+            "dome_open_closed_best.pt": ["Dome_Closed","Dome_Opened"]
+        };
+
+        const customMeta = {
+            "ppe_new.pt": { label: "PPE-NEW CLASSES", color: "#00ffaa" },
+            "nik_ppe_best.pt": { label: "NIK-PPE CLASSES", color: "#f5a623" },
+            "hansung_ppe_violations.pt": { label: "HANSUNG VIOLATIONS CLASSES", color: "#fb7185" },
+            "construction.pt": { label: "CONSTRUCTION PPE CLASSES", color: "#eab308" },
+            "hf_ppe_detection.pt": { label: "HF PPE DETECTION CLASSES", color: "#a78bfa" },
+            "fire_smoke.pt": { label: "FIRE & SMOKE CLASSES", color: "#f97316" },
+            "Final_Fire_smoke.pt": { label: "FINAL FIRE & SMOKE CLASSES", color: "#ef4444" },
+            "150_firehose_best.pt": { label: "FIREHOSE DETECTION CLASSES", color: "#ec4899" },
+            "120_spillage_best.pt": { label: "SPILLAGE DETECTION CLASSES", color: "#06b6d4" },
+            "best_tape.pt": { label: "REFLECTIVE TAPE CLASSES", color: "#10b981" },
+            "sand_ext_chocks.pt": { label: "SAND EXT CHOCKS CLASSES", color: "#84cc16" },
+            "tyre_final.pt": { label: "TYRE INSPECTION CLASSES", color: "#6366f1" },
+            "Valve_box_best.pt": { label: "VALVE BOX CLASSES", color: "#38bdf8" },
+            "dome_open_closed_best.pt": { label: "DOME OPEN/CLOSED CLASSES", color: "#14b8a6" }
+        };
+
+        const modelsWithClasses = [];
+        const modelsWithoutClasses = [];
+
+        this.allModels.forEach((model, idx) => {
+            const cleanM = model.replace(".pt", "");
+            const normM = `${cleanM}.pt`;
+            let classes = (this.modelClasses && (this.modelClasses[normM] || this.modelClasses[model] || this.modelClasses[cleanM]));
+            if (!classes || !Array.isArray(classes) || classes.length === 0) {
+                classes = fallbackModelClasses[normM] || fallbackModelClasses[model] || fallbackModelClasses[cleanM] || [];
+            }
+
+            if (Array.isArray(classes) && classes.length > 0) {
+                const meta = customMeta[normM] || customMeta[model] || customMeta[cleanM] || {
+                    label: `${cleanM.replace(/_/g, " ").toUpperCase()} CLASSES`,
+                    color: palette[idx % palette.length]
+                };
+                modelsWithClasses.push({
+                    file: model,
+                    label: meta.label,
+                    color: meta.color,
+                    classes: classes
+                });
+            } else {
+                modelsWithoutClasses.push(model);
+            }
+        });
+
+        // First render models without classes (simple parent checkboxes)
+        modelsWithoutClasses.forEach(model => {
             const checked = assigned.includes(model);
             html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
                 <input type="checkbox" class="parent-model-checkbox" value="${this.escapeHtml(model)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" style="cursor: pointer; accent-color: #00ffaa; margin: 0; margin-right: 4px;">
@@ -661,16 +727,17 @@ class LocationDashboard {
             </label>`;
         });
 
-        specializedModels.forEach(spec => {
+        // Next render models with class checkboxes
+        modelsWithClasses.forEach(spec => {
             const cleanM = spec.file.replace(".pt", "");
-            const cfg = (stream && stream.model_configs && (stream.model_configs[spec.file] || stream.model_configs[cleanM])) || {};
+            const cfg = (stream && stream.model_configs && (stream.model_configs[spec.file] || stream.model_configs[cleanM] || stream.model_configs[`${cleanM}.pt`])) || {};
             const enabled = cfg.enabled_classes || [];
 
-            html += `<div style="width:100%;font-size:0.62rem;color:${spec.color};font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">${spec.label}</div>`;
+            html += `<div style="width:100%;font-size:0.62rem;color:${spec.color};font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">${this.escapeHtml(spec.label)}</div>`;
             spec.classes.forEach(cls => {
                 const checked = enabled.includes(cls);
                 html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
-                    <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="${spec.file}" style="cursor: pointer; accent-color: ${spec.color}; margin: 0; margin-right: 4px;">
+                    <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="${spec.file}" data-color="${spec.color}" style="cursor: pointer; accent-color: ${spec.color}; margin: 0; margin-right: 4px;">
                     <span style="color:${checked ? spec.color : ''}">${this.escapeHtml(cls)}</span>
                 </label>`;
             });
@@ -683,15 +750,9 @@ class LocationDashboard {
         cb.addEventListener("change", () => {
             cb.closest(".model-chip").classList.toggle("checked", cb.checked);
             const labelSpan = cb.nextElementSibling;
-            const parentModel = cb.getAttribute("data-model") || "ppe_new.pt";
-            if (parentModel === "nik_ppe_best.pt" && labelSpan) {
-                labelSpan.style.color = cb.checked ? "#f5a623" : "";
-            } else if (parentModel === "hf_ppe_detection.pt" && labelSpan) {
-                labelSpan.style.color = cb.checked ? "#a78bfa" : "";
-            } else if (parentModel === "keremberke_ppe_gear.pt" && labelSpan) {
-                labelSpan.style.color = cb.checked ? "#38bdf8" : "";
-            } else if (parentModel === "hansung_ppe_violations.pt" && labelSpan) {
-                labelSpan.style.color = cb.checked ? "#fb7185" : "";
+            const accentColor = cb.getAttribute("data-color") || cb.style.accentColor || "#00ffaa";
+            if (labelSpan) {
+                labelSpan.style.color = cb.checked ? accentColor : "";
             }
         });
     }
