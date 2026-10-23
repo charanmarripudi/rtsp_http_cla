@@ -534,7 +534,7 @@ class LiveVideoTestStreamer:
                                 "color": color
                             })
             except Exception as e:
-                logger.error(f"Live infer error in streamer: {e}")
+                print(f"[VideoTester] Live infer error in streamer: {e}", flush=True)
 
             dt_infer = max(0.001, time.time() - t_infer_0)
             p_fps = 1.0 / dt_infer
@@ -542,6 +542,7 @@ class LiveVideoTestStreamer:
             with self.lock:
                 self.latest_detections = dets
                 self.processed_fps = p_fps
+            print(f"[VideoTester] Infer cycle took {dt_infer*1000:.0f}ms -> {len(dets)} active detections", flush=True)
 
             # Brief pause so CPU remains responsive for smooth video rendering
             time.sleep(0.02)
