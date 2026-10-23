@@ -35,9 +35,21 @@ except ImportError:
 from pathlib import Path
 import sys
 
-BASE_DIR = Path(__file__).resolve().parents[1]
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
+_curr = Path(__file__).resolve()
+BASE_DIR = None
+for p in [_curr.parent, _curr.parent.parent, _curr.parent.parent.parent]:
+    if (p / "models").is_dir() and (p / "backend").is_dir():
+        BASE_DIR = p
+        break
+if BASE_DIR is None:
+    BASE_DIR = _curr.parents[2] if len(_curr.parents) > 2 else _curr.parent.parent
+
+BACKEND_DIR = BASE_DIR / "backend"
+DETECTOR_DIR = BACKEND_DIR / "detector"
+
+for p in [str(DETECTOR_DIR), str(BACKEND_DIR), str(BASE_DIR)]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 # Optimize PyTorch CPU threading to 2 dedicated cores on Raspberry Pi 4 CPU
 try:
@@ -192,23 +204,33 @@ INFERENCE_LOCK = threading.Lock()
 
 def get_yolo_model(model_path):
     resolved_path = str(model_path)
-    if not os.path.isabs(resolved_path) and not os.path.exists(resolved_path):
-        m_dir = os.path.join(str(BASE_DIR), "models")
-        if os.path.exists(os.path.join(m_dir, resolved_path)):
-            resolved_path = os.path.join(m_dir, resolved_path)
-        elif os.path.exists(os.path.join(m_dir, os.path.basename(resolved_path))):
-            resolved_path = os.path.join(m_dir, os.path.basename(resolved_path))
+    m_dir = os.path.join(str(BASE_DIR), "models")
+    
+    if not os.path.exists(resolved_path):
+        basename = os.path.basename(resolved_path)
+        candidates = [
+            os.path.join(m_dir, resolved_path),
+            os.path.join(m_dir, basename),
+            os.path.join(str(BASE_DIR), basename),
+            os.path.join(str(BASE_DIR), "backend", "models", basename)
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                resolved_path = c
+                break
 
     if not os.path.exists(resolved_path):
         if "vehicle_speed" in resolved_path or "speed" in resolved_path:
             fallback = os.path.join(str(BASE_DIR), "models", "yolov8n.pt")
+            if not os.path.exists(fallback):
+                fallback = os.path.join(str(BASE_DIR), "yolov8n.pt")
             if os.path.exists(fallback):
                 print(f"[CACHE-FALLBACK] vehicle_speed.pt not found on disk, falling back to {fallback}", flush=True)
                 resolved_path = fallback
             else:
                 return None
         else:
-            # File is not on disk  -  return None to prevent Ultralytics from freezing with GitHub 429 errors
+            # File is not on disk - return None to prevent Ultralytics from freezing with GitHub 429 errors
             return None
 
     if resolved_path not in YOLO_CACHE:

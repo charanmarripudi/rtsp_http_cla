@@ -3370,7 +3370,7 @@
         if (res.status === "ok") {
           window.vlabLiveStreamingActive = true;
           if (livePlayer) {
-            livePlayer.src = `/api/video-test/live-stream?t=${Date.now()}`;
+            livePlayer.src = res.stream_url || `/api/video-test/live-stream?session_id=${encodeURIComponent(payload.session_id || 'default')}&t=${Date.now()}`;
           }
           if (liveStatusTxt) {
             liveStatusTxt.textContent = `Streaming Active • ${modelName} (${payload.imgsz}px, Conf ${payload.conf})`;

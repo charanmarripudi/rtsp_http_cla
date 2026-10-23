@@ -21,9 +21,21 @@ import cv2
 import numpy as np
 
 # Ensure root directory is on path
-BASE_DIR = Path(__file__).resolve().parent.parent
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
+_curr = Path(__file__).resolve()
+BASE_DIR = None
+for p in [_curr.parent, _curr.parent.parent, _curr.parent.parent.parent]:
+    if (p / "models").is_dir() and (p / "backend").is_dir():
+        BASE_DIR = p
+        break
+if BASE_DIR is None:
+    BASE_DIR = _curr.parents[2] if len(_curr.parents) > 2 else _curr.parent.parent
+
+BACKEND_DIR = BASE_DIR / "backend"
+DETECTOR_DIR = BACKEND_DIR / "detector"
+
+for p in [str(DETECTOR_DIR), str(BACKEND_DIR), str(BASE_DIR)]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 try:
     from ultralytics import YOLO
@@ -176,6 +188,46 @@ RESULTS_DIR = STORAGE_DIR / "results"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def resolve_model_path(model_name: str) -> str:
+    """Resolve model file path across models directory or project root."""
+    if not model_name:
+        return ""
+    if os.path.isabs(model_name) and os.path.exists(model_name):
+        return model_name
+    basename = os.path.basename(model_name)
+    candidates = [
+        BASE_DIR / "models" / basename,
+        BASE_DIR / "models" / model_name,
+        BASE_DIR / "backend" / "models" / basename,
+        BASE_DIR / basename,
+        Path(model_name)
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return str(BASE_DIR / "models" / basename)
+
+
+def resolve_raw_path(raw_filename: str) -> str:
+    """Resolve raw uploaded video path across candidate storage directories."""
+    if not raw_filename:
+        return ""
+    if os.path.isabs(raw_filename) and os.path.exists(raw_filename):
+        return raw_filename
+    basename = os.path.basename(raw_filename)
+    candidates = [
+        RAW_DIR / basename,
+        BASE_DIR / "test_videos" / "raw" / basename,
+        BASE_DIR / "backend" / "test_videos" / "raw" / basename,
+        Path(raw_filename)
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return str(RAW_DIR / basename)
+
+
 # In-memory Job Store
 JOBS = {}
 JOBS_LOCK = threading.Lock()
@@ -192,9 +244,9 @@ class LiveVideoTestStreamer:
     def __init__(self, session_id: str, raw_filename: str, model_name: str, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None, frame_step=1):
         self.session_id = session_id
         self.raw_filename = raw_filename
-        self.raw_path = str(RAW_DIR / raw_filename)
+        self.raw_path = resolve_raw_path(raw_filename)
         self.model_name = model_name
-        self.model_path = str(BASE_DIR / "models" / model_name) if not os.path.isabs(model_name) else model_name
+        self.model_path = resolve_model_path(model_name)
         self.conf = float(conf)
         self.iou = float(iou)
         self.imgsz = int(imgsz)
@@ -239,7 +291,7 @@ class LiveVideoTestStreamer:
                 self.frame_step = max(1, int(frame_step))
             if model_name is not None and model_name != self.model_name:
                 self.model_name = model_name
-                self.model_path = str(BASE_DIR / "models" / model_name) if not os.path.isabs(model_name) else model_name
+                self.model_path = resolve_model_path(model_name)
                 try:
                     self.model = get_yolo_model(self.model_path)
                 except Exception as e:
@@ -252,23 +304,40 @@ class LiveVideoTestStreamer:
     def _run_loop(self):
         try:
             self.model = get_yolo_model(self.model_path)
+            if self.model is None:
+                logger.warning(f"LiveStreamer: Model returned None for path {self.model_path}")
+            else:
+                logger.info(f"LiveStreamer: Successfully loaded model {self.model_name} from {self.model_path}")
         except Exception as e:
             logger.error(f"Failed to load model on live start: {e}")
 
         cap = cv2.VideoCapture(self.raw_path)
+        if not cap.isOpened():
+            alt_path = resolve_raw_path(self.raw_filename)
+            if alt_path != self.raw_path:
+                self.raw_path = alt_path
+                cap = cv2.VideoCapture(self.raw_path)
+
         if not cap.isOpened():
             logger.error(f"Cannot open video for streaming: {self.raw_path}")
             self.running = False
             return
 
         native_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        if native_fps <= 0 or math.isnan(native_fps) or native_fps > 120:
+            native_fps = 25.0
         self.fps = native_fps
+        target_frame_time = 1.0 / native_fps
         frame_idx = 0
+
+        logger.info(f"LiveStreamer: Started streaming {self.raw_filename} at native {native_fps:.1f} FPS (pace: {target_frame_time*1000:.1f}ms/frame)")
 
         while self.running:
             if self.paused:
                 time.sleep(0.05)
                 continue
+
+            t_frame_start = time.time()
 
             ret, frame = cap.read()
             if not ret or frame is None:
@@ -277,7 +346,7 @@ class LiveVideoTestStreamer:
                     frame_idx = 0
                     ret, frame = cap.read()
                     if not ret or frame is None:
-                        time.sleep(0.1)
+                        time.sleep(0.05)
                         continue
                 else:
                     break
@@ -292,6 +361,16 @@ class LiveVideoTestStreamer:
                 m_name = self.model_name
                 c_classes = list(self.enabled_classes)
                 c_step = self.frame_step
+
+            # If model was not loaded initially, attempt lazy reload
+            if c_model is None and self.model_path:
+                try:
+                    c_model = get_yolo_model(self.model_path)
+                    if c_model is not None:
+                        with self.lock:
+                            self.model = c_model
+                except Exception:
+                    pass
 
             dets = []
             dt_infer = 0.001
@@ -383,6 +462,13 @@ class LiveVideoTestStreamer:
                         break
                     frame_idx += 1
 
+            # Real-time FPS Pacing: enforce 1.0x native playback speed
+            t_frame_end = time.time()
+            elapsed = t_frame_end - t_frame_start
+            sleep_needed = target_frame_time - elapsed
+            if sleep_needed > 0.002:
+                time.sleep(sleep_needed)
+
         cap.release()
         self.running = False
 
@@ -434,12 +520,12 @@ class VideoTestJob:
     def __init__(self, job_id, raw_filename, model_name, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None, frame_skip=1):
         self.job_id = job_id
         self.raw_filename = raw_filename
-        self.raw_path = str(RAW_DIR / raw_filename)
+        self.raw_path = resolve_raw_path(raw_filename)
         self.result_filename = f"{job_id}_annotated.mp4"
         self.result_path = str(RESULTS_DIR / self.result_filename)
         
         self.model_name = model_name
-        self.model_path = str(BASE_DIR / "models" / model_name) if not os.path.isabs(model_name) else model_name
+        self.model_path = resolve_model_path(model_name)
         self.conf = float(conf)
         self.iou = float(iou)
         self.imgsz = int(imgsz)
