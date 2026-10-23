@@ -1564,13 +1564,32 @@ def get_live_video_stream(session_id: str = Query(default="default")):
             if frame_bytes and frame_bytes is not last_sent_bytes:
                 last_sent_bytes = frame_bytes
                 yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                       b'Content-Type: image/jpeg\r\n'
+                       b'Content-Length: ' + str(len(frame_bytes)).encode('ascii') + b'\r\n\r\n' +
+                       frame_bytes + b'\r\n')
             time.sleep(0.01)
 
     return StreamingResponse(
         _frame_generator(),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+    )
+
+@app.get("/api/video-test/live-frame")
+def get_live_video_frame(session_id: str = Query(default="default")):
+    streamer = get_live_streamer(session_id)
+    if not streamer:
+        return Response(status_code=404)
+    frame_bytes = streamer.get_jpeg_frame()
+    if not frame_bytes:
+        return Response(status_code=204)
+    return Response(
+        content=frame_bytes,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache"
+        }
     )
 
 @app.post("/api/video-test/live-params")

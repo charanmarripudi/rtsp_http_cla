@@ -302,6 +302,7 @@ class SpeedDashboard {
                 this.hlsRetryTimer = null;
             }
             const blobUrl = URL.createObjectURL(file);
+            this.localVideoBlobUrl = blobUrl;
             video.src = blobUrl;
             video.muted = true;
             video.playsInline = true;
@@ -847,11 +848,32 @@ class SpeedDashboard {
 
             if (res.ok) {
                 if (statusSpan) {
-                    statusSpan.textContent = "○ Speed Monitor Stopped (Normal Stream Live)";
+                    statusSpan.textContent = "○ Speed Monitor Stopped";
                     statusSpan.style.color = "#38bdf8";
                 }
-                // Continue showing live raw stream without black screen
-                this.attachHlsStream(true, 1);
+                if (this.sourceType === "video") {
+                    if (this.hlsPlayer) {
+                        this.hlsPlayer.destroy();
+                        this.hlsPlayer = null;
+                    }
+                    const video = document.getElementById("speed-video-player");
+                    if (video) {
+                        if (this.localVideoBlobUrl) {
+                            video.src = this.localVideoBlobUrl;
+                        } else if (this.uploadedVideoPath) {
+                            video.src = `/api/video-test/raw-file/${this.uploadedVideoPath.split('/').pop()}`;
+                        }
+                        video.muted = true;
+                        video.playsInline = true;
+                        video.autoplay = true;
+                        video.loop = true;
+                        video.play().catch(() => {});
+                        this.renderCanvas();
+                    }
+                } else {
+                    // Continue showing live raw RTSP stream without black screen
+                    this.attachHlsStream(true, 1);
+                }
             }
         } catch (e) {
             console.error("[SPEED-DASH] Stop failed:", e);

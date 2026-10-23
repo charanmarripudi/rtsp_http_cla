@@ -357,7 +357,8 @@ class LiveVideoTestStreamer:
             ret, frame = cap.read()
             if not ret or frame is None:
                 if self.loop and not is_rtsp:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    cap.release()
+                    cap = cv2.VideoCapture(self.raw_path)
                     frame_idx = 0
                     ret, frame = cap.read()
                     if not ret or frame is None:

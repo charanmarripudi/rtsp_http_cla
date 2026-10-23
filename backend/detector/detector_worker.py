@@ -1475,28 +1475,36 @@ class DetectorWorker:
                     ffmpeg = self._create_ffmpeg()
                     print(f"[WORKER-TIMER] Camera {self.cam_id} FFmpeg process created in {int((time.time() - t_ff_start)*1000)}ms", flush=True)
 
-                    print(f"[WORKER-TIMER] Camera {self.cam_id} connecting to RTSP at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...", flush=True)
+                    is_local_file = os.path.isfile(str(self.rtsp_url)) or not str(self.rtsp_url).lower().startswith("rtsp")
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} connecting to {'local video file' if is_local_file else 'RTSP'} ({self.rtsp_url}) at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...", flush=True)
                     t_conn_start = time.time()
-                    cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    if is_local_file:
+                        cap = cv2.VideoCapture(str(self.rtsp_url))
+                    else:
+                        cap = cv2.VideoCapture(str(self.rtsp_url), cv2.CAP_FFMPEG)
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
                     retry_count = 0
                     while not cap.isOpened() and retry_count < 10 and not self._stop_event.is_set():
                         time.sleep(0.5)
-                        cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        if is_local_file:
+                            cap = cv2.VideoCapture(str(self.rtsp_url))
+                        else:
+                            cap = cv2.VideoCapture(str(self.rtsp_url), cv2.CAP_FFMPEG)
+                            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                         retry_count += 1
 
-                    if self._stop_event.is_set():
+                    if self._stop_event.is_set() or not cap.isOpened():
+                        if not cap.isOpened():
+                            print(f"[ERROR] Camera {self.cam_id} could not open video stream: {self.rtsp_url}", flush=True)
                         break
 
-                    print(f"[WORKER-TIMER] Camera {self.cam_id} RTSP connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} {'video file' if is_local_file else 'RTSP'} connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
 
                     if self.is_speed_worker and getattr(self, 'speed_tracker_engine', None) is not None:
                         # ----------------------------------------------------------
                         # DEDICATED SPEED TRACKER PIPELINE (MATCHES run_speed_tracker.py)
                         # ----------------------------------------------------------
-                        is_local_file = os.path.isfile(str(self.rtsp_url)) or not str(self.rtsp_url).lower().startswith("rtsp")
                         src_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
                         if src_fps <= 0 or src_fps > 120:
                             src_fps = 25.0
@@ -1521,7 +1529,9 @@ class DetectorWorker:
                             ret, raw_frame = cap.read()
                             if not ret or raw_frame is None:
                                 if is_local_file:
-                                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                                    cap.release()
+                                    cap = cv2.VideoCapture(str(self.rtsp_url))
+                                    frame_idx = 0
                                     continue
                                 else:
                                     print(f"[SPEED-WORKER] Camera {self.cam_id} RTSP stream finished or disconnected.", flush=True)

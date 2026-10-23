@@ -3531,15 +3531,8 @@
       .then(res => {
         if (res.status === "ok") {
           window.vlabLiveStreamingActive = true;
-          if (livePlayer) {
-            livePlayer.src = res.stream_url || `/api/video-test/live-stream?session_id=vlab_preview&t=${Date.now()}`;
-            livePlayer.onload = () => {
-              if (loader) loader.style.display = "none";
-              livePlayer.style.display = "block";
-              if (rawVideo) { rawVideo.pause(); rawVideo.style.display = "none"; }
-              if (placeholder) placeholder.style.display = "none";
-            };
-          }
+          window.vlabStartFramePolling("vlab_preview");
+
           if (badge) {
             badge.textContent = "RTSP PREVIEW LIVE";
             badge.style.color = "#38bdf8";
@@ -3558,6 +3551,66 @@
         if (loader) loader.style.display = "none";
         alert("RTSP connection error: " + err.message);
       });
+    };
+
+    // ==========================================
+    // ⚡ BULLETPROOF FRAME STREAMING ENGINE (HTTP/2 & PROXY IMMUNE)
+    // ==========================================
+    window.vlabStartFramePolling = function(sessionId) {
+      if (window.vlabFrameTimer) {
+        clearTimeout(window.vlabFrameTimer);
+        window.vlabFrameTimer = null;
+      }
+      const sid = sessionId || "default";
+      const livePlayer = document.getElementById("vlab-live-player");
+      const rawVideo = document.getElementById("vlab-raw-video");
+      const stageLoader = document.getElementById("vlab-stage-loader");
+      const placeholder = document.getElementById("vlab-stage-placeholder");
+
+      let isFetching = false;
+
+      const fetchNext = () => {
+        if (!window.vlabLiveStreamingActive) return;
+        if (isFetching) return;
+        isFetching = true;
+
+        fetch(`/api/video-test/live-frame?session_id=${encodeURIComponent(sid)}&t=${Date.now()}`)
+          .then(res => {
+            if (!res.ok || res.status === 204) throw new Error("Frame not ready");
+            return res.blob();
+          })
+          .then(blob => {
+            if (!window.vlabLiveStreamingActive) return;
+            const newUrl = URL.createObjectURL(blob);
+            const prevUrl = livePlayer._blobUrl;
+            livePlayer._blobUrl = newUrl;
+            livePlayer.src = newUrl;
+            
+            if (stageLoader) stageLoader.style.display = "none";
+            livePlayer.style.display = "block";
+            if (rawVideo) {
+              rawVideo.pause();
+              rawVideo.style.display = "none";
+            }
+            if (placeholder) placeholder.style.display = "none";
+
+            if (prevUrl) {
+              setTimeout(() => URL.revokeObjectURL(prevUrl), 1000);
+            }
+            isFetching = false;
+            if (window.vlabLiveStreamingActive) {
+              window.vlabFrameTimer = setTimeout(fetchNext, 35);
+            }
+          })
+          .catch(() => {
+            isFetching = false;
+            if (window.vlabLiveStreamingActive) {
+              window.vlabFrameTimer = setTimeout(fetchNext, 75);
+            }
+          });
+      };
+
+      fetchNext();
     };
 
     // ==========================================
@@ -3617,9 +3670,6 @@
 
       const stageLoader = document.getElementById("vlab-stage-loader");
       const stageLoaderTxt = document.getElementById("vlab-stage-loader-txt");
-      const livePlayer = document.getElementById("vlab-live-player");
-      const rawVideo = document.getElementById("vlab-raw-video");
-      const placeholder = document.getElementById("vlab-stage-placeholder");
       const badge = document.getElementById("vlab-stage-badge");
       const stageMsg = document.getElementById("vlab-stage-msg");
       const indicator = document.getElementById("vlab-stage-indicator");
@@ -3645,23 +3695,7 @@
       .then(res => {
         if (res.status === "ok") {
           window.vlabLiveStreamingActive = true;
-          if (livePlayer) {
-            const streamUrl = res.stream_url || `/api/video-test/live-stream?session_id=default&t=${Date.now()}`;
-            livePlayer.src = streamUrl;
-            
-            const onStreamActive = () => {
-              if (stageLoader) stageLoader.style.display = "none";
-              livePlayer.style.display = "block";
-              if (rawVideo) {
-                rawVideo.pause();
-                rawVideo.style.display = "none";
-              }
-              if (placeholder) placeholder.style.display = "none";
-            };
-
-            livePlayer.onload = onStreamActive;
-            setTimeout(onStreamActive, 1000); // Safety fallback
-          }
+          window.vlabStartFramePolling("default");
 
           if (badge) {
             badge.textContent = "● LIVE AI DETECTIONS ACTIVE";
@@ -3690,6 +3724,10 @@
 
     window.vlabStopLiveStream = function() {
       window.vlabLiveStreamingActive = false;
+      if (window.vlabFrameTimer) {
+        clearTimeout(window.vlabFrameTimer);
+        window.vlabFrameTimer = null;
+      }
       const livePlayer = document.getElementById("vlab-live-player");
       const rawVideo = document.getElementById("vlab-raw-video");
       const placeholder = document.getElementById("vlab-stage-placeholder");
@@ -3701,6 +3739,10 @@
       if (stageLoader) stageLoader.style.display = "none";
 
       if (livePlayer) {
+        if (livePlayer._blobUrl) {
+          URL.revokeObjectURL(livePlayer._blobUrl);
+          livePlayer._blobUrl = null;
+        }
         livePlayer.src = "";
         livePlayer.style.display = "none";
       }
