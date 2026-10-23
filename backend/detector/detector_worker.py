@@ -448,7 +448,7 @@ GLOBAL_INFERENCE_SCHEDULER = InferenceScheduler()
 class DetectorWorker:
     @property
     def model_configs(self):
-        return self._model_configs
+        return getattr(self, "_model_configs", {})
 
     @model_configs.setter
     def model_configs(self, val):

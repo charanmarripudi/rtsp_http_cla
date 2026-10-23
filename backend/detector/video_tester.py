@@ -457,7 +457,7 @@ class LiveVideoTestStreamer:
             with self.lock:
                 c_conf = self.conf
                 c_iou = self.iou
-                c_imgsz = min(self.imgsz, 416)
+                c_imgsz = min(self.imgsz, 320)
                 c_model = self.model
                 m_name = self.model_name
                 c_classes = list(self.enabled_classes)
@@ -479,13 +479,13 @@ class LiveVideoTestStreamer:
             dets = []
             t_infer_0 = time.time()
             try:
-                # Downscale high-resolution frames for fast CPU inference if larger than 640
+                # Downscale frames for fast CPU inference on Raspberry Pi
                 h_orig, w_orig = frame_to_infer.shape[:2]
                 scale_x = 1.0
                 scale_y = 1.0
                 infer_input = frame_to_infer
-                if max(h_orig, w_orig) > 640:
-                    max_dim = 640
+                max_dim = 480
+                if max(h_orig, w_orig) > max_dim:
                     if w_orig >= h_orig:
                         new_w = max_dim
                         new_h = int(h_orig * (max_dim / float(w_orig)))
