@@ -2864,9 +2864,12 @@ def stop_speed_tracker(d: dict = Body(None)):
     if "speed" in running:
         rtsp = running["speed"].get("rtsp", rtsp)
     stop_detection({"camera": "speed"})
-    if rtsp and is_valid_rtsp_url(rtsp):
+    is_live_rtsp = rtsp and (rtsp.startswith("rtsp://") or rtsp.startswith("rtsps://") or rtsp.startswith("http://") or rtsp.startswith("https://"))
+    if is_live_rtsp:
         start_raw_stream("speed", rtsp)
-    return {"status": "ok", "message": "Speed monitor stopped, raw stream active"}
+    else:
+        _kill_raw_ffmpeg_for_camera("speed")
+    return {"status": "ok", "message": "Speed monitor stopped"}
 
 @app.get("/api/locations")
 async def get_locations(
