@@ -284,6 +284,7 @@ class SpeedDashboard {
 
     async handleVideoFileUpload(file) {
         if (!file) return;
+        this.setSourceType("video");
         const nameSpan = document.getElementById("speed-upload-filename");
         if (nameSpan) nameSpan.textContent = `Uploading ${file.name}...`;
 
@@ -811,7 +812,8 @@ class SpeedDashboard {
                     statusSpan.textContent = "● AI Speed Monitor Running";
                     statusSpan.style.color = "#00ffaa";
                 }
-                this.attachHlsStream(true, 1);
+                // Start immediate real-time atomic frame streaming (Zero Black Screen!)
+                this.startFramePolling();
             } else {
                 if (statusSpan) {
                     statusSpan.textContent = data.message || data.error || "Failed to start";
@@ -824,6 +826,81 @@ class SpeedDashboard {
                 statusSpan.textContent = `Error: ${e.message}`;
                 statusSpan.style.color = "#ff4444";
             }
+        }
+    }
+
+    startFramePolling() {
+        if (this.framePollTimer) {
+            clearTimeout(this.framePollTimer);
+            this.framePollTimer = null;
+        }
+        this.framePollingActive = true;
+        const liveImg = document.getElementById("speed-live-player");
+        const video = document.getElementById("speed-video-player");
+        const loader = document.getElementById("speed-video-loader");
+
+        let isFetching = false;
+        const fetchNext = () => {
+            if (!this.framePollingActive) return;
+            if (isFetching) return;
+            isFetching = true;
+
+            fetch(`/api/speed/live-frame?t=${Date.now()}`)
+                .then(res => {
+                    if (!res.ok || res.status === 204) throw new Error("Frame not ready");
+                    return res.blob();
+                })
+                .then(blob => {
+                    if (!this.framePollingActive) return;
+                    const newUrl = URL.createObjectURL(blob);
+                    const prevUrl = liveImg ? liveImg._blobUrl : null;
+                    if (liveImg) {
+                        liveImg._blobUrl = newUrl;
+                        liveImg.src = newUrl;
+                    }
+
+                    if (loader) loader.style.display = "none";
+                    if (liveImg && liveImg.style.display !== "block") {
+                        liveImg.style.display = "block";
+                        if (video) {
+                            video.pause();
+                            video.style.display = "none";
+                        }
+                    }
+
+                    if (prevUrl) {
+                        setTimeout(() => URL.revokeObjectURL(prevUrl), 1000);
+                    }
+                    isFetching = false;
+                    if (this.framePollingActive) {
+                        this.framePollTimer = setTimeout(fetchNext, 60);
+                    }
+                })
+                .catch(() => {
+                    isFetching = false;
+                    if (this.framePollingActive) {
+                        this.framePollTimer = setTimeout(fetchNext, 120);
+                    }
+                });
+        };
+
+        fetchNext();
+    }
+
+    stopFramePolling() {
+        this.framePollingActive = false;
+        if (this.framePollTimer) {
+            clearTimeout(this.framePollTimer);
+            this.framePollTimer = null;
+        }
+        const liveImg = document.getElementById("speed-live-player");
+        if (liveImg) {
+            if (liveImg._blobUrl) {
+                URL.revokeObjectURL(liveImg._blobUrl);
+                liveImg._blobUrl = null;
+            }
+            liveImg.src = "";
+            liveImg.style.display = "none";
         }
     }
 
@@ -851,13 +928,15 @@ class SpeedDashboard {
                     statusSpan.textContent = "○ Speed Monitor Stopped";
                     statusSpan.style.color = "#38bdf8";
                 }
-                if (this.sourceType === "video") {
-                    if (this.hlsPlayer) {
-                        this.hlsPlayer.destroy();
-                        this.hlsPlayer = null;
-                    }
-                    const video = document.getElementById("speed-video-player");
-                    if (video) {
+                this.stopFramePolling();
+                if (this.hlsPlayer) {
+                    this.hlsPlayer.destroy();
+                    this.hlsPlayer = null;
+                }
+                const video = document.getElementById("speed-video-player");
+                if (video) {
+                    video.style.display = "block";
+                    if (this.sourceType === "video" || this.localVideoBlobUrl || this.uploadedVideoPath) {
                         if (this.localVideoBlobUrl) {
                             video.src = this.localVideoBlobUrl;
                         } else if (this.uploadedVideoPath) {
@@ -869,10 +948,10 @@ class SpeedDashboard {
                         video.loop = true;
                         video.play().catch(() => {});
                         this.renderCanvas();
+                    } else {
+                        // Continue showing live raw RTSP stream without black screen
+                        this.attachHlsStream(true, 1);
                     }
-                } else {
-                    // Continue showing live raw RTSP stream without black screen
-                    this.attachHlsStream(true, 1);
                 }
             }
         } catch (e) {

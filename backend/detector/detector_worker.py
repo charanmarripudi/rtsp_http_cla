@@ -526,10 +526,21 @@ class DetectorWorker:
                 "alerts_dir": os.path.join(str(BASE_DIR), "alerts")
             }
             self.speed_tracker_engine = VehicleSpeedTracker(speed_cfg)
+            try:
+                dummy = np.zeros((320, 320, 3), dtype=np.uint8)
+                self.speed_tracker_engine.model.predict(source=dummy, imgsz=320, verbose=False)
+                print(f"[SPEED-ENGINE] Pre-warmed YOLO model weights in memory", flush=True)
+            except Exception as e:
+                print(f"[SPEED-ENGINE] Model pre-warm warning: {e}", flush=True)
             print(f"[SPEED-ENGINE] Initialized standalone VehicleSpeedTracker for Camera {self.cam_id} (imgsz=320, limit={self.speed_limit_kmh}km/h)", flush=True)
         else:
             self.speed_tracker_engine = None
+        self._latest_jpeg_frame = None
         print(f"[TIMER-START] Camera {self.cam_id} Start request initialized at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
+
+    def get_jpeg_frame(self):
+        with self._frame_lock:
+            return getattr(self, '_latest_jpeg_frame', None)
 
     def update_models(self, model_paths, model_configs=None, conf=None, iou=None, location=None):
         if model_paths is not None:
@@ -1544,9 +1555,21 @@ class DetectorWorker:
                                 self._latest_raw_frame = raw_frame
                                 self._last_frame_time = time.time()
 
-                            pf, violations = self.speed_tracker_engine.process_frame(raw_frame, curr_t)
+                            # Downscale frame to worker dimensions if needed for high-speed inference
+                            if (raw_frame.shape[1], raw_frame.shape[0]) != (self.width, self.height):
+                                proc_frame = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                            else:
+                                proc_frame = raw_frame
+
+                            pf, violations = self.speed_tracker_engine.process_frame(proc_frame, curr_t)
                             if (self.width, self.height) != (pf.shape[1], pf.shape[0]):
                                 pf = cv2.resize(pf, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+
+                            # Immediately encode and cache latest annotated JPEG frame in memory (zero latency, zero black screen)
+                            ret_j, j_bytes = cv2.imencode('.jpg', pf, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                            if ret_j:
+                                with self._frame_lock:
+                                    self._latest_jpeg_frame = j_bytes.tobytes()
 
                             self.vehicle_counts = self.speed_tracker_engine.counts
 
@@ -1635,6 +1658,12 @@ class DetectorWorker:
                                 display_boxes = list(self._tracked_boxes)
 
                             DetectorWorker._draw_boxes(pf, display_boxes)
+
+                            # Immediately encode and cache latest annotated JPEG frame in memory
+                            ret_j, j_bytes = cv2.imencode('.jpg', pf, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                            if ret_j:
+                                with self._frame_lock:
+                                    self._latest_jpeg_frame = j_bytes.tobytes()
 
                             if ffmpeg.poll() is not None:
                                 break

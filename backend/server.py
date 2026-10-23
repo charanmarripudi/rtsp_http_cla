@@ -1498,11 +1498,6 @@ def get_video_test_raw(job_id: str):
         headers={"Accept-Ranges": "bytes"}
     )
 
-@app.delete("/api/video-test/{job_id}")
-def delete_video_test_job(job_id: str):
-    success = delete_job(job_id)
-    return {"status": "ok" if success else "not_found"}
-
 # ---------------------------------------------------------
 # REAL-TIME LIVE VIDEO DETECTION STREAMING ENDPOINTS
 # ---------------------------------------------------------
@@ -1551,11 +1546,23 @@ def start_live_video_stream(req: LiveStreamStartRequest):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
 
-@app.get("/api/video-test/live-stream")
-def get_live_video_stream(session_id: str = Query(default="default")):
+@app.api_route("/api/video-test/live-stream", methods=["GET", "HEAD", "OPTIONS"])
+def get_live_video_stream(request: Request = None, session_id: str = Query(default="default")):
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache"
+    }
+    if request and request.method == "OPTIONS":
+        return Response(status_code=200, headers=headers)
     streamer = get_live_streamer(session_id)
     if not streamer or not streamer.running:
-        return JSONResponse(status_code=404, content={"status": "error", "message": "Live stream session not found or stopped"})
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Live stream session not found or stopped"}, headers=headers)
+
+    if request and request.method == "HEAD":
+        return Response(status_code=200, headers=headers)
 
     def _frame_generator():
         last_sent_bytes = None
@@ -1572,24 +1579,65 @@ def get_live_video_stream(session_id: str = Query(default="default")):
     return StreamingResponse(
         _frame_generator(),
         media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+        headers=headers
     )
 
-@app.get("/api/video-test/live-frame")
-def get_live_video_frame(session_id: str = Query(default="default")):
+@app.api_route("/api/video-test/live-frame", methods=["GET", "HEAD", "OPTIONS"])
+def get_live_video_frame(request: Request = None, session_id: str = Query(default="default")):
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache"
+    }
+    if request and request.method == "OPTIONS":
+        return Response(status_code=200, headers=headers)
     streamer = get_live_streamer(session_id)
     if not streamer:
-        return Response(status_code=404)
+        return Response(status_code=404, headers=headers)
     frame_bytes = streamer.get_jpeg_frame()
     if not frame_bytes:
-        return Response(status_code=204)
+        return Response(status_code=204, headers=headers)
+    if request and request.method == "HEAD":
+        h = dict(headers)
+        h["Content-Length"] = str(len(frame_bytes))
+        h["Content-Type"] = "image/jpeg"
+        return Response(status_code=200, headers=h)
     return Response(
         content=frame_bytes,
         media_type="image/jpeg",
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache"
-        }
+        headers=headers
+    )
+
+@app.api_route("/api/speed/live-frame", methods=["GET", "HEAD", "OPTIONS"])
+def get_speed_live_frame(request: Request = None):
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache"
+    }
+    if request and request.method == "OPTIONS":
+        return Response(status_code=200, headers=headers)
+    if "speed" not in running:
+        return Response(status_code=404, headers=headers)
+    worker = running["speed"].get("worker")
+    if not worker or not hasattr(worker, "get_jpeg_frame"):
+        return Response(status_code=404, headers=headers)
+    frame_bytes = worker.get_jpeg_frame()
+    if not frame_bytes:
+        return Response(status_code=204, headers=headers)
+    if request and request.method == "HEAD":
+        h = dict(headers)
+        h["Content-Length"] = str(len(frame_bytes))
+        h["Content-Type"] = "image/jpeg"
+        return Response(status_code=200, headers=h)
+    return Response(
+        content=frame_bytes,
+        media_type="image/jpeg",
+        headers=headers
     )
 
 @app.post("/api/video-test/live-params")
@@ -1611,6 +1659,12 @@ def update_live_video_params(req: LiveStreamParamsRequest):
 @app.post("/api/video-test/live-stop")
 def stop_live_video_stream(session_id: str = Query(default="default")):
     success = stop_live_streamer(session_id)
+    return {"status": "ok" if success else "not_found"}
+
+# Parameterized delete endpoint registered AFTER specific static routes to avoid FastAPI route collision
+@app.delete("/api/video-test/{job_id}")
+def delete_video_test_job(job_id: str):
+    success = delete_job(job_id)
     return {"status": "ok" if success else "not_found"}
 
 
