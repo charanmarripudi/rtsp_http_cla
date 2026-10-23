@@ -1271,6 +1271,12 @@ MODEL_CLASSES_CACHE = {
     ],
     "dome_open_closed_best.pt": [
         "Dome_Closed", "Dome_Opened"
+    ],
+    "crowd_detection.pt": [
+        "person", "crowd"
+    ],
+    "crowd_detection": [
+        "person", "crowd"
     ]
 }
 
@@ -2870,6 +2876,200 @@ def stop_speed_tracker(d: dict = Body(None)):
     else:
         _kill_raw_ffmpeg_for_camera("speed")
     return {"status": "ok", "message": "Speed monitor stopped"}
+
+# =========================================================================
+# CROWD DETECTION MONITORING & API SUITE
+# =========================================================================
+
+@app.get("/api/crowd/status")
+def get_crowd_status():
+    """Returns status of crowd detection engine, models, and test videos."""
+    crowd_active = "crowd" in running
+    stats = {}
+    if crowd_active:
+        worker = running["crowd"].get("worker")
+        stats = getattr(worker, "crowd_stats", {}) if worker else {}
+
+    test_vids = []
+    for d in [os.path.join(BASE_DIR, "uploads"), os.path.join(BASE_DIR, "test_videos", "raw")]:
+        if os.path.isdir(d):
+            for f in os.listdir(d):
+                if "crowd" in f.lower() and f.endswith((".mp4", ".avi", ".mov", ".mkv")):
+                    test_vids.append({"name": f, "path": os.path.join(d, f)})
+
+    return {
+        "status": "active" if crowd_active else "stopped",
+        "running_camera": "crowd" if crowd_active else None,
+        "models_available": [
+            f for f in ["crowd_detection.pt", "yolov8n.pt"]
+            if os.path.exists(os.path.join(BASE_DIR, "models", f))
+        ],
+        "test_videos": test_vids,
+        "current_stats": stats,
+        "endpoints": {
+            "start": "POST /api/crowd/start",
+            "stop": "POST /api/crowd/stop",
+            "stats": "GET /api/crowd/stats",
+            "live_frame": "GET /api/crowd/live-frame"
+        }
+    }
+
+@app.post("/api/crowd/start")
+def start_crowd_tracker(d: dict = Body(None)):
+    """Direct 1-click start for Crowd Detection on any RTSP stream or test video file."""
+    d = d or {}
+    cid = str(d.get("camera", "crowd"))
+    loc = d.get("location", "Crowd Monitor")
+    rtsp = str(d.get("rtsp", "")).strip()
+    video_path = str(d.get("video_path", "")).strip()
+
+    if not rtsp and video_path:
+        rtsp = video_path
+
+    # Auto-resolve to default preloaded crowd test video if not supplied
+    if not rtsp:
+        for cand in [
+            os.path.join(BASE_DIR, "uploads", "crowd_video1.mp4"),
+            os.path.join(BASE_DIR, "test_videos", "raw", "crowd_video1.mp4"),
+            os.path.join(BASE_DIR, "uploads", "crowd_video.mp4"),
+            os.path.join(BASE_DIR, "test_videos", "raw", "crowd_video.mp4")
+        ]:
+            if os.path.exists(cand):
+                rtsp = cand
+                break
+
+    if not rtsp:
+        return {"status": "error", "message": "No RTSP stream URL or crowd test video file found on server"}
+
+    is_network_stream = rtsp.startswith("rtsp://") or rtsp.startswith("rtsps://") or rtsp.startswith("http://") or rtsp.startswith("https://")
+    if not is_network_stream and not os.path.exists(rtsp):
+        alt_path = os.path.join(BASE_DIR, "uploads", os.path.basename(rtsp))
+        if os.path.exists(alt_path):
+            rtsp = alt_path
+        else:
+            alt_raw = os.path.join(BASE_DIR, "test_videos", "raw", os.path.basename(rtsp))
+            if os.path.exists(alt_raw):
+                rtsp = alt_raw
+
+    models = d.get("models")
+    if not models or not isinstance(models, list):
+        if os.path.exists(os.path.join(BASE_DIR, "models", "crowd_detection.pt")):
+            models = ["crowd_detection.pt"]
+        elif os.path.exists(os.path.join(BASE_DIR, "models", "yolov8n.pt")):
+            models = ["yolov8n.pt"]
+        else:
+            models = ["crowd_detection.pt"]
+
+    conf = float(d.get("conf", 0.30))
+    iou = float(d.get("iou", 0.45))
+    threshold = int(d.get("threshold", 4))
+    roi_coords = d.get("roi") or d.get("roi_coords") or d.get("roi_polygon")
+
+    model_configs = d.get("model_configs") or {}
+    for m in models:
+        norm_m = m if m.endswith(".pt") else f"{m}.pt"
+        if norm_m not in model_configs:
+            model_configs[norm_m] = {
+                "enabled_classes": ["person", "crowd"],
+                "crowd_threshold": threshold
+            }
+        else:
+            model_configs[norm_m]["crowd_threshold"] = threshold
+            if "enabled_classes" not in model_configs[norm_m]:
+                model_configs[norm_m]["enabled_classes"] = ["person", "crowd"]
+
+    if roi_coords:
+        model_configs["roi_polygon"] = roi_coords
+
+    res = start_detection({
+        "camera": cid,
+        "models": models,
+        "rtsp": rtsp,
+        "location": loc,
+        "conf": conf,
+        "iou": iou,
+        "model_configs": model_configs
+    })
+
+    if isinstance(res, dict) and res.get("status") != "error":
+        res["live_frame"] = f"/api/crowd/live-frame?camera={cid}"
+        res["stats_url"] = f"/api/crowd/stats?camera={cid}"
+        res["hls_stream"] = f"/hls/camera/{cid}/playlist.m3u8"
+    return res
+
+@app.post("/api/crowd/stop")
+def stop_crowd_tracker(d: dict = Body(None)):
+    """Stops crowd detection worker."""
+    cid = "crowd"
+    if d and isinstance(d, dict) and d.get("camera"):
+        cid = str(d.get("camera"))
+    stop_detection({"camera": cid})
+    _kill_raw_ffmpeg_for_camera(cid)
+    return {"status": "ok", "message": f"Crowd monitor for camera {cid} stopped"}
+
+@app.get("/api/crowd/stats")
+def get_crowd_stats(camera: str = "crowd"):
+    """Returns live metrics (people in ROI, total count, cluster count, alert state)."""
+    cid = str(camera)
+    if cid not in running:
+        return {
+            "status": "stopped",
+            "camera": cid,
+            "stats": {
+                "in_roi_count": 0,
+                "total_visible": 0,
+                "clusters_count": 0,
+                "has_crowd": False,
+                "is_alert": False
+            }
+        }
+    worker = running[cid].get("worker")
+    raw_stats = getattr(worker, "crowd_stats", {}) if worker else {}
+    clean_stats = {
+        "in_roi_count": int(raw_stats.get("in_roi_count", 0)),
+        "total_visible": int(raw_stats.get("total_visible", 0)),
+        "threshold": int(raw_stats.get("threshold", 4)),
+        "clusters_count": int(raw_stats.get("clusters_count", 0)),
+        "has_crowd": bool(raw_stats.get("has_crowd", False)),
+        "is_alert": bool(raw_stats.get("is_alert", False))
+    }
+    return {
+        "status": "active",
+        "camera": cid,
+        "stats": clean_stats
+    }
+
+@app.api_route("/api/crowd/live-frame", methods=["GET", "HEAD", "OPTIONS"])
+def get_crowd_live_frame(camera: str = "crowd", request: Request = None):
+    """Returns latest annotated frame as JPEG for live preview or UI cards."""
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache"
+    }
+    if request and request.method == "OPTIONS":
+        return Response(status_code=200, headers=headers)
+    cid = str(camera)
+    if cid not in running:
+        return Response(status_code=204, headers=headers)
+    worker = running[cid].get("worker")
+    if not worker or not hasattr(worker, "get_jpeg_frame"):
+        return Response(status_code=204, headers=headers)
+    frame_bytes = worker.get_jpeg_frame()
+    if not frame_bytes:
+        return Response(status_code=204, headers=headers)
+    if request and request.method == "HEAD":
+        h = dict(headers)
+        h["Content-Length"] = str(len(frame_bytes))
+        h["Content-Type"] = "image/jpeg"
+        return Response(status_code=200, headers=h)
+    return Response(
+        content=frame_bytes,
+        media_type="image/jpeg",
+        headers=headers
+    )
 
 @app.get("/api/locations")
 async def get_locations(

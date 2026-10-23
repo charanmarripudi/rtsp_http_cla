@@ -72,6 +72,14 @@ except ImportError:
     except ImportError:
         VehicleSpeedTracker = None
 
+try:
+    from crowd_tracker.Crowd import CrowdMonitoring
+except ImportError:
+    try:
+        from Crowd import CrowdMonitoring
+    except ImportError:
+        CrowdMonitoring = None
+
 YOLO_CACHE = {}
 
 # ------------------------------------------------------------------------------
@@ -467,6 +475,8 @@ class DetectorWorker:
         self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         self.is_speed_worker = (str(self.cam_id) == "speed")
+        _check_models = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+        self.is_crowd_worker = (str(self.cam_id) == "crowd") or any("crowd" in str(mp).lower() for mp in _check_models)
         self.fps = 10.0
         self.width, self.height = 640, 360
         self._latest_raw_frame = None
@@ -535,6 +545,44 @@ class DetectorWorker:
             print(f"[SPEED-ENGINE] Initialized standalone VehicleSpeedTracker for Camera {self.cam_id} (imgsz=320, limit={self.speed_limit_kmh}km/h)", flush=True)
         else:
             self.speed_tracker_engine = None
+
+        # Standalone CrowdMonitoring Engine
+        if self.is_crowd_worker and CrowdMonitoring is not None:
+            crowd_model = self.model_paths[0] if (isinstance(self.model_paths, list) and self.model_paths) else str(self.model_paths)
+            roi_c = None
+            if self.roi_polygon and len(self.roi_polygon) == 2:
+                try:
+                    min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                    max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                    min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                    max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                    roi_c = (int(min_x * self.width), int(min_y * self.height), int(max_x * self.width), int(max_y * self.height))
+                except Exception:
+                    roi_c = None
+
+            cfg = get_config_for_model(self.model_configs, os.path.basename(crowd_model)) if self.model_configs else {}
+            thresh = int(cfg.get("crowd_threshold", 4)) if cfg else 4
+            dist_px = int(cfg.get("group_distance_px", 180)) if cfg else 180
+
+            self.crowd_engine = CrowdMonitoring(
+                model_path=crowd_model,
+                crowd_threshold=thresh,
+                group_distance_px=dist_px,
+                roi_coords=roi_c,
+                alert_cooldown_seconds=4.0
+            )
+            self.crowd_stats = {
+                "in_roi_count": 0,
+                "total_visible": 0,
+                "clusters_count": 0,
+                "has_crowd": False,
+                "is_alert": False
+            }
+            print(f"[CROWD-ENGINE] Initialized standalone CrowdMonitoring for Camera {self.cam_id} (threshold={thresh})", flush=True)
+        else:
+            self.crowd_engine = None
+            self.crowd_stats = {}
+
         self._latest_jpeg_frame = None
         print(f"[TIMER-START] Camera {self.cam_id} Start request initialized at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
 
@@ -566,13 +614,40 @@ class DetectorWorker:
         self._ema_tracks = {}
         self._ema_next_id = 0
         self._needs_immediate_inference = True
-        if not getattr(self, 'is_speed_worker', False):
+
+        _check_models = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+        self.is_crowd_worker = (str(self.cam_id) == "crowd") or any("crowd" in str(mp).lower() for mp in _check_models)
+        if self.is_crowd_worker and CrowdMonitoring is not None:
+            crowd_model = self.model_paths[0] if (isinstance(self.model_paths, list) and self.model_paths) else str(self.model_paths)
+            cfg = get_config_for_model(self.model_configs, os.path.basename(crowd_model)) if self.model_configs else {}
+            thresh = int(cfg.get("crowd_threshold", 4)) if cfg else 4
+            dist_px = int(cfg.get("group_distance_px", 180)) if cfg else 180
+            roi_c = None
+            if self.roi_polygon and len(self.roi_polygon) == 2:
+                try:
+                    min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                    max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                    min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                    max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                    roi_c = (int(min_x * self.width), int(min_y * self.height), int(max_x * self.width), int(max_y * self.height))
+                except Exception:
+                    roi_c = None
+            self.crowd_engine = CrowdMonitoring(
+                model_path=crowd_model,
+                crowd_threshold=thresh,
+                group_distance_px=dist_px,
+                roi_coords=roi_c,
+                alert_cooldown_seconds=4.0
+            )
+
+        if not getattr(self, 'is_speed_worker', False) and not getattr(self, 'is_crowd_worker', False):
             GLOBAL_INFERENCE_SCHEDULER.register_worker(self)
         print(f"[WORKER-DYNAMIC-UPDATE] Camera {getattr(self, 'cam_id', '?')} dynamically updated models to {self.model_paths} in 0ms without restarting RTSP or FFmpeg", flush=True)
 
     def stop(self):
         self._stop_event.set()
-        GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)
+        if not getattr(self, 'is_speed_worker', False) and not getattr(self, 'is_crowd_worker', False):
+            GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)
 
     def _get_db_conn(self):
         if not PSYCOPG2_AVAILABLE:
@@ -1608,6 +1683,75 @@ class DetectorWorker:
                                 ffmpeg.stdin.flush()
                             except Exception:
                                 break
+                    elif self.is_crowd_worker and getattr(self, 'crowd_engine', None) is not None:
+                        # ----------------------------------------------------------
+                        # DEDICATED CROWD MONITORING PIPELINE
+                        # ----------------------------------------------------------
+                        src_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                        if src_fps <= 0 or src_fps > 120:
+                            src_fps = 25.0
+
+                        target_interval = 1.0 / self.fps
+                        next_frame_time = time.time()
+                        frame_idx = 0
+
+                        while not self._stop_event.is_set():
+                            if is_local_file:
+                                now = time.time()
+                                if now < next_frame_time:
+                                    time.sleep(max(0.001, next_frame_time - now))
+                                next_frame_time += target_interval
+                                if now - next_frame_time > 0.5:
+                                    next_frame_time = now + target_interval
+
+                            ret, raw_frame = cap.read()
+                            if not ret or raw_frame is None:
+                                if is_local_file:
+                                    cap.release()
+                                    cap = cv2.VideoCapture(str(self.rtsp_url))
+                                    frame_idx = 0
+                                    continue
+                                else:
+                                    print(f"[CROWD-WORKER] Camera {self.cam_id} RTSP stream finished or disconnected.", flush=True)
+                                    break
+
+                            frame_idx += 1
+                            with self._frame_lock:
+                                self._latest_raw_frame = raw_frame
+                                self._last_frame_time = time.time()
+
+                            # Downscale frame to worker dimensions if needed
+                            if (raw_frame.shape[1], raw_frame.shape[0]) != (self.width, self.height):
+                                proc_frame = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                            else:
+                                proc_frame = raw_frame
+
+                            pf, metrics = self.crowd_engine.process_frame(proc_frame, return_metrics=True)
+                            if (self.width, self.height) != (pf.shape[1], pf.shape[0]):
+                                pf = cv2.resize(pf, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+
+                            self.crowd_stats = metrics
+
+                            # Immediately encode and cache latest annotated JPEG frame in memory
+                            ret_j, j_bytes = cv2.imencode('.jpg', pf, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                            if ret_j:
+                                with self._frame_lock:
+                                    self._latest_jpeg_frame = j_bytes.tobytes()
+
+                            # Trigger alert if crowd threshold reached
+                            if metrics.get("is_alert"):
+                                cnt = metrics.get("in_roi_count", 0)
+                                print(f"[ALERT] [ALERT-TRIGGER-CROWD] Crowd Gathering alert: cam={self.cam_id}, count={cnt} (threshold={self.crowd_engine.crowd_threshold})", flush=True)
+                                self._save_alert(f"CROWD ALERT: {cnt} Persons in ROI", pf)
+
+                            if ffmpeg.poll() is not None:
+                                break
+
+                            try:
+                                ffmpeg.stdin.write(pf.tobytes())
+                                ffmpeg.stdin.flush()
+                            except Exception:
+                                break
                     else:
                         # ----------------------------------------------------------
                         # LOCATION CAMERAS PIPELINE (CENTRAL INFERENCE SCHEDULER)
@@ -1677,5 +1821,5 @@ class DetectorWorker:
                     traceback.print_exc()
         finally:
             cleanup_subthreads()
-            if not getattr(self, 'is_speed_worker', False):
+            if not getattr(self, 'is_speed_worker', False) and not getattr(self, 'is_crowd_worker', False):
                 GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)

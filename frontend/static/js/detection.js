@@ -251,7 +251,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                 "ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt",
                 "hansung_ppe_violations.pt", "construction.pt", "fire_smoke.pt", "Final_Fire_smoke.pt",
                 "150_firehose_best.pt", "120_spillage_best.pt", "best_tape.pt", "sand_ext_chocks.pt", "tyre_final.pt",
-                "Valve_box_best.pt", "dome_open_closed_best.pt"
+                "Valve_box_best.pt", "dome_open_closed_best.pt", "crowd_detection.pt"
             ];
             uniqueAssigned.forEach(m => {
                 const cleanName = m.replace(".pt", "");

@@ -449,6 +449,20 @@ class LiveVideoTestStreamer:
                 cv2.rectangle(disp_frame, (x1, bg_y1), (bg_x2, bg_y2), color, 1)
                 cv2.putText(disp_frame, tag_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
 
+            # Crowd Analysis Overlay (Proximity lines, cluster hulls, and HUD banner)
+            is_crowd_model = "crowd" in str(getattr(self, "model_name", "")).lower()
+            if is_crowd_model:
+                person_pts = []
+                for det in dets:
+                    b = det.get("box")
+                    if b is not None:
+                        bx1, by1, bx2, by2 = b
+                        cx = int(((bx1 + bx2) / 2) * scale_disp_x)
+                        cy = int(by2 * scale_disp_y)
+                        person_pts.append((cx, cy))
+                if person_pts:
+                    _draw_crowd_hud_and_clusters(disp_frame, person_pts, threshold=4, dist_px=180)
+
             # Encode to JPEG and publish to stream (ultra-fast <4ms at 854px display width)
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
             ret_j, jpeg = cv2.imencode('.jpg', disp_frame, encode_param)
@@ -771,9 +785,76 @@ def delete_job(job_id: str):
     return False
 
 
+def _draw_crowd_hud_and_clusters(frame, person_points, threshold=4, dist_px=180):
+    """Draws cluster lines, convex hulls, and HUD banner for crowd detection."""
+    h, w = frame.shape[:2]
+    n = len(person_points)
+    if n == 0:
+        return
+
+    # Compute clusters
+    adj = {i: [] for i in range(n)}
+    for i in range(n):
+        for j in range(i + 1, n):
+            gx1, gy1 = person_points[i]
+            gx2, gy2 = person_points[j]
+            if math.hypot(gx1 - gx2, gy1 - gy2) <= dist_px:
+                adj[i].append(j)
+                adj[j].append(i)
+
+    visited = set()
+    groups = []
+    for i in range(n):
+        if i not in visited:
+            cluster = []
+            queue = [i]
+            visited.add(i)
+            while queue:
+                curr = queue.pop(0)
+                cluster.append(curr)
+                for neighbor in adj[curr]:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+            groups.append(cluster)
+
+    has_crowd = (n >= threshold) or any(len(g) >= threshold for g in groups)
+
+    # Connecting lines & hulls
+    for g in groups:
+        if len(g) > 1:
+            line_color = (0, 0, 255) if has_crowd else (0, 200, 255)
+            for i in range(len(g)):
+                for j in range(i + 1, len(g)):
+                    pt1 = person_points[g[i]]
+                    pt2 = person_points[g[j]]
+                    if math.hypot(pt1[0] - pt2[0], pt1[1] - pt2[1]) <= dist_px:
+                        cv2.line(frame, pt1, pt2, line_color, 2, cv2.LINE_AA)
+
+            if len(g) >= 3:
+                pts = np.array([person_points[idx] for idx in g], dtype=np.int32)
+                hull = cv2.convexHull(pts)
+                cv2.polylines(frame, [hull], True, (0, 0, 255) if has_crowd else (0, 255, 255), 2, cv2.LINE_AA)
+
+    # Top banner HUD
+    banner_h = 50
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (w, banner_h), (20, 20, 20), -1)
+    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+
+    badge_color = (0, 0, 255) if has_crowd else (0, 200, 0)
+    badge_text = f"CROWD ALERT: {n} DETECTED" if has_crowd else "STATUS: NORMAL"
+    cv2.rectangle(frame, (12, 8), (280, 42), badge_color, -1)
+    cv2.putText(frame, badge_text, (20, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+
+    stats_text = f"Total: {n} | Clusters: {len(groups)} | Threshold: {threshold}"
+    cv2.putText(frame, stats_text, (300, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 220, 220), 1, cv2.LINE_AA)
+
+
 def _draw_detection_overlay(frame, detections, job: VideoTestJob, frame_idx: int, total_frames: int):
     h, w = frame.shape[:2]
     
+    person_pts = []
     for det in detections:
         box = det["box"]
         label = det["label"]
@@ -803,7 +884,14 @@ def _draw_detection_overlay(frame, detections, job: VideoTestJob, frame_idx: int
         cv2.rectangle(frame, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
         cv2.rectangle(frame, (x1, bg_y1), (bg_x2, bg_y2), color, 1)
         cv2.putText(frame, tag_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
+
+        if "person" in str(label).lower() or "crowd" in str(label).lower():
+            person_pts.append((int((x1 + x2) / 2), y2))
     
+    is_crowd_model = "crowd" in str(getattr(job, "model_name", "")).lower()
+    if is_crowd_model and person_pts:
+        _draw_crowd_hud_and_clusters(frame, person_pts, threshold=4, dist_px=180)
+
     return frame
 
 

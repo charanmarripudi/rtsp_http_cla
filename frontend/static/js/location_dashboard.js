@@ -671,7 +671,8 @@ class LocationDashboard {
             "sand_ext_chocks.pt": ["Fire_Extinguisher","Sand-Bucket","wheel-choke"],
             "tyre_final.pt": ["Defective","Good_tyre"],
             "Valve_box_best.pt": ["Valve_Box_Close","Valve_Box_Open"],
-            "dome_open_closed_best.pt": ["Dome_Closed","Dome_Opened"]
+            "dome_open_closed_best.pt": ["Dome_Closed","Dome_Opened"],
+            "crowd_detection.pt": ["person", "crowd"]
         };
 
         const customMeta = {
@@ -688,7 +689,8 @@ class LocationDashboard {
             "sand_ext_chocks.pt": { label: "SAND EXT CHOCKS CLASSES", color: "#84cc16" },
             "tyre_final.pt": { label: "TYRE INSPECTION CLASSES", color: "#6366f1" },
             "Valve_box_best.pt": { label: "VALVE BOX CLASSES", color: "#38bdf8" },
-            "dome_open_closed_best.pt": { label: "DOME OPEN/CLOSED CLASSES", color: "#14b8a6" }
+            "dome_open_closed_best.pt": { label: "DOME OPEN/CLOSED CLASSES", color: "#14b8a6" },
+            "crowd_detection.pt": { label: "CROWD DETECTION CLASSES", color: "#f43f5e" }
         };
 
         const modelsWithClasses = [];
