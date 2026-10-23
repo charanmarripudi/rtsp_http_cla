@@ -2528,8 +2528,9 @@
               });
             }
 
-            // 1. Render predefined custom specialized models
+            // 1. Render predefined custom specialized models (ONLY if present in allModels)
             specializedModels.forEach(spec => {
+              if (!allModels.includes(spec.file)) return;
               renderPpeSection(spec.file, spec.label, spec.color, spec.classes);
             });
 

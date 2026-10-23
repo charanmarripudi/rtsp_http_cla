@@ -2,11 +2,19 @@
 # Sync local changes to GitHub and Raspberry Pi automatically
 set -e
 
-PI_IP="192.168.96.36"
+PI_LOCAL_IP="192.168.96.36"
+PI_TAILSCALE_HOST="raspberrypi.tail486a43.ts.net"
 PI_USER="algo"
 PI_PASS="Algo@123"
 PI_DIR="/home/algo/rtsp_http_cla"
 BRANCH="rpi"
+
+# Test whether local IP or Tailscale is reachable
+if nc -z -w 2 "$PI_LOCAL_IP" 22 2>/dev/null; then
+    PI_HOST="$PI_LOCAL_IP"
+else
+    PI_HOST="$PI_TAILSCALE_HOST"
+fi
 
 echo "========================================="
 echo "  1. PUSHING LOCAL CHANGES TO GITHUB"
@@ -32,14 +40,14 @@ git push origin main
 git checkout "$CURRENT_BRANCH"
 
 echo "========================================="
-echo "  2. UPDATING RASPBERRY PI ($PI_IP)"
+echo "  2. UPDATING RASPBERRY PI ($PI_HOST)"
 echo "========================================="
 SSHPASS_BIN="/opt/homebrew/bin/sshpass"
 if [ ! -f "$SSHPASS_BIN" ]; then
     SSHPASS_BIN="sshpass"
 fi
 
-$SSHPASS_BIN -p "$PI_PASS" ssh -o StrictHostKeyChecking=no "$PI_USER@$PI_IP" "bash -s" << 'EOF'
+$SSHPASS_BIN -p "$PI_PASS" ssh -o StrictHostKeyChecking=no "$PI_USER@$PI_HOST" "bash -s" << 'EOF'
 cd /home/algo/rtsp_http_cla
 echo "[PI] Stashing local config changes (preserving cameras & locations)..."
 git stash
