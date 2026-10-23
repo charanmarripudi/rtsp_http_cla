@@ -20,6 +20,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+try:
+    import torch
+    torch.set_num_threads(4)
+except Exception:
+    torch = None
+
 # Ensure root directory is on path
 _curr = Path(__file__).resolve()
 BASE_DIR = None
@@ -339,12 +345,17 @@ class LiveVideoTestStreamer:
         # Publish initial raw frame IMMEDIATELY so stream never starts on black screen
         ret, initial_frame = cap.read()
         if ret and initial_frame is not None:
-            ret_j, jpeg = cv2.imencode('.jpg', initial_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+            h_init, w_init = initial_frame.shape[:2]
+            if w_init > 854:
+                disp_init = cv2.resize(initial_frame, (854, int(h_init * 854 / float(w_init))), interpolation=cv2.INTER_LINEAR)
+            else:
+                disp_init = initial_frame
+            ret_j, jpeg = cv2.imencode('.jpg', disp_init, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
             if ret_j:
                 with self.lock:
                     self.current_jpeg_bytes = jpeg.tobytes()
             with self.frame_lock:
-                self._latest_raw_frame = initial_frame.copy()
+                self._latest_raw_frame = disp_init.copy()
 
         logger.info(f"LiveStreamer: Started streaming {self.raw_filename} at native {native_fps:.1f} FPS (pace: {target_frame_time*1000:.1f}ms/frame)")
 
@@ -373,34 +384,54 @@ class LiveVideoTestStreamer:
                 else:
                     break
 
+            h_orig, w_orig = frame.shape[:2]
+            max_disp_w = 854
+            if w_orig > max_disp_w:
+                disp_w = max_disp_w
+                disp_h = int(h_orig * (max_disp_w / float(w_orig)))
+                disp_frame = cv2.resize(frame, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
+                scale_disp_x = disp_w / float(w_orig)
+                scale_disp_y = disp_h / float(h_orig)
+            else:
+                disp_frame = frame
+                scale_disp_x = 1.0
+                scale_disp_y = 1.0
+
             frame_idx += 1
 
-            # Feed latest frame to async inference worker
+            # Feed downscaled display frame to async inference worker (saves huge memory copying)
             with self.frame_lock:
-                self._latest_raw_frame = frame.copy()
+                self._latest_raw_frame = disp_frame.copy()
 
             # Retrieve active detections
             with self.lock:
                 dets = list(self.latest_detections)
 
-            h, w = frame.shape[:2]
+            h_d, w_d = disp_frame.shape[:2]
+            now_draw_t = time.time()
 
             # Draw exact bounding boxes smoothly on this frame
             for det in dets:
+                # Discard detections older than 1.2s to prevent lingering ghost boxes on empty road
+                det_ts = det.get("ts", 0.0)
+                if det_ts > 0 and (now_draw_t - det_ts) > 1.2:
+                    continue
                 box = det.get("box")
                 if box is None:
                     continue
-                x1, y1, x2, y2 = map(int, box)
-                x1 = max(0, min(w - 1, x1))
-                y1 = max(0, min(h - 1, y1))
-                x2 = max(0, min(w - 1, x2))
-                y2 = max(0, min(h - 1, y2))
+                x1, y1, x2, y2 = box
+                x1 = max(0, min(w_d - 1, int(x1 * scale_disp_x)))
+                y1 = max(0, min(h_d - 1, int(y1 * scale_disp_y)))
+                x2 = max(0, min(w_d - 1, int(x2 * scale_disp_x)))
+                y2 = max(0, min(h_d - 1, int(y2 * scale_disp_y)))
+                if x2 <= x1 or y2 <= y1:
+                    continue
                 
                 color = det.get("color", (0, 255, 128))
                 label = det.get("label", "")
                 conf = det.get("conf", 0.0)
 
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                cv2.rectangle(disp_frame, (x1, y1), (x2, y2), color, 2)
                 tag_text = f"{label} {conf:.2f}" if label else f"{conf:.2f}"
                 (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
                 
@@ -410,17 +441,17 @@ class LiveVideoTestStreamer:
                     text_y = y1 - 4
                 else:
                     bg_y1 = y1
-                    bg_y2 = min(h - 1, y1 + th + 6)
+                    bg_y2 = min(h_d - 1, y1 + th + 6)
                     text_y = y1 + th + 2
                     
-                bg_x2 = min(w - 1, x1 + tw + 6)
-                cv2.rectangle(frame, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
-                cv2.rectangle(frame, (x1, bg_y1), (bg_x2, bg_y2), color, 1)
-                cv2.putText(frame, tag_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
+                bg_x2 = min(w_d - 1, x1 + tw + 6)
+                cv2.rectangle(disp_frame, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
+                cv2.rectangle(disp_frame, (x1, bg_y1), (bg_x2, bg_y2), color, 1)
+                cv2.putText(disp_frame, tag_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
 
-            # Encode to JPEG and publish to stream
+            # Encode to JPEG and publish to stream (ultra-fast <4ms at 854px display width)
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
-            ret_j, jpeg = cv2.imencode('.jpg', frame, encode_param)
+            ret_j, jpeg = cv2.imencode('.jpg', disp_frame, encode_param)
             if ret_j:
                 with self.lock:
                     self.current_jpeg_bytes = jpeg.tobytes()
@@ -479,42 +510,38 @@ class LiveVideoTestStreamer:
             dets = []
             t_infer_0 = time.time()
             try:
-                # Downscale frames for fast CPU inference on Raspberry Pi
                 h_orig, w_orig = frame_to_infer.shape[:2]
-                scale_x = 1.0
-                scale_y = 1.0
-                infer_input = frame_to_infer
-                max_dim = 480
-                if max(h_orig, w_orig) > max_dim:
-                    if w_orig >= h_orig:
-                        new_w = max_dim
-                        new_h = int(h_orig * (max_dim / float(w_orig)))
-                    else:
-                        new_h = max_dim
-                        new_w = int(w_orig * (max_dim / float(h_orig)))
-                    infer_input = cv2.resize(frame_to_infer, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-                    scale_x = float(w_orig) / float(new_w)
-                    scale_y = float(h_orig) / float(new_h)
+                infer_w = min(480, w_orig)
+                infer_h = int(h_orig * (infer_w / float(w_orig)))
+                infer_input = cv2.resize(frame_to_infer, (infer_w, infer_h), interpolation=cv2.INTER_LINEAR)
+                scale_x = float(w_orig) / float(infer_w)
+                scale_y = float(h_orig) / float(infer_h)
 
-                results = c_model.predict(
-                    source=infer_input,
-                    imgsz=c_imgsz,
-                    conf=c_conf,
-                    iou=c_iou,
-                    verbose=False
-                )
+                predict_kwargs = {
+                    "source": infer_input,
+                    "imgsz": c_imgsz,
+                    "conf": max(0.20, c_conf),
+                    "iou": c_iou,
+                    "verbose": False
+                }
+
+                if 'torch' in globals() and torch is not None and hasattr(torch, 'inference_mode'):
+                    with torch.inference_mode():
+                        results = c_model.predict(**predict_kwargs)
+                else:
+                    results = c_model.predict(**predict_kwargs)
 
                 if results and len(results) > 0:
                     r = results[0]
                     if r.boxes is not None and len(r.boxes) > 0:
+                        raw_dets = []
                         for b in r.boxes:
                             cls_id = int(b.cls[0].item())
                             conf_val = float(b.conf[0].item())
                             cls_name = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
 
-                            if c_classes:
-                                if not any(match_class(cls_name, fc) for fc in c_classes):
-                                    continue
+                            if c_classes and not any(match_class(cls_name, fc) for fc in c_classes):
+                                continue
 
                             xyxy = b.xyxy[0].cpu().numpy()
                             # Map coordinates back to original frame size
@@ -525,13 +552,64 @@ class LiveVideoTestStreamer:
                                     xyxy[2] * scale_x,
                                     xyxy[3] * scale_y
                                 ])
+                            raw_dets.append((xyxy, cls_name, conf_val))
+
+                        # Determine if vehicle model
+                        is_veh_model = "vehicle" in str(m_name).lower() or any(
+                            any(vk in str(c).lower() for vk in ("car", "truck", "bike", "vehicle", "bus", "van"))
+                            for c in (c_classes or [m_name])
+                        )
+
+                        now_ts = time.time()
+                        for (xyxy, cls_name, conf_val) in raw_dets:
+                            x1, y1, x2, y2 = xyxy
+                            bw = max(0, x2 - x1)
+                            bh = max(0, y2 - y1)
+
+                            if is_veh_model:
+                                # 1. Confidence floor for vehicle classes (reject road marking hallucinations)
+                                if conf_val < max(0.45, c_conf):
+                                    continue
+                                # 2. Discard tiny noise
+                                if bw < 35 or bh < 25 or (bw * bh) < 900:
+                                    continue
+                                # 3. Discard roadside reflector posts
+                                if (bh / max(1.0, bw)) > 3.0 and (x1 < w_orig * 0.12 or x2 > w_orig * 0.88):
+                                    continue
+                                # 4. Discard horizontal road dashed line noise
+                                if (bw / max(1.0, bh)) > 3.5 and bh < 40:
+                                    continue
+                                # 5. Discard sky / top foliage
+                                if y2 < h_orig * 0.20 and (x1 > w_orig * 0.60 or x2 < w_orig * 0.25):
+                                    continue
+                            elif bw < 12 or bh < 12:
+                                continue
+
+                            # 6. Suppress nested sub-boxes (e.g. smaller box inside a larger box)
+                            area = bw * bh
+                            is_sub_box = False
+                            for (other_xyxy, other_cls, other_conf) in raw_dets:
+                                if np.array_equal(other_xyxy, xyxy):
+                                    continue
+                                ox1, oy1, ox2, oy2 = other_xyxy
+                                o_area = max(0, ox2 - ox1) * max(0, oy2 - oy1)
+                                ix1, iy1 = max(x1, ox1), max(y1, oy1)
+                                ix2, iy2 = min(x2, ox2), min(y2, oy2)
+                                if ix1 < ix2 and iy1 < iy2:
+                                    inter = (ix2 - ix1) * (iy2 - iy1)
+                                    if o_area >= area and (inter / float(area)) > 0.55:
+                                        is_sub_box = True
+                                        break
+                            if is_sub_box:
+                                continue
 
                             color = get_dynamic_class_color(cls_name)
                             dets.append({
                                 "box": xyxy,
                                 "label": cls_name,
                                 "conf": conf_val,
-                                "color": color
+                                "color": color,
+                                "ts": now_ts
                             })
             except Exception as e:
                 print(f"[VideoTester] Live infer error in streamer: {e}", flush=True)

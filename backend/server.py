@@ -1644,10 +1644,10 @@ def get_speed_live_frame(request: Request = None):
     if request and request.method == "OPTIONS":
         return Response(status_code=200, headers=headers)
     if "speed" not in running:
-        return Response(status_code=404, headers=headers)
+        return Response(status_code=204, headers=headers)
     worker = running["speed"].get("worker")
     if not worker or not hasattr(worker, "get_jpeg_frame"):
-        return Response(status_code=404, headers=headers)
+        return Response(status_code=204, headers=headers)
     frame_bytes = worker.get_jpeg_frame()
     if not frame_bytes:
         return Response(status_code=204, headers=headers)
@@ -2299,6 +2299,9 @@ def start_detection(d: dict):
         running.pop(cid, None)
         time.sleep(0.15)  # Safety pause: let OS release any C-extension locks
 
+    # Stop any concurrent raw stream FFmpeg for this camera to free CPU cores and avoid stream collisions
+    _kill_raw_ffmpeg_for_camera(cid)
+
     # Clean only detected dir
     det_dir = os.path.join(HLS_DIR, f"stream{cid}_detected")
     if os.path.exists(det_dir):
@@ -2836,8 +2839,12 @@ def start_speed_tracker(d: dict = Body(...)):
         if norm_m not in model_configs:
             model_configs[norm_m] = {
                 "enabled_classes": ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle", "van", "bus"],
-                "imgsz": 416
+                "imgsz": 320
             }
+        else:
+            if not model_configs[norm_m].get("enabled_classes"):
+                model_configs[norm_m]["enabled_classes"] = ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle", "van", "bus"]
+            model_configs[norm_m]["imgsz"] = 320
 
     return start_detection({
         "camera": cid,
