@@ -2602,68 +2602,86 @@ def get_speed_violations(limit: int = 50):
     return {"violations": violations[:limit]}
 
 @app.post("/api/speed/upload")
-async def upload_speed_video(request: Request):
-    """Uploads a test video file for Vehicle Speed Tracking (zero external dependencies)."""
+async def upload_speed_video(request: Request, filename: Optional[str] = Query(default=None)):
+    """Uploads a test video file for Vehicle Speed Tracking (handles multipart, raw binary, and query filename)."""
     upload_dir = os.path.join(BASE_DIR, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
     
-    clean_name = f"test_video_{int(time.time())}.mp4"
-    dest_path = os.path.join(upload_dir, f"speed_{int(time.time())}_{clean_name}")
-    
     content_type = request.headers.get("content-type", "")
+    file_bytes = None
+    orig_filename = filename
+    
     if "multipart/form-data" in content_type:
         try:
             form = await request.form()
             file_obj = form.get("file")
             if file_obj:
-                orig_name = getattr(file_obj, "filename", clean_name)
-                clean_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', orig_name)
-                dest_path = os.path.join(upload_dir, f"speed_{int(time.time())}_{clean_name}")
-                with open(dest_path, "wb") as buffer:
-                    content = await file_obj.read() if hasattr(file_obj, "read") else file_obj
-                    buffer.write(content)
-                return {"status": "ok", "filename": clean_name, "filepath": dest_path}
-        except Exception:
-            pass  # Fallback to reading raw stream / boundary if python-multipart not installed
+                if hasattr(file_obj, "filename") and file_obj.filename:
+                    orig_filename = file_obj.filename
+                file_bytes = await file_obj.read() if hasattr(file_obj, "read") else file_obj
+        except Exception as e_form:
+            print(f"[WARN] Speed multipart parse fallback: {e_form}")
             
-    body = await request.body()
-    if b"Content-Disposition" in body:
-        header_end = body.find(b"\r\n\r\n")
-        if header_end != -1:
-            header_part = body[:header_end].decode("latin1", errors="ignore")
-            m = re.search(r'filename="([^"]+)"', header_part)
-            if m:
-                clean_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', os.path.basename(m.group(1)))
-                dest_path = os.path.join(upload_dir, f"speed_{int(time.time())}_{clean_name}")
-            raw_data = body[header_end + 4:]
-            last_boundary = raw_data.rfind(b"\r\n--")
-            if last_boundary != -1:
-                raw_data = raw_data[:last_boundary]
-            with open(dest_path, "wb") as buffer:
-                buffer.write(raw_data)
+    if file_bytes is None:
+        body = await request.body()
+        if b"Content-Disposition" in body:
+            header_end = body.find(b"\r\n\r\n")
+            if header_end != -1:
+                header_part = body[:header_end].decode("latin1", errors="ignore")
+                m = re.search(r'filename="([^"]+)"', header_part)
+                if m:
+                    orig_filename = os.path.basename(m.group(1))
+                raw_data = body[header_end + 4:]
+                last_boundary = raw_data.rfind(b"\r\n--")
+                if last_boundary != -1:
+                    raw_data = raw_data[:last_boundary]
+                file_bytes = raw_data
+            else:
+                file_bytes = body
         else:
-            with open(dest_path, "wb") as buffer:
-                buffer.write(body)
+            file_bytes = body
+
+    if not file_bytes:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "No video data received"})
+
+    if not orig_filename:
+        raw_h = request.headers.get("X-Filename")
+        orig_filename = str(raw_h) if raw_h else f"test_video_{int(time.time())}.mp4"
+
+    clean_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', os.path.basename(orig_filename))
+    if not clean_name.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
+        clean_name += ".mp4"
+
+    dest_filename = f"speed_{int(time.time())}_{clean_name}"
+    dest_path = os.path.join(upload_dir, dest_filename)
+
+    with open(dest_path, "wb") as buffer:
+        buffer.write(file_bytes)
+
+    if not os.path.exists(dest_path) or os.path.getsize(dest_path) == 0:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to save uploaded video to disk"})
 
     # Generate OpenCV thumbnail for zero-black-screen display
-    base_file = os.path.basename(dest_path)
-    stem = os.path.splitext(base_file)[0]
+    stem = os.path.splitext(dest_filename)[0]
     thumb_path = os.path.join(upload_dir, f"{stem}_thumb.jpg")
     try:
         cap = cv2.VideoCapture(dest_path)
-        ret, frame = cap.read()
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                cv2.imwrite(thumb_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
         cap.release()
-        if ret and frame is not None:
-            cv2.imwrite(thumb_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-    except Exception:
-        pass
+    except Exception as e_thumb:
+        print(f"[WARN] Failed to generate speed thumbnail: {e_thumb}")
 
     return {
         "status": "ok",
-        "filename": clean_name,
+        "filename": dest_filename,
+        "original_filename": orig_filename,
         "filepath": dest_path,
-        "thumbnail_url": f"/api/speed/thumbnail/{base_file}",
-        "raw_url": f"/api/speed/raw-file/{base_file}"
+        "file_size": os.path.getsize(dest_path),
+        "thumbnail_url": f"/api/speed/thumbnail/{dest_filename}",
+        "raw_url": f"/api/speed/raw-file/{dest_filename}"
     }
 
 @app.get("/api/speed/thumbnail/{filename}")
@@ -2762,6 +2780,14 @@ def start_speed_tracker(d: dict = Body(...)):
 
     if not rtsp:
         return {"status": "error", "message": "No RTSP stream URL or video file provided"}
+
+    is_network_stream = rtsp.startswith("rtsp://") or rtsp.startswith("rtsps://") or rtsp.startswith("http://") or rtsp.startswith("https://")
+    if (source_type == "video" or not is_network_stream) and not os.path.exists(rtsp):
+        alt_path = os.path.join(BASE_DIR, "uploads", os.path.basename(rtsp))
+        if os.path.exists(alt_path):
+            rtsp = alt_path
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": f"Video file not found on disk: {os.path.basename(rtsp)}. Please select and re-upload the file."})
 
     # Save rtsp_url to speed_config
     cfg = _get_speed_config()

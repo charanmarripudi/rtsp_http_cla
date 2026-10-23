@@ -251,14 +251,17 @@ class LiveVideoTestStreamer:
         self.model_path = resolve_model_path(model_name)
         self.conf = float(conf)
         self.iou = float(iou)
-        self.imgsz = int(imgsz)
+        # On Raspberry Pi ARM CPU, clamp imgsz to max 416 for smooth real-time streaming
+        raw_sz = int(imgsz) if imgsz else 416
+        self.imgsz = min(raw_sz, 416)
         self.enabled_classes = enabled_classes or []
         self.frame_step = max(1, int(frame_step))
         
         self.running = False
         self.paused = False
         self.loop = True
-        self.thread = None
+        self.reader_thread = None
+        self.infer_thread = None
         
         self.current_frame = None
         self.current_jpeg_bytes = None
@@ -267,14 +270,18 @@ class LiveVideoTestStreamer:
         self.fps = 25.0
         self.processed_fps = 0.0
         self.lock = threading.Lock()
+        self.frame_lock = threading.Lock()
+        self._latest_raw_frame = None
         self.model = None
 
     def start(self):
         if self.running:
             return
         self.running = True
-        self.thread = threading.Thread(target=self._run_loop, daemon=True, name=f"LiveStreamer-{self.session_id}")
-        self.thread.start()
+        self.reader_thread = threading.Thread(target=self._run_reader_loop, daemon=True, name=f"LiveStreamer-Reader-{self.session_id}")
+        self.reader_thread.start()
+        self.infer_thread = threading.Thread(target=self._run_inference_loop, daemon=True, name=f"LiveStreamer-Infer-{self.session_id}")
+        self.infer_thread.start()
 
     def stop(self):
         self.running = False
@@ -286,7 +293,8 @@ class LiveVideoTestStreamer:
             if iou is not None:
                 self.iou = float(iou)
             if imgsz is not None:
-                self.imgsz = int(imgsz)
+                raw_sz = int(imgsz)
+                self.imgsz = min(raw_sz, 416)
             if enabled_classes is not None:
                 self.enabled_classes = enabled_classes
             if frame_step is not None:
@@ -303,7 +311,7 @@ class LiveVideoTestStreamer:
         with self.lock:
             return self.current_jpeg_bytes
 
-    def _run_loop(self):
+    def _run_reader_loop(self):
         cap = cv2.VideoCapture(self.raw_path)
         if not cap.isOpened():
             alt_path = resolve_raw_path(self.raw_filename)
@@ -324,7 +332,8 @@ class LiveVideoTestStreamer:
         if native_fps <= 0 or math.isnan(native_fps) or native_fps > 120:
             native_fps = 25.0
         self.fps = native_fps
-        target_frame_time = 1.0 / native_fps
+        target_fps = min(30.0, max(12.0, native_fps))
+        target_frame_time = 1.0 / target_fps
         frame_idx = 0
 
         # Publish initial raw frame IMMEDIATELY so stream never starts on black screen
@@ -334,16 +343,8 @@ class LiveVideoTestStreamer:
             if ret_j:
                 with self.lock:
                     self.current_jpeg_bytes = jpeg.tobytes()
-
-        if self.model_path:
-            try:
-                self.model = get_yolo_model(self.model_path)
-                if self.model is None:
-                    logger.warning(f"LiveStreamer: Model returned None for path {self.model_path}")
-                else:
-                    logger.info(f"LiveStreamer: Successfully loaded model {self.model_name} from {self.model_path}")
-            except Exception as e:
-                logger.error(f"Failed to load model on live start: {e}")
+            with self.frame_lock:
+                self._latest_raw_frame = initial_frame.copy()
 
         logger.info(f"LiveStreamer: Started streaming {self.raw_filename} at native {native_fps:.1f} FPS (pace: {target_frame_time*1000:.1f}ms/frame)")
 
@@ -357,10 +358,12 @@ class LiveVideoTestStreamer:
             ret, frame = cap.read()
             if not ret or frame is None:
                 if self.loop and not is_rtsp:
-                    cap.release()
-                    cap = cv2.VideoCapture(self.raw_path)
-                    frame_idx = 0
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     ret, frame = cap.read()
+                    if not ret or frame is None:
+                        cap.release()
+                        cap = cv2.VideoCapture(self.raw_path)
+                        ret, frame = cap.read()
                     if not ret or frame is None:
                         time.sleep(0.05)
                         continue
@@ -372,83 +375,35 @@ class LiveVideoTestStreamer:
 
             frame_idx += 1
 
+            # Feed latest frame to async inference worker
+            with self.frame_lock:
+                self._latest_raw_frame = frame.copy()
+
+            # Retrieve active detections
             with self.lock:
-                c_conf = self.conf
-                c_iou = self.iou
-                c_imgsz = self.imgsz
-                c_model = self.model
-                m_name = self.model_name
-                c_classes = list(self.enabled_classes)
-                c_step = self.frame_step
-
-            # If model was not loaded initially, attempt lazy reload
-            if c_model is None and self.model_path:
-                try:
-                    c_model = get_yolo_model(self.model_path)
-                    if c_model is not None:
-                        with self.lock:
-                            self.model = c_model
-                except Exception:
-                    pass
-
-            dets = []
-            dt_infer = 0.001
-
-            # Run YOLO directly on the exact frame being shown
-            if c_model is not None:
-                try:
-                    t_infer_0 = time.time()
-                    results = c_model.predict(
-                        source=frame,
-                        imgsz=c_imgsz,
-                        conf=c_conf,
-                        iou=c_iou,
-                        verbose=False
-                    )
-                    dt_infer = max(0.001, time.time() - t_infer_0)
-
-                    if results and len(results) > 0:
-                        r = results[0]
-                        if r.boxes is not None and len(r.boxes) > 0:
-                            for b in r.boxes:
-                                cls_id = int(b.cls[0].item())
-                                conf_val = float(b.conf[0].item())
-                                cls_name = c_model.names.get(cls_id, str(cls_id)) if hasattr(c_model, 'names') else str(cls_id)
-
-                                if c_classes:
-                                    if not any(match_class(cls_name, fc) for fc in c_classes):
-                                        continue
-
-                                xyxy = b.xyxy[0].cpu().numpy()
-                                color = get_dynamic_class_color(cls_name)
-                                dets.append({
-                                    "box": xyxy,
-                                    "label": cls_name,
-                                    "conf": conf_val,
-                                    "color": color
-                                })
-                except Exception as e:
-                    logger.error(f"Live infer error on frame #{frame_idx}: {e}")
+                dets = list(self.latest_detections)
 
             h, w = frame.shape[:2]
 
-            # Draw exact bounding boxes on this frame
+            # Draw exact bounding boxes smoothly on this frame
             for det in dets:
-                x1, y1, x2, y2 = map(int, det["box"])
+                box = det.get("box")
+                if box is None:
+                    continue
+                x1, y1, x2, y2 = map(int, box)
                 x1 = max(0, min(w - 1, x1))
                 y1 = max(0, min(h - 1, y1))
                 x2 = max(0, min(w - 1, x2))
                 y2 = max(0, min(h - 1, y2))
                 
-                color = det["color"]
-                label = det["label"]
-                conf = det["conf"]
+                color = det.get("color", (0, 255, 128))
+                label = det.get("label", "")
+                conf = det.get("conf", 0.0)
 
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                tag_text = f"{label} {conf:.2f}"
+                tag_text = f"{label} {conf:.2f}" if label else f"{conf:.2f}"
                 (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
                 
-                # Position label tag: above box if space permits, else inside top of box
                 if y1 - th - 6 > 0:
                     bg_y1 = y1 - th - 6
                     bg_y2 = y1
@@ -463,25 +418,14 @@ class LiveVideoTestStreamer:
                 cv2.rectangle(frame, (x1, bg_y1), (bg_x2, bg_y2), color, 1)
                 cv2.putText(frame, tag_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
 
-            p_fps = 1.0 / dt_infer if dt_infer > 0 else 0.0
-
             # Encode to JPEG and publish to stream
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
-            ret, jpeg = cv2.imencode('.jpg', frame, encode_param)
-            if ret:
+            ret_j, jpeg = cv2.imencode('.jpg', frame, encode_param)
+            if ret_j:
                 with self.lock:
                     self.current_jpeg_bytes = jpeg.tobytes()
-                    self.latest_detections = dets
-                    self.processed_fps = p_fps
 
-            # Frame skipping if requested (advances video faster across time)
-            if c_step > 1:
-                for _ in range(c_step - 1):
-                    if not cap.grab():
-                        break
-                    frame_idx += 1
-
-            # Real-time FPS Pacing: enforce 1.0x native playback speed
+            # Real-time FPS Pacing: enforce smooth native playback speed
             t_frame_end = time.time()
             elapsed = t_frame_end - t_frame_start
             sleep_needed = target_frame_time - elapsed
@@ -490,6 +434,121 @@ class LiveVideoTestStreamer:
 
         cap.release()
         self.running = False
+
+    def _run_inference_loop(self):
+        # Pre-warm model in background without delaying video playback
+        if self.model_path and self.model is None:
+            try:
+                self.model = get_yolo_model(self.model_path)
+                if self.model is not None:
+                    dummy = np.zeros((320, 320, 3), dtype=np.uint8)
+                    try:
+                        self.model.predict(source=dummy, imgsz=320, verbose=False)
+                    except Exception:
+                        pass
+                    logger.info(f"LiveStreamer: Pre-warmed model {self.model_name}")
+            except Exception as e:
+                logger.error(f"Failed to load model on live start: {e}")
+
+        while self.running:
+            with self.frame_lock:
+                frame_to_infer = self._latest_raw_frame.copy() if self._latest_raw_frame is not None else None
+
+            if frame_to_infer is None:
+                time.sleep(0.04)
+                continue
+
+            with self.lock:
+                c_conf = self.conf
+                c_iou = self.iou
+                c_imgsz = min(self.imgsz, 416)
+                c_model = self.model
+                m_name = self.model_name
+                c_classes = list(self.enabled_classes)
+
+            # Lazy reload if model was not ready initially
+            if c_model is None and self.model_path:
+                try:
+                    c_model = get_yolo_model(self.model_path)
+                    if c_model is not None:
+                        with self.lock:
+                            self.model = c_model
+                except Exception:
+                    pass
+
+            if c_model is None:
+                time.sleep(0.1)
+                continue
+
+            dets = []
+            t_infer_0 = time.time()
+            try:
+                # Downscale high-resolution frames for fast CPU inference if larger than 640
+                h_orig, w_orig = frame_to_infer.shape[:2]
+                scale_x = 1.0
+                scale_y = 1.0
+                infer_input = frame_to_infer
+                if max(h_orig, w_orig) > 640:
+                    max_dim = 640
+                    if w_orig >= h_orig:
+                        new_w = max_dim
+                        new_h = int(h_orig * (max_dim / float(w_orig)))
+                    else:
+                        new_h = max_dim
+                        new_w = int(w_orig * (max_dim / float(h_orig)))
+                    infer_input = cv2.resize(frame_to_infer, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                    scale_x = float(w_orig) / float(new_w)
+                    scale_y = float(h_orig) / float(new_h)
+
+                results = c_model.predict(
+                    source=infer_input,
+                    imgsz=c_imgsz,
+                    conf=c_conf,
+                    iou=c_iou,
+                    verbose=False
+                )
+
+                if results and len(results) > 0:
+                    r = results[0]
+                    if r.boxes is not None and len(r.boxes) > 0:
+                        for b in r.boxes:
+                            cls_id = int(b.cls[0].item())
+                            conf_val = float(b.conf[0].item())
+                            cls_name = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
+
+                            if c_classes:
+                                if not any(match_class(cls_name, fc) for fc in c_classes):
+                                    continue
+
+                            xyxy = b.xyxy[0].cpu().numpy()
+                            # Map coordinates back to original frame size
+                            if scale_x != 1.0 or scale_y != 1.0:
+                                xyxy = np.array([
+                                    xyxy[0] * scale_x,
+                                    xyxy[1] * scale_y,
+                                    xyxy[2] * scale_x,
+                                    xyxy[3] * scale_y
+                                ])
+
+                            color = get_dynamic_class_color(cls_name)
+                            dets.append({
+                                "box": xyxy,
+                                "label": cls_name,
+                                "conf": conf_val,
+                                "color": color
+                            })
+            except Exception as e:
+                logger.error(f"Live infer error in streamer: {e}")
+
+            dt_infer = max(0.001, time.time() - t_infer_0)
+            p_fps = 1.0 / dt_infer
+
+            with self.lock:
+                self.latest_detections = dets
+                self.processed_fps = p_fps
+
+            # Brief pause so CPU remains responsive for smooth video rendering
+            time.sleep(0.02)
 
 
 def get_or_create_live_streamer(session_id: str, raw_filename: str, model_name: str, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None, frame_step=1):

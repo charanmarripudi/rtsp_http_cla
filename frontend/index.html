@@ -3206,19 +3206,32 @@
             modelSelect.innerHTML = '<option value="">No .pt models found in models/ directory</option>';
             return;
           }
+          let preferredModel = null;
+          const currentVideoName = (window.vlabUploadedFilename || "").toLowerCase();
+          const isVehicleHint = currentVideoName.includes("speed") || currentVideoName.includes("vehicle") || currentVideoName.includes("car") || currentVideoName.includes("traffic") || currentVideoName.includes("road");
+          if (isVehicleHint && models.includes("vehicles.pt")) {
+            preferredModel = "vehicles.pt";
+          } else if (models.includes("vehicles.pt")) {
+            preferredModel = "vehicles.pt";
+          } else if (models.some(m => m.includes("hansung") || m.includes("ppe"))) {
+            preferredModel = models.find(m => m.includes("hansung") || m.includes("ppe"));
+          } else {
+            preferredModel = models[0];
+          }
+
           models.forEach(m => {
             const opt = document.createElement("option");
             opt.value = m;
             opt.textContent = m;
-            if (m.includes("hansung") || m.includes("ppe")) opt.selected = true;
+            if (m === preferredModel) opt.selected = true;
             modelSelect.appendChild(opt);
           });
           window.vlabLoadModelClasses(modelSelect.value);
         })
         .catch(e => {
           console.error("[VideoLab] Failed to load models:", e);
-          modelSelect.innerHTML = '<option value="hansung_ppe_violations.pt">hansung_ppe_violations.pt</option>';
-          window.vlabLoadModelClasses("hansung_ppe_violations.pt");
+          modelSelect.innerHTML = '<option value="vehicles.pt">vehicles.pt</option>';
+          window.vlabLoadModelClasses("vehicles.pt");
         });
     };
 
@@ -3436,6 +3449,19 @@
       .then(res => {
         if (res.status === "ok") {
           window.vlabUploadedFilename = res.raw_filename;
+          const fnameLower = (file.name || "").toLowerCase();
+          if (fnameLower.includes("speed") || fnameLower.includes("vehicle") || fnameLower.includes("car") || fnameLower.includes("traffic") || fnameLower.includes("road")) {
+            const modelSelect = document.getElementById("vlab-model-select");
+            if (modelSelect) {
+              for (let i = 0; i < modelSelect.options.length; i++) {
+                if (modelSelect.options[i].value.includes("vehicle")) {
+                  modelSelect.selectedIndex = i;
+                  window.vlabLoadModelClasses(modelSelect.value);
+                  break;
+                }
+              }
+            }
+          }
           if (uploadStatus) {
             uploadStatus.textContent = "Video Ready ✓";
             uploadStatus.style.color = "var(--accent)";
