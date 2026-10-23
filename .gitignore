@@ -38,6 +38,7 @@ env/
 
 # Model files (large binary, distribute separately)
 models/*.pt
+models_backup/
 !models/vehicles.pt
 !models/yolov8n.pt
 
