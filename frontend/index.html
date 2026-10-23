@@ -1287,7 +1287,7 @@
 
           <!-- Raw Video Player Preview -->
           <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;">
-            <video id="vlab-raw-video" controls playsinline style="width: 100%; height: 100%; object-fit: contain; display: none;"></video>
+            <video id="vlab-raw-video" controls playsinline muted autoplay loop style="width: 100%; height: 100%; object-fit: contain; display: none;"></video>
             <div id="vlab-raw-placeholder" style="color: var(--muted); font-size: 0.75rem; text-align: center; padding: 20px;">
               🎬 Raw video preview will appear here after selection
             </div>
@@ -3259,13 +3259,20 @@
       if (rawVideo) {
         const localUrl = URL.createObjectURL(file);
         rawVideo.src = localUrl;
+        rawVideo.muted = true;
+        rawVideo.loop = true;
         rawVideo.style.display = "block";
         if (rawPlaceholder) rawPlaceholder.style.display = "none";
         
         rawVideo.onloadedmetadata = () => {
           if (resLabel) resLabel.textContent = `${rawVideo.videoWidth}x${rawVideo.videoHeight}`;
           if (durLabel) durLabel.textContent = `${rawVideo.duration.toFixed(1)}s`;
+          try { rawVideo.currentTime = 0.05; } catch(e) {}
+          rawVideo.play().catch(err => {
+            console.log("[VLAB] Autoplay was prevented:", err);
+          });
         };
+        rawVideo.load();
       }
 
       if (uploadStatus) {

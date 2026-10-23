@@ -283,9 +283,38 @@ class SpeedDashboard {
     }
 
     async handleVideoFileUpload(file) {
+        if (!file) return;
         const nameSpan = document.getElementById("speed-upload-filename");
         if (nameSpan) nameSpan.textContent = `Uploading ${file.name}...`;
 
+        // 1. Immediately preview the video locally in the speed video player (Zero Black Screen!)
+        const video = document.getElementById("speed-video-player");
+        const loader = document.getElementById("speed-video-loader");
+        if (loader) loader.style.display = "none";
+
+        if (video) {
+            if (this.hlsPlayer) {
+                this.hlsPlayer.destroy();
+                this.hlsPlayer = null;
+            }
+            if (this.hlsRetryTimer) {
+                clearTimeout(this.hlsRetryTimer);
+                this.hlsRetryTimer = null;
+            }
+            const blobUrl = URL.createObjectURL(file);
+            video.src = blobUrl;
+            video.muted = true;
+            video.loop = true;
+            video.onloadedmetadata = () => {
+                try { video.currentTime = 0.05; } catch (e) {}
+                this.renderCanvas();
+            };
+            video.play().catch(e => {
+                console.log("[SPEED-PREVIEW] Video play error:", e);
+            });
+        }
+
+        // 2. Upload file to server in background
         try {
             const res = await fetch(`/api/speed/upload?filename=${encodeURIComponent(file.name)}`, {
                 method: "POST",
@@ -662,6 +691,13 @@ class SpeedDashboard {
         }
 
         try {
+            const loader = document.getElementById("speed-video-loader");
+            if (loader) {
+                loader.style.display = "flex";
+                const loaderTxt = loader.querySelector("span");
+                if (loaderTxt) loaderTxt.textContent = "⚡ Connecting to RTSP Stream (Buffering)...";
+            }
+
             if (statusSpan) {
                 statusSpan.textContent = "💾 Saving & Connecting stream...";
                 statusSpan.style.color = "#38bdf8";
@@ -679,6 +715,7 @@ class SpeedDashboard {
                 }
                 this.attachHlsStream(true, 1);
             } else {
+                if (loader) loader.style.display = "none";
                 if (statusSpan) {
                     statusSpan.textContent = data.message || "Failed to connect stream";
                     statusSpan.style.color = "#ff4444";
@@ -686,6 +723,8 @@ class SpeedDashboard {
             }
         } catch (e) {
             console.error("[SPEED-DASH] Save & Connect failed:", e);
+            const loader = document.getElementById("speed-video-loader");
+            if (loader) loader.style.display = "none";
         }
     }
 
