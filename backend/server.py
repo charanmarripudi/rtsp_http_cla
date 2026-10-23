@@ -4060,13 +4060,13 @@ try:
             try:
                 with open(PTZ_CAMERAS_USER_FILE, "r") as f:
                     data = json.load(f)
-                    if isinstance(data, list): return data
+                    if isinstance(data, list) and len(data) > 0: return data
             except: pass
         if os.path.exists(PTZ_CAMERAS_FILE):
             try:
                 with open(PTZ_CAMERAS_FILE, "r") as f:
                     data = json.load(f)
-                    if isinstance(data, list): return data
+                    if isinstance(data, list) and len(data) > 0: return data
             except: pass
         return []
 
