@@ -304,14 +304,17 @@ class SpeedDashboard {
             const blobUrl = URL.createObjectURL(file);
             video.src = blobUrl;
             video.muted = true;
+            video.playsInline = true;
+            video.autoplay = true;
             video.loop = true;
-            video.onloadedmetadata = () => {
-                try { video.currentTime = 0.05; } catch (e) {}
+            
+            const onReady = () => {
                 this.renderCanvas();
+                video.play().catch(() => {});
             };
-            video.play().catch(e => {
-                console.log("[SPEED-PREVIEW] Video play error:", e);
-            });
+            video.onloadeddata = onReady;
+            video.oncanplay = onReady;
+            video.onloadedmetadata = onReady;
         }
 
         // 2. Upload file to server in background
@@ -323,6 +326,9 @@ class SpeedDashboard {
             const data = await res.json();
             if (res.ok && data.filepath) {
                 this.uploadedVideoPath = data.filepath;
+                if (data.thumbnail_url && video) {
+                    video.poster = data.thumbnail_url;
+                }
                 if (nameSpan) {
                     nameSpan.textContent = `✓ ${file.name} (Ready)`;
                     nameSpan.style.color = "#00ffaa";

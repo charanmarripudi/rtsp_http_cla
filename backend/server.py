@@ -1362,14 +1362,89 @@ async def upload_test_video(request: Request, filename: Optional[str] = Query(de
             f.write(file_bytes)
                 
         file_size = os.path.getsize(save_path)
+        
+        # Extract thumbnail and video metadata using OpenCV (ensures 0 black screen)
+        thumb_name = f"{os.path.splitext(safe_name)[0]}_thumb.jpg"
+        thumb_path = os.path.join(raw_storage, thumb_name)
+        width, height, fps, duration = 0, 0, 25.0, 0.0
+        try:
+            cap = cv2.VideoCapture(save_path)
+            if cap.isOpened():
+                fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                duration = total_frames / fps if fps > 0 else 0.0
+                ret_f, first_frame = cap.read()
+                if ret_f and first_frame is not None:
+                    cv2.imwrite(thumb_path, first_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+            cap.release()
+        except Exception as e_thumb:
+            print(f"[WARN] Failed to generate thumbnail for {safe_name}: {e_thumb}")
+
         return {
             "status": "ok",
             "raw_filename": safe_name,
             "original_filename": orig_filename,
             "file_size": file_size,
+            "width": width,
+            "height": height,
+            "fps": round(fps, 1),
+            "duration_sec": round(duration, 1),
+            "thumbnail_url": f"/api/video-test/thumbnail/{safe_name}",
+            "raw_url": f"/api/video-test/raw-file/{safe_name}"
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
+@app.get("/api/video-test/raw-file/{filename}")
+def get_video_test_raw_file(filename: str):
+    raw_storage = str(RAW_DIR) if 'RAW_DIR' in globals() else os.path.join(BASE_DIR, "test_videos", "raw")
+    file_path = os.path.join(raw_storage, filename)
+    if not os.path.exists(file_path):
+        alt_path = os.path.join(BASE_DIR, "backend", "test_videos", "raw", filename)
+        if os.path.exists(alt_path):
+            file_path = alt_path
+        else:
+            return JSONResponse(status_code=404, content={"status": "error", "message": "Raw video file not found"})
+    
+    media_type = "video/mp4"
+    if filename.endswith(".webm"): media_type = "video/webm"
+    elif filename.endswith(".avi"): media_type = "video/x-msvideo"
+    elif filename.endswith(".mov"): media_type = "video/quicktime"
+    
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        filename=filename,
+        headers={"Accept-Ranges": "bytes"}
+    )
+
+@app.get("/api/video-test/thumbnail/{filename}")
+def get_video_test_thumbnail(filename: str):
+    raw_storage = str(RAW_DIR) if 'RAW_DIR' in globals() else os.path.join(BASE_DIR, "test_videos", "raw")
+    base_stem = os.path.splitext(filename)[0]
+    thumb_path = os.path.join(raw_storage, f"{base_stem}_thumb.jpg")
+    
+    if not os.path.exists(thumb_path):
+        vid_path = os.path.join(raw_storage, filename)
+        if not os.path.exists(vid_path):
+            alt_path = os.path.join(BASE_DIR, "backend", "test_videos", "raw", filename)
+            if os.path.exists(alt_path):
+                vid_path = alt_path
+        if os.path.exists(vid_path):
+            try:
+                cap = cv2.VideoCapture(vid_path)
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None:
+                    cv2.imwrite(thumb_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+            except Exception as e:
+                print(f"[WARN] Dynamic thumbnail failed for {filename}: {e}")
+                
+    if os.path.exists(thumb_path):
+        return FileResponse(thumb_path, media_type="image/jpeg", filename=f"{base_stem}_thumb.jpg")
+    return JSONResponse(status_code=404, content={"status": "error", "message": "Thumbnail not found"})
 
 @app.post("/api/video-test/process")
 def process_test_video(req: VideoProcessRequest):
@@ -2489,11 +2564,62 @@ async def upload_speed_video(request: Request):
                 raw_data = raw_data[:last_boundary]
             with open(dest_path, "wb") as buffer:
                 buffer.write(raw_data)
-            return {"status": "ok", "filename": clean_name, "filepath": dest_path}
+        else:
+            with open(dest_path, "wb") as buffer:
+                buffer.write(body)
 
-    with open(dest_path, "wb") as buffer:
-        buffer.write(body)
-    return {"status": "ok", "filename": clean_name, "filepath": dest_path}
+    # Generate OpenCV thumbnail for zero-black-screen display
+    base_file = os.path.basename(dest_path)
+    stem = os.path.splitext(base_file)[0]
+    thumb_path = os.path.join(upload_dir, f"{stem}_thumb.jpg")
+    try:
+        cap = cv2.VideoCapture(dest_path)
+        ret, frame = cap.read()
+        cap.release()
+        if ret and frame is not None:
+            cv2.imwrite(thumb_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "filename": clean_name,
+        "filepath": dest_path,
+        "thumbnail_url": f"/api/speed/thumbnail/{base_file}",
+        "raw_url": f"/api/speed/raw-file/{base_file}"
+    }
+
+@app.get("/api/speed/thumbnail/{filename}")
+def get_speed_thumbnail(filename: str):
+    upload_dir = os.path.join(BASE_DIR, "uploads")
+    stem = os.path.splitext(filename)[0]
+    thumb_path = os.path.join(upload_dir, f"{stem}_thumb.jpg")
+    if not os.path.exists(thumb_path):
+        vid_path = os.path.join(upload_dir, filename)
+        if os.path.exists(vid_path):
+            try:
+                cap = cv2.VideoCapture(vid_path)
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None:
+                    cv2.imwrite(thumb_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+            except Exception:
+                pass
+    if os.path.exists(thumb_path):
+        return FileResponse(thumb_path, media_type="image/jpeg", filename=f"{stem}_thumb.jpg")
+    return JSONResponse(status_code=404, content={"status": "error", "message": "Thumbnail not found"})
+
+@app.get("/api/speed/raw-file/{filename}")
+def get_speed_raw_file(filename: str):
+    upload_dir = os.path.join(BASE_DIR, "uploads")
+    file_path = os.path.join(upload_dir, filename)
+    if not os.path.exists(file_path):
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Video file not found"})
+    media_type = "video/mp4"
+    if filename.endswith(".webm"): media_type = "video/webm"
+    elif filename.endswith(".avi"): media_type = "video/x-msvideo"
+    elif filename.endswith(".mov"): media_type = "video/quicktime"
+    return FileResponse(file_path, media_type=media_type, filename=filename, headers={"Accept-Ranges": "bytes"})
 
 @app.post("/api/speed/preview")
 def preview_speed_camera(d: dict = Body(...)):
