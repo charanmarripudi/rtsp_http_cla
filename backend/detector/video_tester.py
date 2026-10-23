@@ -191,7 +191,7 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 def resolve_model_path(model_name: str) -> str:
     """Resolve model file path across models directory or project root."""
-    if not model_name:
+    if not model_name or str(model_name).lower() in ("none", "raw", "preview", ""):
         return ""
     if os.path.isabs(model_name) and os.path.exists(model_name):
         return model_name
@@ -210,9 +210,11 @@ def resolve_model_path(model_name: str) -> str:
 
 
 def resolve_raw_path(raw_filename: str) -> str:
-    """Resolve raw uploaded video path across candidate storage directories."""
+    """Resolve raw uploaded video path across candidate storage directories or return RTSP URL directly."""
     if not raw_filename:
         return ""
+    if raw_filename.startswith("rtsp://") or raw_filename.startswith("rtsps://") or raw_filename.startswith("http://") or raw_filename.startswith("https://"):
+        return raw_filename
     if os.path.isabs(raw_filename) and os.path.exists(raw_filename):
         return raw_filename
     basename = os.path.basename(raw_filename)
@@ -302,15 +304,6 @@ class LiveVideoTestStreamer:
             return self.current_jpeg_bytes
 
     def _run_loop(self):
-        try:
-            self.model = get_yolo_model(self.model_path)
-            if self.model is None:
-                logger.warning(f"LiveStreamer: Model returned None for path {self.model_path}")
-            else:
-                logger.info(f"LiveStreamer: Successfully loaded model {self.model_name} from {self.model_path}")
-        except Exception as e:
-            logger.error(f"Failed to load model on live start: {e}")
-
         cap = cv2.VideoCapture(self.raw_path)
         if not cap.isOpened():
             alt_path = resolve_raw_path(self.raw_filename)
@@ -319,9 +312,13 @@ class LiveVideoTestStreamer:
                 cap = cv2.VideoCapture(self.raw_path)
 
         if not cap.isOpened():
-            logger.error(f"Cannot open video for streaming: {self.raw_path}")
+            logger.error(f"Cannot open video or RTSP stream for streaming: {self.raw_path}")
             self.running = False
             return
+
+        is_rtsp = self.raw_path.startswith("rtsp://") or self.raw_path.startswith("rtsps://") or self.raw_path.startswith("http://") or self.raw_path.startswith("https://")
+        if is_rtsp:
+            self.loop = False
 
         native_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         if native_fps <= 0 or math.isnan(native_fps) or native_fps > 120:
@@ -329,6 +326,24 @@ class LiveVideoTestStreamer:
         self.fps = native_fps
         target_frame_time = 1.0 / native_fps
         frame_idx = 0
+
+        # Publish initial raw frame IMMEDIATELY so stream never starts on black screen
+        ret, initial_frame = cap.read()
+        if ret and initial_frame is not None:
+            ret_j, jpeg = cv2.imencode('.jpg', initial_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+            if ret_j:
+                with self.lock:
+                    self.current_jpeg_bytes = jpeg.tobytes()
+
+        if self.model_path:
+            try:
+                self.model = get_yolo_model(self.model_path)
+                if self.model is None:
+                    logger.warning(f"LiveStreamer: Model returned None for path {self.model_path}")
+                else:
+                    logger.info(f"LiveStreamer: Successfully loaded model {self.model_name} from {self.model_path}")
+            except Exception as e:
+                logger.error(f"Failed to load model on live start: {e}")
 
         logger.info(f"LiveStreamer: Started streaming {self.raw_filename} at native {native_fps:.1f} FPS (pace: {target_frame_time*1000:.1f}ms/frame)")
 
@@ -341,13 +356,16 @@ class LiveVideoTestStreamer:
 
             ret, frame = cap.read()
             if not ret or frame is None:
-                if self.loop:
+                if self.loop and not is_rtsp:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     frame_idx = 0
                     ret, frame = cap.read()
                     if not ret or frame is None:
                         time.sleep(0.05)
                         continue
+                elif is_rtsp:
+                    time.sleep(0.02)
+                    continue
                 else:
                     break
 

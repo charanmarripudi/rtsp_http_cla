@@ -1507,8 +1507,9 @@ def delete_video_test_job(job_id: str):
 # REAL-TIME LIVE VIDEO DETECTION STREAMING ENDPOINTS
 # ---------------------------------------------------------
 class LiveStreamStartRequest(BaseModel):
-    raw_filename: str
-    model_name: str
+    raw_filename: Optional[str] = None
+    rtsp_url: Optional[str] = None
+    model_name: Optional[str] = "none"
     conf: Optional[float] = 0.35
     iou: Optional[float] = 0.45
     imgsz: Optional[int] = 640
@@ -1528,10 +1529,13 @@ class LiveStreamParamsRequest(BaseModel):
 @app.post("/api/video-test/live-start")
 def start_live_video_stream(req: LiveStreamStartRequest):
     try:
+        source_target = req.rtsp_url or req.raw_filename
+        if not source_target:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "No video file or RTSP stream specified"})
         session_id = req.session_id or "default"
         streamer = get_or_create_live_streamer(
             session_id=session_id,
-            raw_filename=req.raw_filename,
+            raw_filename=source_target,
             model_name=req.model_name,
             conf=req.conf or 0.35,
             iou=req.iou or 0.45,

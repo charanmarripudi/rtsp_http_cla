@@ -1251,165 +1251,193 @@
         </div>
       </div>
 
-      <!-- Main 2-Column Lab Grid -->
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;" class="vlab-grid-responsive">
+      <!-- Main Lab Grid: Top Controls Row (Source Setup on Left, AI Parameters on Right) -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px;" class="vlab-grid-responsive">
         
-        <!-- Left Column: Video Upload & Preview -->
-        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 16px;">
-          <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center;">
-            <h3 style="font-size: 0.88rem; font-weight: 600;">1. Select & Upload Video</h3>
-            <span id="vlab-upload-status" style="font-size: 0.72rem; color: var(--muted);">Ready for upload</span>
+        <!-- Left Box: Source Selector (RTSP or Video Upload) - EXACTLY LIKE VEHICLE SPEED TAB! -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 12px;">
+          
+          <!-- Source Type Selector Pills -->
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; gap: 6px;">
+              <button type="button" id="vlab-src-tab-video" onclick="vlabSetSourceType('video')" class="btn-secondary" style="padding: 6px 14px; font-size: 0.76rem; font-weight: 600; border-radius: 6px; background: rgba(0,229,160,0.15); border-color: var(--accent); color: var(--accent); cursor: pointer;">
+                📁 Upload / Video File
+              </button>
+              <button type="button" id="vlab-src-tab-rtsp" onclick="vlabSetSourceType('rtsp')" class="btn-secondary" style="padding: 6px 14px; font-size: 0.76rem; font-weight: 600; border-radius: 6px; color: var(--muted); border-color: var(--border); background: transparent; cursor: pointer;">
+                🌐 Custom RTSP URL
+              </button>
+            </div>
+            <span id="vlab-source-status" style="font-size: 0.72rem; color: var(--muted); font-family: var(--mono);">Ready</span>
           </div>
 
-          <!-- Dropzone -->
-          <div id="vlab-dropzone" onclick="document.getElementById('vlab-file-input').click()" style="border: 2px dashed var(--border); border-radius: 10px; padding: 32px 16px; text-align: center; cursor: pointer; transition: all 0.25s ease; background: rgba(0,0,0,0.15);">
-            <div style="font-size: 2.2rem; margin-bottom: 8px;">📁</div>
-            <div style="font-size: 0.82rem; font-weight: 600; color: var(--text); margin-bottom: 4px;">
-              Click to browse or Drag & Drop video file here
+          <!-- Video File Source Container -->
+          <div id="vlab-src-container-video" style="display: flex; flex-direction: column; gap: 10px;">
+            <div id="vlab-dropzone" onclick="document.getElementById('vlab-file-input').click()" style="border: 2px dashed var(--border); border-radius: 8px; padding: 22px 14px; text-align: center; cursor: pointer; transition: all 0.25s ease; background: rgba(0,0,0,0.15);">
+              <div style="font-size: 2rem; margin-bottom: 6px;">📁</div>
+              <div style="font-size: 0.82rem; font-weight: 600; color: var(--text); margin-bottom: 2px;">
+                Click to browse or Drag & Drop Video File
+              </div>
+              <div style="font-size: 0.70rem; color: var(--muted);">
+                Supports .mp4, .mov, .avi, .mkv, .webm (Shows video immediately in player below!)
+              </div>
+              <input type="file" id="vlab-file-input" accept="video/*" style="display: none;" onchange="vlabHandleFileInput(this)">
             </div>
-            <div style="font-size: 0.70rem; color: var(--muted);">
-              Supports .mp4, .mov, .avi, .mkv, .webm (Up to 250 MB)
+
+            <!-- Upload Details Badge -->
+            <div id="vlab-file-details" style="display: none; background: rgba(0, 229, 160, 0.05); border: 1px solid rgba(0, 229, 160, 0.2); border-radius: 6px; padding: 8px 12px; font-size: 0.72rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                <span style="font-weight: 600; color: var(--accent);" id="vlab-filename-label">video.mp4</span>
+                <span style="color: var(--muted);" id="vlab-filesize-label">-</span>
+              </div>
+              <div style="display: flex; gap: 12px; color: var(--muted); font-size: 0.68rem;">
+                <span>Resolution: <strong id="vlab-resolution-label" style="color:var(--text);">-</strong></span>
+                <span>Duration: <strong id="vlab-duration-label" style="color:var(--text);">-</strong></span>
+              </div>
             </div>
-            <input type="file" id="vlab-file-input" accept="video/*" style="display: none;" onchange="vlabHandleFileInput(this)">
           </div>
 
-          <!-- Uploaded Video Details Banner -->
-          <div id="vlab-file-details" style="display: none; background: rgba(0, 229, 160, 0.05); border: 1px solid rgba(0, 229, 160, 0.2); border-radius: 8px; padding: 10px 14px; font-size: 0.74rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <span style="font-weight: 600; color: var(--accent);" id="vlab-filename-label">video.mp4</span>
-              <span style="color: var(--muted);" id="vlab-filesize-label">12.4 MB</span>
+          <!-- RTSP Source Container -->
+          <div id="vlab-src-container-rtsp" style="display: none; flex-direction: column; gap: 10px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; padding: 12px;">
+            <label style="font-size: 0.72rem; color: var(--muted); font-weight: 600;">Custom RTSP Stream URL:</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="vlab-rtsp-input" placeholder="rtsp://192.168.96.72:8554/live" style="flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 10px; font-size: 0.78rem; border-radius: 6px; outline: none; font-family: var(--mono);">
+              <button type="button" onclick="vlabConnectRtsp()" class="btn-primary" style="padding: 8px 14px; font-size: 0.75rem; font-weight: 700; background: #38bdf8; color: #000; border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap;">
+                <span>▶</span> Preview Stream
+              </button>
             </div>
-            <div style="display: flex; gap: 12px; color: var(--muted); font-size: 0.70rem;">
-              <span>Resolution: <strong id="vlab-resolution-label" style="color:var(--text);">-</strong></span>
-              <span>Duration: <strong id="vlab-duration-label" style="color:var(--text);">-</strong></span>
+            <div style="font-size: 0.68rem; color: var(--muted);">
+              Direct real-time RTSP connection to CCTV, IP camera, or test stream.
             </div>
           </div>
 
-          <!-- Raw Video Player Preview -->
-          <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;">
-            <video id="vlab-raw-video" controls playsinline muted autoplay loop style="width: 100%; height: 100%; object-fit: contain; display: none;"></video>
-            <img id="vlab-raw-poster" style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; top: 0; left: 0; z-index: 2;" alt="Video First Frame">
-            <div id="vlab-raw-placeholder" style="color: var(--muted); font-size: 0.75rem; text-align: center; padding: 20px;">
-              🎬 Raw video preview will appear here after selection
-            </div>
-          </div>
         </div>
 
-        <!-- Right Column: Model Selection & AI Threshold Tuning -->
-        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 16px;">
+        <!-- Right Box: YOLO Model Selection & Detection Tuning -->
+        <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 10px;">
           <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center;">
-            <h3 style="font-size: 0.88rem; font-weight: 600;">2. AI Model & Detection Parameters</h3>
-            <span style="font-size: 0.72rem; color: var(--accent);">YOLO Edge Engine</span>
+            <h3 style="font-size: 0.85rem; font-weight: 600;">AI Model & Detection Tuning</h3>
+            <span style="font-size: 0.68rem; color: var(--accent);">YOLO Edge Engine</span>
           </div>
 
-          <!-- Model Selector -->
+          <!-- Model Dropdown -->
           <div>
-            <label style="font-size: 0.72rem; color: var(--muted); display: block; margin-bottom: 6px;">SELECT YOLO MODEL WEIGHTS:</label>
-            <select id="vlab-model-select" onchange="vlabLoadModelClasses(this.value)" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; font-size: 0.80rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono);">
+            <label style="font-size: 0.70rem; color: var(--muted); display: block; margin-bottom: 4px;">SELECT YOLO MODEL WEIGHTS:</label>
+            <select id="vlab-model-select" onchange="vlabLoadModelClasses(this.value)" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 7px 10px; font-size: 0.78rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono);">
               <option value="">Loading available models...</option>
             </select>
           </div>
 
           <!-- Class Selection Pills -->
           <div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-              <label style="font-size: 0.72rem; color: var(--muted);">ENABLED DETECTION CLASSES:</label>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <label style="font-size: 0.68rem; color: var(--muted);">ENABLED DETECTION CLASSES:</label>
               <div style="display: flex; gap: 6px;">
-                <button type="button" id="vlab-select-all-classes" onclick="document.querySelectorAll('#vlab-classes-container input[type=checkbox]').forEach(cb => cb.checked = true)" class="btn-secondary" style="padding: 2px 8px; font-size: 0.65rem;">All</button>
-                <button type="button" id="vlab-deselect-all-classes" onclick="document.querySelectorAll('#vlab-classes-container input[type=checkbox]').forEach(cb => cb.checked = false)" class="btn-secondary" style="padding: 2px 8px; font-size: 0.65rem;">None</button>
+                <button type="button" id="vlab-select-all-classes" onclick="document.querySelectorAll('#vlab-classes-container input[type=checkbox]').forEach(cb => cb.checked = true); if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();" class="btn-secondary" style="padding: 2px 7px; font-size: 0.62rem;">All</button>
+                <button type="button" id="vlab-deselect-all-classes" onclick="document.querySelectorAll('#vlab-classes-container input[type=checkbox]').forEach(cb => cb.checked = false); if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();" class="btn-secondary" style="padding: 2px 7px; font-size: 0.62rem;">None</button>
               </div>
             </div>
-            <div id="vlab-classes-container" style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 120px; overflow-y: auto; padding: 8px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px;">
-              <span style="font-size: 0.70rem; color: var(--muted);">Select a model to view classes...</span>
+            <div id="vlab-classes-container" style="display: flex; flex-wrap: wrap; gap: 5px; max-height: 65px; overflow-y: auto; padding: 6px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px;">
+              <span style="font-size: 0.68rem; color: var(--muted);">Select a model to view classes...</span>
             </div>
           </div>
 
-          <!-- Sliders: Confidence & IoU -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
-            <div style="background: rgba(0,0,0,0.2); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border);">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <label style="font-size: 0.70rem; color: var(--muted);">CONFIDENCE (Conf):</label>
-                <strong id="vlab-conf-val" style="color: var(--accent); font-size: 0.75rem;">0.35</strong>
+          <!-- Sliders: Conf & IoU -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div style="background: rgba(0,0,0,0.2); padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                <label style="font-size: 0.66rem; color: var(--muted);">CONFIDENCE:</label>
+                <strong id="vlab-conf-val" style="color: var(--accent); font-size: 0.72rem;">0.35</strong>
               </div>
-              <input type="range" id="vlab-conf-slider" min="0.05" max="0.95" step="0.01" value="0.35" oninput="document.getElementById('vlab-conf-val').innerText = parseFloat(this.value).toFixed(2)" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
+              <input type="range" id="vlab-conf-slider" min="0.05" max="0.95" step="0.01" value="0.35" oninput="document.getElementById('vlab-conf-val').innerText = parseFloat(this.value).toFixed(2); if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
             </div>
 
-            <div style="background: rgba(0,0,0,0.2); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border);">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <label style="font-size: 0.70rem; color: var(--muted);">IoU NMS THRESHOLD:</label>
-                <strong id="vlab-iou-val" style="color: var(--accent); font-size: 0.75rem;">0.45</strong>
+            <div style="background: rgba(0,0,0,0.2); padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                <label style="font-size: 0.66rem; color: var(--muted);">IoU NMS:</label>
+                <strong id="vlab-iou-val" style="color: var(--accent); font-size: 0.72rem;">0.45</strong>
               </div>
-              <input type="range" id="vlab-iou-slider" min="0.10" max="0.90" step="0.01" value="0.45" oninput="document.getElementById('vlab-iou-val').innerText = parseFloat(this.value).toFixed(2)" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
+              <input type="range" id="vlab-iou-slider" min="0.10" max="0.90" step="0.01" value="0.45" oninput="document.getElementById('vlab-iou-val').innerText = parseFloat(this.value).toFixed(2); if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
             </div>
           </div>
 
-          <!-- Resolution & Frame Skip Settings -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
-            <div>
-              <label style="font-size: 0.70rem; color: var(--muted); display: block; margin-bottom: 6px;">IMAGE RESOLUTION (imgsz):</label>
-              <div style="display: flex; gap: 4px;" id="vlab-imgsz-buttons">
-                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="320" onclick="vlabSetImgsz(320, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;" title="Ultra Fast (~300ms)">320</button>
-                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="416" onclick="vlabSetImgsz(416, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;" title="Fast (~600ms)">416</button>
-                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="480" onclick="vlabSetImgsz(480, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;">480</button>
-                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="512" onclick="vlabSetImgsz(512, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem;">512</button>
-                <button type="button" class="btn-secondary vlab-imgsz-btn active" data-sz="640" onclick="vlabSetImgsz(640, this)" style="flex: 1; padding: 6px 4px; font-size: 0.68rem; background: var(--accent-dim); border-color: var(--accent); color: var(--accent);" title="High Accuracy (~1.5s)">640</button>
+          <!-- Resolution & Frame Step -->
+          <div style="display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 10px; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <label style="font-size: 0.66rem; color: var(--muted); white-space: nowrap;">imgsz:</label>
+              <div style="display: flex; gap: 3px; flex: 1;" id="vlab-imgsz-buttons">
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="320" onclick="vlabSetImgsz(320, this)" style="flex: 1; padding: 4px 2px; font-size: 0.65rem;" title="Ultra Fast (~300ms)">320</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="416" onclick="vlabSetImgsz(416, this)" style="flex: 1; padding: 4px 2px; font-size: 0.65rem;" title="Fast (~600ms)">416</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn" data-sz="480" onclick="vlabSetImgsz(480, this)" style="flex: 1; padding: 4px 2px; font-size: 0.65rem;">480</button>
+                <button type="button" class="btn-secondary vlab-imgsz-btn active" data-sz="640" onclick="vlabSetImgsz(640, this)" style="flex: 1; padding: 4px 2px; font-size: 0.65rem; background: var(--accent-dim); border-color: var(--accent); color: var(--accent);" title="High Accuracy">640</button>
               </div>
             </div>
-
             <div>
-              <label style="font-size: 0.70rem; color: var(--muted); display: block; margin-bottom: 6px;">SPEED / FRAME PROCESSING:</label>
-              <select id="vlab-frameskip-select" onchange="if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; font-size: 0.75rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono);">
-                <option value="1">1:1 Exact Sync (Every Frame)</option>
-                <option value="2">2× Fast Step (Every 2nd Frame)</option>
-                <option value="4">4× Fast Step (Every 4th Frame)</option>
+              <select id="vlab-frameskip-select" onchange="if (window.vlabLiveStreamingActive) window.vlabPushLiveParams();" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; font-size: 0.70rem; border-radius: 6px; outline: none; cursor: pointer; font-family: var(--mono);">
+                <option value="1">1:1 Exact Frame Sync</option>
+                <option value="2">2× Fast Step (Skip 1)</option>
+                <option value="4">4× Fast Step (Skip 3)</option>
               </select>
             </div>
           </div>
 
-          <!-- Action Buttons: Live Stream vs Batch Export -->
-          <div style="margin-top: auto; padding-top: 8px; display: flex; flex-direction: column; gap: 8px;">
-            <button id="vlab-live-btn" onclick="vlabStartLiveStream()" class="btn-primary" style="width: 100%; padding: 12px; font-size: 0.88rem; font-weight: 700; background: var(--accent); color: #000; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; box-shadow: 0 0 15px rgba(0,229,160,0.3);">
-              <span>⚡</span> Start Live AI Stream (Instant Real-Time)
-            </button>
-            <button id="vlab-batch-btn" onclick="vlabStartDetectionJob()" class="btn-secondary" style="width: 100%; padding: 8px; font-size: 0.75rem; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
-              <span>📦</span> Export Full MP4 Video (Offline Batch Render)
-            </button>
-          </div>
         </div>
-
       </div>
 
-      <!-- Live Stream Player Section (Instant Real-Time MJPEG) -->
-      <div id="vlab-live-card" class="widget-card" style="display: none; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 20px; flex-direction: column; gap: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);">
-        <div class="widget-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 1.5s infinite;"></span>
-            <h3 style="font-size: 0.95rem; font-weight: 700; color: var(--accent);">📺 Live AI Video Detection Stream</h3>
-            <span id="vlab-live-badge" style="font-size: 0.70rem; background: rgba(0,229,160,0.15); color: var(--accent); padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(0,229,160,0.3); font-family: var(--mono);">LIVE FEED</span>
+      <!-- THE UNIFIED VIDEO WINDOW ("in the down of window") - EXACTLY AS IN VEHICLE SPEED TAB! -->
+      <div class="widget-card" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px;">
+        
+        <!-- Header with Status -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span id="vlab-stage-indicator" style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--muted);"></span>
+            <h3 style="font-size: 0.90rem; font-weight: 700; color: var(--text);">📺 Video Player & AI Detection Display</h3>
+            <span id="vlab-stage-badge" style="font-size: 0.68rem; background: rgba(255,255,255,0.06); color: var(--muted); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border); font-family: var(--mono);">NO SOURCE LOADED</span>
           </div>
-          <div style="display: flex; gap: 8px;">
-            <button onclick="vlabStartLiveStream()" class="btn-secondary" style="padding: 5px 12px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
-              <span>🔄</span> Restart
-            </button>
-            <button onclick="vlabStopLiveStream()" class="btn-secondary" style="color: var(--danger); border-color: rgba(255, 65, 85, 0.4); padding: 5px 12px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
-              <span>⏹️</span> Stop Stream
-            </button>
-          </div>
+          <span id="vlab-stage-msg" style="font-size: 0.72rem; color: var(--muted); font-family: var(--mono);">Upload a video or enter RTSP URL above to play immediately</span>
         </div>
 
-        <!-- Live MJPEG Stream Player -->
-        <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;">
-          <img id="vlab-live-player" src="" alt="Live AI Detection Stream" style="width: 100%; height: 100%; object-fit: contain; display: block;">
-          <div id="vlab-live-placeholder" style="display: none; color: var(--muted); font-size: 0.8rem; text-align: center;">
-            Stream stopped. Click "Start Live AI Stream" to resume.
+        <!-- Unified Player Box (Both Raw Video and AI Detection Stream Live in This Exact Box!) -->
+        <div id="vlab-stage-container" style="background: #000; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; position: relative; min-height: 400px; display: flex; align-items: center; justify-content: center;">
+          
+          <!-- 1. Native HTML5 Video for Instant Raw Video Playback (Zero Black Screen!) -->
+          <video id="vlab-raw-video" controls playsinline muted autoplay loop style="width: 100%; height: 100%; object-fit: contain; display: none; max-height: 540px;"></video>
+          
+          <!-- 2. MJPEG Stream Image for Real-Time AI Detection & RTSP Preview -->
+          <img id="vlab-live-player" src="" alt="Live AI Detection Stream" style="width: 100%; height: 100%; object-fit: contain; display: none; max-height: 540px;">
+
+          <!-- 3. Server Snapshot Poster (Backup for unplayable codecs) -->
+          <img id="vlab-raw-poster" style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; top: 0; left: 0; max-height: 540px;" alt="Video Poster">
+
+          <!-- 4. Sleek Loading Spinner Overlay -->
+          <div id="vlab-stage-loader" style="position: absolute; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: rgba(0,0,0,0.8); width: 100%; height: 100%; z-index: 10; backdrop-filter: blur(4px);">
+            <div style="width: 34px; height: 34px; border: 3px solid rgba(0,229,160,0.2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+            <span id="vlab-stage-loader-txt" style="font-size: 0.82rem; color: var(--accent); font-family: var(--mono); font-weight: 600;">⚡ Initializing Live Stream...</span>
           </div>
+
+          <!-- 5. Default Placeholder (Before any video or stream is loaded) -->
+          <div id="vlab-stage-placeholder" style="color: var(--muted); font-size: 0.82rem; text-align: center; padding: 40px 20px;">
+            <div style="font-size: 2.5rem; margin-bottom: 10px; opacity: 0.7;">🎬</div>
+            <strong style="color: var(--text);">No Video or Stream Loaded</strong>
+            <p style="font-size: 0.72rem; color: var(--muted); margin-top: 6px;">
+              Upload an MP4/AVI/MKV video or enter an RTSP URL above.<br>The video will appear and play here immediately!
+            </p>
+          </div>
+
         </div>
 
-        <!-- Real-Time Info Banner -->
-        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; font-size: 0.72rem; color: var(--muted);">
-          <div>💡 <strong>Interactive Tuning:</strong> Adjust sliders or toggle classes above to update detections instantaneously!</div>
-          <div id="vlab-live-status-txt" style="font-family: var(--mono); color: var(--accent);">Active</div>
+        <!-- Action Buttons Directly Below Video Stage -->
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <button id="vlab-live-btn" onclick="vlabStartLiveStream()" class="btn-primary" style="flex: 1; min-width: 200px; padding: 12px 20px; font-size: 0.88rem; font-weight: 700; background: var(--accent); color: #000; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 0 14px rgba(0,229,160,0.3); transition: all 0.2s;">
+            <span>⚡</span> Start Live AI Detection
+          </button>
+          <button id="vlab-stop-btn" onclick="vlabStopLiveStream()" class="btn-secondary" style="padding: 12px 20px; font-size: 0.85rem; color: var(--danger); border: 1px solid rgba(255, 65, 85, 0.4); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+            <span>⏹</span> Stop Stream
+          </button>
+          <button id="vlab-batch-btn" onclick="vlabStartDetectionJob()" class="btn-secondary" style="padding: 12px 18px; font-size: 0.82rem; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+            <span>📦</span> Export Full MP4 Video
+          </button>
         </div>
+
       </div>
 
       <!-- Processing Progress Section (Shown while offline batch running) -->
@@ -3235,6 +3263,95 @@
         });
     };
 
+    window.vlabSourceType = "video";
+    window.vlabUploadedFilename = null;
+    window.vlabLiveStreamingActive = false;
+
+    window.vlabSetSourceType = function(type) {
+      window.vlabSourceType = type;
+      const tabVideo = document.getElementById("vlab-src-tab-video");
+      const tabRtsp = document.getElementById("vlab-src-tab-rtsp");
+      const cVideo = document.getElementById("vlab-src-container-video");
+      const cRtsp = document.getElementById("vlab-src-container-rtsp");
+      const statusSpan = document.getElementById("vlab-source-status");
+      const rawVideo = document.getElementById("vlab-raw-video");
+      const livePlayer = document.getElementById("vlab-live-player");
+      const placeholder = document.getElementById("vlab-stage-placeholder");
+      const badge = document.getElementById("vlab-stage-badge");
+      const stageMsg = document.getElementById("vlab-stage-msg");
+      const indicator = document.getElementById("vlab-stage-indicator");
+
+      if (type === "video") {
+        if (tabVideo) {
+          tabVideo.style.background = "rgba(0,229,160,0.15)";
+          tabVideo.style.borderColor = "var(--accent)";
+          tabVideo.style.color = "var(--accent)";
+        }
+        if (tabRtsp) {
+          tabRtsp.style.background = "transparent";
+          tabRtsp.style.borderColor = "var(--border)";
+          tabRtsp.style.color = "var(--muted)";
+        }
+        if (cVideo) cVideo.style.display = "flex";
+        if (cRtsp) cRtsp.style.display = "none";
+        if (statusSpan) statusSpan.textContent = window.vlabUploadedFilename ? "Video Loaded" : "Ready";
+
+        // Restore raw video playback if a video was already loaded
+        if (rawVideo && rawVideo.src && !window.vlabLiveStreamingActive) {
+          rawVideo.style.display = "block";
+          if (livePlayer) livePlayer.style.display = "none";
+          if (placeholder) placeholder.style.display = "none";
+          rawVideo.play().catch(() => {});
+          if (badge) {
+            badge.textContent = "RAW VIDEO PLAYING";
+            badge.style.color = "var(--accent)";
+            badge.style.borderColor = "var(--accent)";
+          }
+          if (indicator) indicator.style.background = "var(--accent)";
+          if (stageMsg) stageMsg.textContent = "✓ Video playing in loop • Click Start Live AI Detection";
+        }
+      } else {
+        // RTSP Mode
+        if (tabVideo) {
+          tabVideo.style.background = "transparent";
+          tabVideo.style.borderColor = "var(--border)";
+          tabVideo.style.color = "var(--muted)";
+        }
+        if (tabRtsp) {
+          tabRtsp.style.background = "rgba(56,189,248,0.15)";
+          tabRtsp.style.borderColor = "#38bdf8";
+          tabRtsp.style.color = "#38bdf8";
+        }
+        if (cVideo) cVideo.style.display = "none";
+        if (cRtsp) cRtsp.style.display = "flex";
+        if (statusSpan) statusSpan.textContent = "RTSP Mode";
+
+        if (!window.vlabLiveStreamingActive) {
+          if (rawVideo) {
+            rawVideo.pause();
+            rawVideo.style.display = "none";
+          }
+          if (placeholder) {
+            placeholder.style.display = "block";
+            placeholder.innerHTML = `
+              <div style="font-size: 2.5rem; margin-bottom: 10px; opacity: 0.8;">🌐</div>
+              <strong style="color: var(--text);">RTSP Stream Source Active</strong>
+              <p style="font-size: 0.72rem; color: var(--muted); margin-top: 6px;">
+                Enter camera RTSP URL above and click <strong>Preview Stream</strong> or <strong>Start Live AI Detection</strong> below!
+              </p>
+            `;
+          }
+          if (badge) {
+            badge.textContent = "RTSP READY";
+            badge.style.color = "#38bdf8";
+            badge.style.borderColor = "#38bdf8";
+          }
+          if (indicator) indicator.style.background = "#38bdf8";
+          if (stageMsg) stageMsg.textContent = "Enter RTSP URL above and click Preview Stream or Start";
+        }
+      }
+    };
+
     window.vlabHandleFileInput = function(inputEl) {
       if (inputEl && inputEl.files && inputEl.files.length > 0) {
         window.vlabProcessFile(inputEl.files[0]);
@@ -3250,49 +3367,62 @@
       const resLabel = document.getElementById("vlab-resolution-label");
       const durLabel = document.getElementById("vlab-duration-label");
       const rawVideo = document.getElementById("vlab-raw-video");
+      const livePlayer = document.getElementById("vlab-live-player");
       const rawPoster = document.getElementById("vlab-raw-poster");
-      const rawPlaceholder = document.getElementById("vlab-raw-placeholder");
-      const uploadStatus = document.getElementById("vlab-upload-status");
+      const placeholder = document.getElementById("vlab-stage-placeholder");
+      const loader = document.getElementById("vlab-stage-loader");
+      const uploadStatus = document.getElementById("vlab-source-status");
+      const badge = document.getElementById("vlab-stage-badge");
+      const stageMsg = document.getElementById("vlab-stage-msg");
+      const indicator = document.getElementById("vlab-stage-indicator");
 
       if (filenameLabel) filenameLabel.textContent = file.name;
       if (filesizeLabel) filesizeLabel.textContent = (file.size / (1024 * 1024)).toFixed(1) + " MB";
       if (detailsBox) detailsBox.style.display = "block";
       
+      // 1. IMMEDIATELY preview the video locally in the player stage (Zero Black Screen!)
       if (rawVideo) {
-        const localUrl = URL.createObjectURL(file);
-        rawVideo.src = localUrl;
+        if (window.vlabLiveStreamingActive) {
+          window.vlabStopLiveStream();
+        }
+        const blobUrl = URL.createObjectURL(file);
+        rawVideo.src = blobUrl;
         rawVideo.muted = true;
         rawVideo.playsInline = true;
         rawVideo.autoplay = true;
         rawVideo.loop = true;
         rawVideo.style.display = "block";
+        if (livePlayer) livePlayer.style.display = "none";
         if (rawPoster) rawPoster.style.display = "none";
-        if (rawPlaceholder) rawPlaceholder.style.display = "none";
+        if (placeholder) placeholder.style.display = "none";
+        if (loader) loader.style.display = "none";
         
         const onFrameReady = () => {
           if (resLabel && rawVideo.videoWidth) resLabel.textContent = `${rawVideo.videoWidth}x${rawVideo.videoHeight}`;
           if (durLabel && rawVideo.duration) durLabel.textContent = `${rawVideo.duration.toFixed(1)}s`;
-          rawVideo.play().catch(e => {
-            console.log("[VLAB] Autoplay paused, ready:", e);
-          });
+          rawVideo.play().catch(e => console.log("[VLAB] Autoplay catch:", e));
         };
 
         rawVideo.onloadeddata = onFrameReady;
         rawVideo.oncanplay = onFrameReady;
         rawVideo.onloadedmetadata = onFrameReady;
-
-        rawVideo.onerror = () => {
-          console.warn("[VLAB] Local HTML5 decoder unsupported for format. Server thumbnail will display.");
-        };
-
         rawVideo.load();
       }
 
+      if (badge) {
+        badge.textContent = "RAW VIDEO PLAYING";
+        badge.style.color = "var(--accent)";
+        badge.style.borderColor = "var(--accent)";
+      }
+      if (indicator) indicator.style.background = "var(--accent)";
+      if (stageMsg) stageMsg.textContent = "✓ Video playing immediately (Uploading to server...)";
+
       if (uploadStatus) {
-        uploadStatus.textContent = "Uploading video to server...";
+        uploadStatus.textContent = "Uploading video...";
         uploadStatus.style.color = "var(--accent)";
       }
       
+      // 2. Upload file to server in background
       fetch(`/api/video-test/upload?filename=${encodeURIComponent(file.name)}`, {
         method: "POST",
         headers: {
@@ -3306,8 +3436,11 @@
         if (res.status === "ok") {
           window.vlabUploadedFilename = res.raw_filename;
           if (uploadStatus) {
-            uploadStatus.textContent = "Video Ready for AI Detection ✓";
+            uploadStatus.textContent = "Video Ready ✓";
             uploadStatus.style.color = "var(--accent)";
+          }
+          if (stageMsg) {
+            stageMsg.textContent = "✓ Video Ready • Click 'Start Live AI Detection' below";
           }
           if (res.width && res.height && resLabel) {
             resLabel.textContent = `${res.width}x${res.height}`;
@@ -3315,27 +3448,19 @@
           if (res.duration_sec && durLabel) {
             durLabel.textContent = `${res.duration_sec}s`;
           }
-          if (res.thumbnail_url) {
-            if (rawVideo) rawVideo.poster = res.thumbnail_url;
-            if (rawPoster) {
-              rawPoster.src = res.thumbnail_url;
-              // If rawVideo has error or no decoded width, show thumbnail poster image
-              if (rawVideo && (rawVideo.error || !rawVideo.videoWidth)) {
-                rawPoster.style.display = "block";
-                rawVideo.style.display = "none";
-              }
-            }
+          if (res.thumbnail_url && rawVideo) {
+            rawVideo.poster = res.thumbnail_url;
           }
         } else {
           if (uploadStatus) {
-            uploadStatus.textContent = "Upload Error: " + (res.message || "Failed");
+            uploadStatus.textContent = "Upload Failed";
             uploadStatus.style.color = "var(--danger)";
           }
         }
       })
       .catch(err => {
         if (uploadStatus) {
-          uploadStatus.textContent = "Upload Failed: " + err.message;
+          uploadStatus.textContent = "Upload Error: " + err.message;
           uploadStatus.style.color = "var(--danger)";
         }
       });
@@ -3367,12 +3492,95 @@
     }, 500);
 
     // ==========================================
+    // 🌐 RTSP PREVIEW CONNECTION
+    // ==========================================
+    window.vlabConnectRtsp = function() {
+      const rtspInput = document.getElementById("vlab-rtsp-input");
+      const rtspUrl = rtspInput ? rtspInput.value.trim() : "";
+      if (!rtspUrl) {
+        alert("Please enter a valid RTSP stream URL first.");
+        return;
+      }
+
+      const loader = document.getElementById("vlab-stage-loader");
+      const loaderTxt = document.getElementById("vlab-stage-loader-txt");
+      const livePlayer = document.getElementById("vlab-live-player");
+      const rawVideo = document.getElementById("vlab-raw-video");
+      const placeholder = document.getElementById("vlab-stage-placeholder");
+      const badge = document.getElementById("vlab-stage-badge");
+      const stageMsg = document.getElementById("vlab-stage-msg");
+      const indicator = document.getElementById("vlab-stage-indicator");
+      const statusSpan = document.getElementById("vlab-source-status");
+
+      if (loader) {
+        loader.style.display = "flex";
+        if (loaderTxt) loaderTxt.textContent = "⚡ Connecting to RTSP Stream (Buffering)...";
+      }
+      if (stageMsg) stageMsg.textContent = "Connecting to " + rtspUrl + "...";
+
+      fetch("/api/video-test/live-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rtsp_url: rtspUrl,
+          model_name: "none",
+          session_id: "vlab_preview"
+        })
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.status === "ok") {
+          window.vlabLiveStreamingActive = true;
+          if (livePlayer) {
+            livePlayer.src = res.stream_url || `/api/video-test/live-stream?session_id=vlab_preview&t=${Date.now()}`;
+            livePlayer.onload = () => {
+              if (loader) loader.style.display = "none";
+              livePlayer.style.display = "block";
+              if (rawVideo) { rawVideo.pause(); rawVideo.style.display = "none"; }
+              if (placeholder) placeholder.style.display = "none";
+            };
+          }
+          if (badge) {
+            badge.textContent = "RTSP PREVIEW LIVE";
+            badge.style.color = "#38bdf8";
+            badge.style.borderColor = "#38bdf8";
+          }
+          if (indicator) indicator.style.background = "#38bdf8";
+          if (stageMsg) stageMsg.textContent = `● Live RTSP Connected (${rtspUrl}) • Select Model & Click Start`;
+          if (statusSpan) statusSpan.textContent = "RTSP Connected ✓";
+        } else {
+          if (loader) loader.style.display = "none";
+          alert("Could not connect to RTSP stream: " + (res.message || "Unknown error"));
+          if (stageMsg) stageMsg.textContent = "Connection failed";
+        }
+      })
+      .catch(err => {
+        if (loader) loader.style.display = "none";
+        alert("RTSP connection error: " + err.message);
+      });
+    };
+
+    // ==========================================
     // ⚡ INSTANT LIVE VIDEO DETECTION STREAMING
     // ==========================================
     window.vlabStartLiveStream = function() {
-      if (!window.vlabUploadedFilename) {
-        alert("Please select and upload a video file first.");
-        return;
+      let sourceTarget = null;
+      let isRtsp = false;
+
+      if (window.vlabSourceType === "rtsp") {
+        const rtspInput = document.getElementById("vlab-rtsp-input");
+        sourceTarget = rtspInput ? rtspInput.value.trim() : "";
+        isRtsp = true;
+        if (!sourceTarget) {
+          alert("Please enter a valid RTSP stream URL first.");
+          return;
+        }
+      } else {
+        if (!window.vlabUploadedFilename) {
+          alert("Please select and upload a video file first.");
+          return;
+        }
+        sourceTarget = window.vlabUploadedFilename;
       }
 
       const modelSelect = document.getElementById("vlab-model-select");
@@ -3392,28 +3600,41 @@
 
       const frameSkipSelect = document.getElementById("vlab-frameskip-select");
       const payload = {
-        raw_filename: window.vlabUploadedFilename,
         model_name: modelName,
-        conf: parseFloat(confSlider.value) || 0.35,
-        iou: parseFloat(iouSlider.value) || 0.45,
+        conf: parseFloat(confSlider ? confSlider.value : 0.35) || 0.35,
+        iou: parseFloat(iouSlider ? iouSlider.value : 0.45) || 0.45,
         imgsz: window.vlabSelectedImgsz || 640,
         enabled_classes: enabledClasses,
-        frame_step: parseInt(frameSkipSelect ? frameSkipSelect.value : 1) || 1
+        frame_step: parseInt(frameSkipSelect ? frameSkipSelect.value : 1) || 1,
+        session_id: "default"
       };
 
-      const liveCard = document.getElementById("vlab-live-card");
+      if (isRtsp) {
+        payload.rtsp_url = sourceTarget;
+      } else {
+        payload.raw_filename = sourceTarget;
+      }
+
+      const stageLoader = document.getElementById("vlab-stage-loader");
+      const stageLoaderTxt = document.getElementById("vlab-stage-loader-txt");
       const livePlayer = document.getElementById("vlab-live-player");
-      const livePlaceholder = document.getElementById("vlab-live-placeholder");
-      const liveStatusTxt = document.getElementById("vlab-live-status-txt");
+      const rawVideo = document.getElementById("vlab-raw-video");
+      const placeholder = document.getElementById("vlab-stage-placeholder");
+      const badge = document.getElementById("vlab-stage-badge");
+      const stageMsg = document.getElementById("vlab-stage-msg");
+      const indicator = document.getElementById("vlab-stage-indicator");
       const progressCard = document.getElementById("vlab-progress-card");
       const resultsCard = document.getElementById("vlab-results-card");
 
       if (progressCard) progressCard.style.display = "none";
       if (resultsCard) resultsCard.style.display = "none";
-      if (liveCard) liveCard.style.display = "flex";
-      if (livePlaceholder) livePlaceholder.style.display = "none";
-      if (livePlayer) livePlayer.style.display = "block";
-      if (liveStatusTxt) liveStatusTxt.textContent = "Connecting to Live YOLO Stream...";
+      
+      // Keep existing frame or video visible behind the loader overlay - Zero Black Screen!
+      if (stageLoader) {
+        stageLoader.style.display = "flex";
+        if (stageLoaderTxt) stageLoaderTxt.textContent = `⚡ Initializing AI Detections (${modelName})...`;
+      }
+      if (stageMsg) stageMsg.textContent = `Connecting to YOLO Engine (${modelName})...`;
 
       fetch("/api/video-test/live-start", {
         method: "POST",
@@ -3425,17 +3646,43 @@
         if (res.status === "ok") {
           window.vlabLiveStreamingActive = true;
           if (livePlayer) {
-            livePlayer.src = res.stream_url || `/api/video-test/live-stream?session_id=${encodeURIComponent(payload.session_id || 'default')}&t=${Date.now()}`;
+            const streamUrl = res.stream_url || `/api/video-test/live-stream?session_id=default&t=${Date.now()}`;
+            livePlayer.src = streamUrl;
+            
+            const onStreamActive = () => {
+              if (stageLoader) stageLoader.style.display = "none";
+              livePlayer.style.display = "block";
+              if (rawVideo) {
+                rawVideo.pause();
+                rawVideo.style.display = "none";
+              }
+              if (placeholder) placeholder.style.display = "none";
+            };
+
+            livePlayer.onload = onStreamActive;
+            setTimeout(onStreamActive, 1000); // Safety fallback
           }
-          if (liveStatusTxt) {
-            liveStatusTxt.textContent = `Streaming Active • ${modelName} (${payload.imgsz}px, Conf ${payload.conf})`;
+
+          if (badge) {
+            badge.textContent = "● LIVE AI DETECTIONS ACTIVE";
+            badge.style.color = "var(--accent)";
+            badge.style.borderColor = "var(--accent)";
+          }
+          if (indicator) {
+            indicator.style.background = "var(--accent)";
+            indicator.style.boxShadow = "0 0 8px var(--accent)";
+          }
+          if (stageMsg) {
+            stageMsg.textContent = `⚡ Live Stream: ${modelName} • imgsz ${payload.imgsz}px • Conf ${payload.conf.toFixed(2)}`;
           }
         } else {
+          if (stageLoader) stageLoader.style.display = "none";
           alert("Failed to start Live Video Stream: " + (res.message || "Unknown error"));
-          if (liveStatusTxt) liveStatusTxt.textContent = "Failed to start stream";
+          if (stageMsg) stageMsg.textContent = "Failed to start AI detection";
         }
       })
       .catch(err => {
+        if (stageLoader) stageLoader.style.display = "none";
         console.error("[VideoLab] Live stream start error:", err);
         alert("Live stream network error: " + err.message);
       });
@@ -3444,15 +3691,41 @@
     window.vlabStopLiveStream = function() {
       window.vlabLiveStreamingActive = false;
       const livePlayer = document.getElementById("vlab-live-player");
-      const livePlaceholder = document.getElementById("vlab-live-placeholder");
-      const liveStatusTxt = document.getElementById("vlab-live-status-txt");
+      const rawVideo = document.getElementById("vlab-raw-video");
+      const placeholder = document.getElementById("vlab-stage-placeholder");
+      const stageLoader = document.getElementById("vlab-stage-loader");
+      const badge = document.getElementById("vlab-stage-badge");
+      const stageMsg = document.getElementById("vlab-stage-msg");
+      const indicator = document.getElementById("vlab-stage-indicator");
+
+      if (stageLoader) stageLoader.style.display = "none";
 
       if (livePlayer) {
         livePlayer.src = "";
         livePlayer.style.display = "none";
       }
-      if (livePlaceholder) livePlaceholder.style.display = "block";
-      if (liveStatusTxt) liveStatusTxt.textContent = "Stream Stopped";
+
+      if (window.vlabSourceType === "video" && rawVideo && rawVideo.src) {
+        rawVideo.style.display = "block";
+        rawVideo.play().catch(() => {});
+        if (placeholder) placeholder.style.display = "none";
+        if (badge) {
+          badge.textContent = "RAW VIDEO PLAYING";
+          badge.style.color = "var(--accent)";
+          badge.style.borderColor = "var(--accent)";
+        }
+        if (indicator) indicator.style.background = "var(--accent)";
+        if (stageMsg) stageMsg.textContent = "Stream Stopped • Raw video playing in loop";
+      } else {
+        if (placeholder) placeholder.style.display = "block";
+        if (badge) {
+          badge.textContent = "STREAM STOPPED";
+          badge.style.color = "var(--muted)";
+          badge.style.borderColor = "var(--border)";
+        }
+        if (indicator) indicator.style.background = "var(--muted)";
+        if (stageMsg) stageMsg.textContent = "Stream Stopped • Click Preview or Start to resume";
+      }
 
       fetch("/api/video-test/live-stop", { method: "POST" })
         .catch(e => console.warn("[VideoLab] Live stop error:", e));
@@ -3495,6 +3768,10 @@
           const liveStatusTxt = document.getElementById("vlab-live-status-txt");
           if (liveStatusTxt && res.status === "ok") {
             liveStatusTxt.textContent = `Updated: Conf ${payload.conf.toFixed(2)}, IoU ${payload.iou.toFixed(2)}, ${payload.imgsz}px, Step ${payload.frame_step}× (${enabledClasses.length} classes)`;
+          }
+          const stageMsg = document.getElementById("vlab-stage-msg");
+          if (stageMsg && res.status === "ok") {
+            stageMsg.textContent = `⚡ Live Updated: Conf ${payload.conf.toFixed(2)}, IoU ${payload.iou.toFixed(2)}, ${payload.imgsz}px, Step ${payload.frame_step}×`;
           }
         })
         .catch(e => console.warn("[VideoLab] Live param sync error:", e));
