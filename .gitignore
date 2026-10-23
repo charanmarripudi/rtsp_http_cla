@@ -14,8 +14,9 @@ stream*_detected/
 vehicle_speed_tracker/alerts/
 vehicle_speed_tracker/*.mp4
 vehicle_speed_tracker/*.avi
-crowd_tracker/crowd_alerts/
 alerts/
+uploads/
+test_videos/
 
 # Logs
 logs/
@@ -40,9 +41,7 @@ env/
 # Model files (large binary, distribute separately)
 models/*.pt
 models_backup/
-!models/vehicles.pt
 !models/yolov8n.pt
-!models/crowd_detection.pt
 
 # Database credentials
 .env

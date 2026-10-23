@@ -9,6 +9,6 @@
     "keremberke_ppe_gear.pt"
   ],
   "crowd": [
-    "crowd_detection.pt"
+    "yolov8n.pt"
   ]
 }

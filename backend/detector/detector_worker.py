@@ -476,7 +476,22 @@ class DetectorWorker:
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         self.is_speed_worker = (str(self.cam_id) == "speed")
         _check_models = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
-        self.is_crowd_worker = (str(self.cam_id) == "crowd") or any("crowd" in str(mp).lower() for mp in _check_models)
+
+        def _check_crowd(models):
+            if str(self.cam_id) == "crowd":
+                return True
+            for mp in models:
+                m_str = str(mp).lower()
+                if "crowd" in m_str:
+                    return True
+                if "yolov8n" in m_str:
+                    cfg = get_config_for_model(self.model_configs, os.path.basename(mp)) if self.model_configs else {}
+                    enabled = cfg.get("enabled_classes") if isinstance(cfg, dict) else None
+                    if enabled is None or any("person" in str(e).lower() for e in enabled):
+                        return True
+            return False
+
+        self.is_crowd_worker = _check_crowd(_check_models)
         self.fps = 10.0
         self.width, self.height = 640, 360
         self._latest_raw_frame = None
@@ -546,9 +561,9 @@ class DetectorWorker:
         else:
             self.speed_tracker_engine = None
 
-        # Standalone CrowdMonitoring Engine
+        # Standalone CrowdMonitoring Engine (YOLOv8n Person Tracking & ROI Group Clustering)
         if self.is_crowd_worker and CrowdMonitoring is not None:
-            crowd_model = self.model_paths[0] if (isinstance(self.model_paths, list) and self.model_paths) else str(self.model_paths)
+            crowd_model = "yolov8n.pt"
             roi_c = None
             if self.roi_polygon and len(self.roi_polygon) == 2:
                 try:
@@ -560,9 +575,10 @@ class DetectorWorker:
                 except Exception:
                     roi_c = None
 
-            cfg = get_config_for_model(self.model_configs, os.path.basename(crowd_model)) if self.model_configs else {}
-            thresh = int(cfg.get("crowd_threshold", 4)) if cfg else 4
-            dist_px = int(cfg.get("group_distance_px", 180)) if cfg else 180
+            cfg = get_config_for_model(self.model_configs, "yolov8n.pt") if self.model_configs else {}
+            class_cfg = cfg.get("class_configs", {}).get("person", {}) if isinstance(cfg, dict) else {}
+            thresh = int(class_cfg.get("crowd_threshold") or cfg.get("crowd_threshold") or os.getenv("CROWD_THRESHOLD", "4"))
+            dist_px = int(cfg.get("group_distance_px", 180)) if isinstance(cfg, dict) else 180
 
             self.crowd_engine = CrowdMonitoring(
                 model_path=crowd_model,
@@ -578,7 +594,7 @@ class DetectorWorker:
                 "has_crowd": False,
                 "is_alert": False
             }
-            print(f"[CROWD-ENGINE] Initialized standalone CrowdMonitoring for Camera {self.cam_id} (threshold={thresh})", flush=True)
+            print(f"[CROWD-ENGINE] Initialized standalone CrowdMonitoring for Camera {self.cam_id} using yolov8n.pt (threshold={thresh})", flush=True)
         else:
             self.crowd_engine = None
             self.crowd_stats = {}
@@ -616,12 +632,27 @@ class DetectorWorker:
         self._needs_immediate_inference = True
 
         _check_models = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
-        self.is_crowd_worker = (str(self.cam_id) == "crowd") or any("crowd" in str(mp).lower() for mp in _check_models)
+        def _check_crowd_dyn(models):
+            if str(self.cam_id) == "crowd":
+                return True
+            for mp in models:
+                m_str = str(mp).lower()
+                if "crowd" in m_str:
+                    return True
+                if "yolov8n" in m_str:
+                    cfg = get_config_for_model(self.model_configs, os.path.basename(mp)) if self.model_configs else {}
+                    enabled = cfg.get("enabled_classes") if isinstance(cfg, dict) else None
+                    if enabled is None or any("person" in str(e).lower() for e in enabled):
+                        return True
+            return False
+
+        self.is_crowd_worker = _check_crowd_dyn(_check_models)
         if self.is_crowd_worker and CrowdMonitoring is not None:
-            crowd_model = self.model_paths[0] if (isinstance(self.model_paths, list) and self.model_paths) else str(self.model_paths)
-            cfg = get_config_for_model(self.model_configs, os.path.basename(crowd_model)) if self.model_configs else {}
-            thresh = int(cfg.get("crowd_threshold", 4)) if cfg else 4
-            dist_px = int(cfg.get("group_distance_px", 180)) if cfg else 180
+            crowd_model = "yolov8n.pt"
+            cfg = get_config_for_model(self.model_configs, "yolov8n.pt") if self.model_configs else {}
+            class_cfg = cfg.get("class_configs", {}).get("person", {}) if isinstance(cfg, dict) else {}
+            thresh = int(class_cfg.get("crowd_threshold") or cfg.get("crowd_threshold") or os.getenv("CROWD_THRESHOLD", "4"))
+            dist_px = int(cfg.get("group_distance_px", 180)) if isinstance(cfg, dict) else 180
             roi_c = None
             if self.roi_polygon and len(self.roi_polygon) == 2:
                 try:

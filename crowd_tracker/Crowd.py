@@ -27,7 +27,6 @@ def resolve_crowd_model(model_path="yolov8n.pt"):
     base_dir = Path(__file__).resolve().parent.parent
     candidates = [
         base_dir / "models" / os.path.basename(model_path),
-        base_dir / "models" / "crowd_detection.pt",
         base_dir / "models" / "yolov8n.pt",
         Path(model_path)
     ]
@@ -55,16 +54,8 @@ class CrowdMonitoring:
         roi_coords=None,
         interactive_roi=False,
         source=None,
-        image_path=None,  # Defaults to ./crowd_alerts
-        alert_api_url="http://localhost:2001/alert",
         enable_trails=True
     ):
-        CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-        if image_path is None:
-            image_path = os.path.join(CURRENT_DIR, "crowd_alerts")
-        self.image_path = os.path.abspath(image_path)
-        os.makedirs(self.image_path, exist_ok=True)
-
         resolved_model = resolve_crowd_model(model_path)
         print(f"[CrowdMonitoring] Loading YOLO tracking model: {resolved_model}...")
         self.model = YOLO(resolved_model)
@@ -75,7 +66,6 @@ class CrowdMonitoring:
         self.roi_coords = roi_coords
         self.interactive_roi = interactive_roi and (roi_coords is None)
         self.source = source
-        self.alert_api_url = alert_api_url
         self.enable_trails = enable_trails
 
         if source and RTSPStream is not None:
@@ -226,11 +216,7 @@ class CrowdMonitoring:
         )
 
     def trigger_alert(self, frame, in_roi_people):
-        """Handle alert trigger, snapshot saving, and API dispatch."""
-        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = os.path.join(self.image_path, f"crowd_alert_{timestamp_str}.jpg")
-        cv2.imwrite(filename, frame)
-
+        """Log crowd alert event (alerts are captured and stored in PostgreSQL by the detector worker)."""
         group_ids = [int(p["id"]) for p in in_roi_people]
         person_count = len(in_roi_people)
 
@@ -239,23 +225,6 @@ class CrowdMonitoring:
         print(f"Persons Inside ROI: {person_count} (Threshold: {self.crowd_threshold})")
         print(f"Track IDs in ROI: {group_ids}")
         print(f"ROI Boundary: {self.roi_coords}")
-        print(f"Snapshot saved: {filename}")
-
-        alert_data = {
-            "Alert_type": "Crowd Gathering in ROI",
-            "timestamp": datetime.now().isoformat(),
-            "person_count": person_count,
-            "threshold": self.crowd_threshold,
-            "roi_coords": self.roi_coords,
-            "track_ids": group_ids,
-            "image_url": filename
-        }
-
-        try:
-            resp = requests.post(self.alert_api_url, json=alert_data, timeout=1.0)
-            print(f"Dispatched alert to {self.alert_api_url} (HTTP {resp.status_code})")
-        except Exception:
-            pass
         print("=" * 65 + "\n")
 
     def _update_fallback_tracker(self, boxes, timestamp):

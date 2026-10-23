@@ -450,7 +450,7 @@ class LiveVideoTestStreamer:
                 cv2.putText(disp_frame, tag_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
 
             # Crowd Analysis Overlay (Proximity lines, cluster hulls, and HUD banner)
-            is_crowd_model = "crowd" in str(getattr(self, "model_name", "")).lower()
+            is_crowd_model = any(k in str(getattr(self, "model_name", "")).lower() for k in ("crowd", "yolo"))
             if is_crowd_model:
                 person_pts = []
                 for det in dets:
@@ -888,7 +888,7 @@ def _draw_detection_overlay(frame, detections, job: VideoTestJob, frame_idx: int
         if "person" in str(label).lower() or "crowd" in str(label).lower():
             person_pts.append((int((x1 + x2) / 2), y2))
     
-    is_crowd_model = "crowd" in str(getattr(job, "model_name", "")).lower()
+    is_crowd_model = any(k in str(getattr(job, "model_name", "")).lower() for k in ("crowd", "yolo"))
     if is_crowd_model and person_pts:
         _draw_crowd_hud_and_clusters(frame, person_pts, threshold=4, dist_px=180)
 

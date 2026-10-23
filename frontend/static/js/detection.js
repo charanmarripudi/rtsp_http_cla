@@ -251,7 +251,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                 "ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt",
                 "hansung_ppe_violations.pt", "construction.pt", "fire_smoke.pt", "Final_Fire_smoke.pt",
                 "150_firehose_best.pt", "120_spillage_best.pt", "best_tape.pt", "sand_ext_chocks.pt", "tyre_final.pt",
-                "Valve_box_best.pt", "dome_open_closed_best.pt", "crowd_detection.pt"
+                "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt"
             ];
             uniqueAssigned.forEach(m => {
                 const cleanName = m.replace(".pt", "");
@@ -267,6 +267,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             const cCfg = (mCfg.class_configs && mCfg.class_configs[cls]) || {};
                             const cVal = cCfg.conf !== undefined ? parseFloat(cCfg.conf).toFixed(2) : parseFloat(mCfg.conf || meta.conf || 0.40).toFixed(2);
                             const iVal = cCfg.iou !== undefined ? parseFloat(cCfg.iou).toFixed(2) : parseFloat(mCfg.iou || meta.iou || 0.45).toFixed(2);
+                            const isPerson = (cls.toLowerCase() === "person");
+                            const crowdThreshVal = parseInt(cCfg.crowd_threshold || mCfg.crowd_threshold || 4);
 
                             const card = document.createElement("div");
                             card.className = "model-card-box";
@@ -278,16 +280,19 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                 <div class="model-chip-header" style="margin-bottom:6px;">
                                     <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${cleanName} - ${cls}</span>
                                 </div>
-                                <div class="thresholds compact" style="display:flex;gap:12px;">
-                                    <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
-                                    <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
+                                <div class="thresholds compact" style="display:flex;gap:12px;flex-wrap:wrap;">
+                                    <div class="thresh-row" style="flex:1;min-width:110px;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
+                                    <div class="thresh-row" style="flex:1;min-width:110px;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
+                                    ${isPerson ? `<div class="thresh-row" style="flex:1;min-width:130px;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Crowd ROI Limit <span class="model-crowd-thresh-val" style="color:#38bdf8;font-weight:700;">${crowdThreshVal} people</span></label><input class="model-crowd-thresh-slider" type="range" min="2" max="20" step="1" value="${crowdThreshVal}" style="accent-color:#38bdf8;width:100%;"></div>` : ''}
                                 </div>`;
                             chipsList.appendChild(card);
 
                             const cSlider = card.querySelector(".model-conf-slider");
                             const iSlider = card.querySelector(".model-iou-slider");
+                            const crSlider = card.querySelector(".model-crowd-thresh-slider");
                             const cSpan = card.querySelector(".model-conf-val");
                             const iSpan = card.querySelector(".model-iou-val");
+                            const crSpan = card.querySelector(".model-crowd-thresh-val");
 
                             const syncClassThreshold = () => {
                                 clearTimeout(thresholdSyncTimer);
@@ -298,6 +303,12 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                     meta.model_configs[normM] = meta.model_configs[normM] || {};
                                     meta.model_configs[normM].class_configs = meta.model_configs[normM].class_configs || {};
                                     meta.model_configs[normM].class_configs[cls] = { conf: cNum, iou: iNum };
+
+                                    if (crSlider) {
+                                        const crNum = parseInt(crSlider.value, 10);
+                                        meta.model_configs[normM].class_configs[cls].crowd_threshold = crNum;
+                                        meta.model_configs[normM].crowd_threshold = crNum;
+                                    }
 
                                     if (window.roiDrawStates && window.roiDrawStates[i] && window.roiDrawStates[i].vertices && window.roiDrawStates[i].vertices.length === 2) {
                                         meta.model_configs.roi_polygon = window.roiDrawStates[i].vertices;
@@ -320,6 +331,12 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             if (iSlider) {
                                 iSlider.oninput = () => {
                                     if (iSpan) iSpan.textContent = parseFloat(iSlider.value).toFixed(2);
+                                    syncClassThreshold();
+                                };
+                            }
+                            if (crSlider) {
+                                crSlider.oninput = () => {
+                                    if (crSpan) crSpan.textContent = `${crSlider.value} people`;
                                     syncClassThreshold();
                                 };
                             }

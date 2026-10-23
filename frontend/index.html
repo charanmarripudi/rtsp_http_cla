@@ -2526,7 +2526,7 @@
               { file: "tyre_final.pt", label: "TYRE INSPECTION CLASSES", color: "#6366f1", classes: ["Defective","Good_tyre"] },
               { file: "Valve_box_best.pt", label: "VALVE BOX CLASSES", color: "#38bdf8", classes: ["Valve_Box_Close", "Valve_Box_Open"] },
               { file: "dome_open_closed_best.pt", label: "DOME OPEN/CLOSED CLASSES", color: "#14b8a6", classes: ["Dome_Closed", "Dome_Opened"] },
-              { file: "crowd_detection.pt", label: "CROWD DETECTION CLASSES", color: "#f43f5e", classes: ["person", "crowd"] }
+              { file: "yolov8n.pt", label: "YOLO V8N CLASSES", color: "#38bdf8", classes: ["person", "truck"] }
             ];
 
             const specFileNames = specializedModels.map(s => s.file);
@@ -3210,10 +3210,10 @@
           let preferredModel = null;
           const currentVideoName = (window.vlabUploadedFilename || "").toLowerCase();
           const isVehicleHint = currentVideoName.includes("speed") || currentVideoName.includes("vehicle") || currentVideoName.includes("car") || currentVideoName.includes("traffic") || currentVideoName.includes("road");
-          if (isVehicleHint && models.includes("vehicles.pt")) {
-            preferredModel = "vehicles.pt";
-          } else if (models.includes("vehicles.pt")) {
-            preferredModel = "vehicles.pt";
+          if (isVehicleHint && models.includes("yolov8n.pt")) {
+            preferredModel = "yolov8n.pt";
+          } else if (models.includes("yolov8n.pt")) {
+            preferredModel = "yolov8n.pt";
           } else if (models.some(m => m.includes("hansung") || m.includes("ppe"))) {
             preferredModel = models.find(m => m.includes("hansung") || m.includes("ppe"));
           } else {
@@ -3231,8 +3231,8 @@
         })
         .catch(e => {
           console.error("[VideoLab] Failed to load models:", e);
-          modelSelect.innerHTML = '<option value="vehicles.pt">vehicles.pt</option>';
-          window.vlabLoadModelClasses("vehicles.pt");
+          modelSelect.innerHTML = '<option value="yolov8n.pt">yolov8n.pt</option>';
+          window.vlabLoadModelClasses("yolov8n.pt");
         });
     };
 

@@ -973,9 +973,9 @@ async def startup_event():
             model_dir = os.path.join(BASE_DIR, "models")
             if os.path.exists(model_dir):
                 pts = sorted([f for f in os.listdir(model_dir) if f.endswith(".pt")])
-                if "vehicles.pt" in pts:
-                    pts.remove("vehicles.pt")
-                    pts.insert(0, "vehicles.pt")
+                if "yolov8n.pt" in pts:
+                    pts.remove("yolov8n.pt")
+                    pts.insert(0, "yolov8n.pt")
                 for m in pts:
                     p = os.path.join(model_dir, m)
                     try:
@@ -1214,14 +1214,8 @@ async def update_thresholds(req: Request):
 def get_models(): return {"models": [f for f in os.listdir(MODEL_DIR) if f.endswith(".pt")]} if os.path.exists(MODEL_DIR) else {"models": []}
 
 MODEL_CLASSES_CACHE = {
-    "vehicles.pt": [
-        "car", "bike", "truck", "pickup truck"
-    ],
-    "vehicle_speed.pt": [
-        "truck", "car", "pickup truck", "bike", "tank truck", "van", "bus"
-    ],
     "yolov8n.pt": [
-        "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light"
+        "person", "truck"
     ],
     "ppe_new.pt": [
         "Cap-Lamp", "Gloves", "Gum-Boots", "Hard-Hat", "Mask", "NO-Mask",
@@ -1271,12 +1265,6 @@ MODEL_CLASSES_CACHE = {
     ],
     "dome_open_closed_best.pt": [
         "Dome_Closed", "Dome_Opened"
-    ],
-    "crowd_detection.pt": [
-        "person", "crowd"
-    ],
-    "crowd_detection": [
-        "person", "crowd"
     ]
 }
 
@@ -2830,12 +2818,7 @@ def start_speed_tracker(d: dict = Body(...)):
 
     models = d.get("models")
     if not models or not isinstance(models, list):
-        if os.path.exists(os.path.join(BASE_DIR, "models", "vehicles.pt")):
-            models = ["vehicles.pt"]
-        elif os.path.exists(os.path.join(BASE_DIR, "models", "vehicle_speed.pt")):
-            models = ["vehicle_speed.pt"]
-        else:
-            models = ["vehicles.pt"]
+        models = ["yolov8n.pt"]
 
     conf = float(d.get("conf", 0.40))
     iou = float(d.get("iou", 0.45))
@@ -2844,12 +2827,12 @@ def start_speed_tracker(d: dict = Body(...)):
         norm_m = m if m.endswith(".pt") else f"{m}.pt"
         if norm_m not in model_configs:
             model_configs[norm_m] = {
-                "enabled_classes": ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle", "van", "bus"],
+                "enabled_classes": ["truck"],
                 "imgsz": 320
             }
         else:
             if not model_configs[norm_m].get("enabled_classes"):
-                model_configs[norm_m]["enabled_classes"] = ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle", "van", "bus"]
+                model_configs[norm_m]["enabled_classes"] = ["truck"]
             model_configs[norm_m]["imgsz"] = 320
 
     return start_detection({
@@ -2901,7 +2884,7 @@ def get_crowd_status():
         "status": "active" if crowd_active else "stopped",
         "running_camera": "crowd" if crowd_active else None,
         "models_available": [
-            f for f in ["crowd_detection.pt", "yolov8n.pt"]
+            f for f in ["yolov8n.pt"]
             if os.path.exists(os.path.join(BASE_DIR, "models", f))
         ],
         "test_videos": test_vids,
@@ -2953,12 +2936,7 @@ def start_crowd_tracker(d: dict = Body(None)):
 
     models = d.get("models")
     if not models or not isinstance(models, list):
-        if os.path.exists(os.path.join(BASE_DIR, "models", "crowd_detection.pt")):
-            models = ["crowd_detection.pt"]
-        elif os.path.exists(os.path.join(BASE_DIR, "models", "yolov8n.pt")):
-            models = ["yolov8n.pt"]
-        else:
-            models = ["crowd_detection.pt"]
+        models = ["yolov8n.pt"]
 
     conf = float(d.get("conf", 0.30))
     iou = float(d.get("iou", 0.45))
@@ -2970,13 +2948,13 @@ def start_crowd_tracker(d: dict = Body(None)):
         norm_m = m if m.endswith(".pt") else f"{m}.pt"
         if norm_m not in model_configs:
             model_configs[norm_m] = {
-                "enabled_classes": ["person", "crowd"],
+                "enabled_classes": ["person"],
                 "crowd_threshold": threshold
             }
         else:
             model_configs[norm_m]["crowd_threshold"] = threshold
             if "enabled_classes" not in model_configs[norm_m]:
-                model_configs[norm_m]["enabled_classes"] = ["person", "crowd"]
+                model_configs[norm_m]["enabled_classes"] = ["person"]
 
     if roi_coords:
         model_configs["roi_polygon"] = roi_coords
