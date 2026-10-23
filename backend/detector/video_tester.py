@@ -439,16 +439,12 @@ class LiveVideoTestStreamer:
         # Pre-warm model in background without delaying video playback
         if self.model_path and self.model is None:
             try:
-                self.model = get_yolo_model(self.model_path)
-                if self.model is not None:
-                    dummy = np.zeros((320, 320, 3), dtype=np.uint8)
-                    try:
-                        self.model.predict(source=dummy, imgsz=320, verbose=False)
-                    except Exception:
-                        pass
-                    logger.info(f"LiveStreamer: Pre-warmed model {self.model_name}")
+                m = get_yolo_model(self.model_path)
+                with self.lock:
+                    self.model = m
+                print(f"[VideoTester] LiveStreamer loaded model {self.model_name}", flush=True)
             except Exception as e:
-                logger.error(f"Failed to load model on live start: {e}")
+                print(f"[VideoTester] LiveStreamer failed to load model {self.model_name}: {e}", flush=True)
 
         while self.running:
             with self.frame_lock:

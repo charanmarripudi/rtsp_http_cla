@@ -973,14 +973,16 @@ async def startup_event():
             model_dir = os.path.join(BASE_DIR, "models")
             if os.path.exists(model_dir):
                 pts = sorted([f for f in os.listdir(model_dir) if f.endswith(".pt")])
+                if "vehicles.pt" in pts:
+                    pts.remove("vehicles.pt")
+                    pts.insert(0, "vehicles.pt")
                 for m in pts:
                     p = os.path.join(model_dir, m)
                     try:
                         print(f"[STARTUP] Loading model weights: {m}", flush=True)
-                        with INFERENCE_LOCK:
-                            get_yolo_model(p)
-                        # Small pause between models to avoid OOM on Pi 4 (4GB RAM)
-                        time.sleep(0.5)
+                        get_yolo_model(p)
+                        # Small pause between models to avoid CPU spike on Pi
+                        time.sleep(0.3)
                     except Exception as me:
                         print(f"[STARTUP] Warning - could not load {m}: {me}", flush=True)
                 print("[STARTUP] All model weights loaded into memory cache.", flush=True)

@@ -200,7 +200,7 @@ def match_class(box_cls, enabled_cls):
         
     return False
 
-INFERENCE_LOCK = threading.Lock()
+INFERENCE_LOCK = threading.RLock()
 
 def get_yolo_model(model_path):
     resolved_path = str(model_path)
