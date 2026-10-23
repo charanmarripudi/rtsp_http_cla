@@ -1610,6 +1610,26 @@ def get_live_video_frame(request: Request = None, session_id: str = Query(defaul
         headers=headers
     )
 
+@app.get("/api/video-test/live-stats")
+def get_live_video_stats(session_id: str = Query(default="default")):
+    streamer = get_live_streamer(session_id)
+    if not streamer:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Streamer session not found"})
+    with streamer.lock:
+        dets = list(streamer.latest_detections)
+        fps = streamer.processed_fps
+        counts = {}
+        for d in dets:
+            lbl = d.get("label", "unknown")
+            counts[lbl] = counts.get(lbl, 0) + 1
+    return {
+        "status": "ok",
+        "running": streamer.running,
+        "detections_count": len(dets),
+        "class_counts": counts,
+        "processed_fps": round(fps, 1)
+    }
+
 @app.api_route("/api/speed/live-frame", methods=["GET", "HEAD", "OPTIONS"])
 def get_speed_live_frame(request: Request = None):
     headers = {
