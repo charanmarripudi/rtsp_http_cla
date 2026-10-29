@@ -23,18 +23,14 @@ class LocationDashboardTemplates {
                 <span class="expand-arrow">▼</span>
             </div>
             <div class="widget-body">
-                <div class="location-toolbar" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px;">
-                    <span style="font-size: 0.74rem; color: var(--text); font-weight: 600;">Configured Cameras (${cameras.length})</span>
-                    <div style="display: flex; gap: 8px;">
-                        <button class="btn-secondary add-camera" style="padding: 6px 12px; font-size: 0.72rem; cursor: pointer;">+ Add Camera</button>
-                        <button class="btn-primary save-cameras" style="padding: 6px 14px; font-size: 0.72rem; font-weight: 700; cursor: pointer;">Save All Cameras</button>
-                    </div>
+                <div class="location-table">
+                    <div class="camera-editor" style="display: flex; flex-direction: column; gap: 12px;"></div>
+                </div>
+                <div class="widget-actions">
+                    <button class="btn-secondary add-camera">+ Add Camera</button>
+                    <button class="btn-primary save-cameras">Save Cameras</button>
                 </div>
                 <div class="camera-live-grid">${cameras.map(stream => this.cameraBox(stream)).join("")}</div>
-                <div class="widget-actions" style="margin-top: 16px; display: flex; gap: 10px; justify-content: flex-end;">
-                    <button class="btn-secondary add-camera" style="padding: 7px 14px; font-size: 0.72rem; cursor: pointer;">+ Add Camera</button>
-                    <button class="btn-primary save-cameras" style="padding: 7px 16px; font-size: 0.72rem; font-weight: 700; cursor: pointer;">Save All Cameras</button>
-                </div>
             </div>`;
     }
 
@@ -54,22 +50,17 @@ class LocationDashboardTemplates {
                     </svg>
                     <div class="cam-label">${this.text(stream.location || stream.label || `Camera ${id + 1}`)}</div>
                 </div>
-                <div class="controls" style="padding: 12px; display: flex; flex-direction: column; gap: 10px;">
-                    <div class="camera-editor-mount" id="cam-editor-${id}"></div>
-                    <div class="assignment-panel" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 10px;">
-                        <div>
-                            <span style="font-size:0.65rem;color:var(--muted);display:block;margin-bottom:6px;font-weight:600;letter-spacing:0.5px;">ACTIVE DETECTIONS & THRESHOLDS</span>
-                            <div class="assigned-chips-list" id="chips-${id}" style="display:flex;flex-direction:column;gap:8px;"></div>
-                        </div>
+                <div class="controls">
+                    <div class="assignment-panel">
+                        <div><span style="font-size:0.65rem;color:var(--muted);display:block;margin-bottom:6px;font-weight:600;letter-spacing:0.5px;">ASSIGNED MODELS</span><div class="assigned-chips-list" id="chips-${id}" style="display:flex;flex-direction:column;gap:8px;"></div></div>
                     </div>
-                    <div class="btn-row" style="margin-top:6px; display:flex; gap:8px;">
+                    <div class="btn-row" style="margin-top:10px;display:flex;gap:8px;">
                         <button class="start" style="flex:1;">Start</button>
                         <button class="stop" style="flex:1;">Stop</button>
-                        <button class="draw-roi-btn" id="roi-btn-${id}" onclick="handleRoiButtonClick(${id})" style="flex:1; background:rgba(0,240,255,0.1); border:1px solid var(--accent); color:var(--accent); border-radius:6px; padding:6px 8px; font-size:0.72rem; cursor:pointer; font-family:var(--mono); font-weight:600;">Draw ROI</button>
-                        <button class="btn-save-camera" data-stream-id="${id}" style="flex:1.2; background:rgba(0,229,160,0.15); border:1px solid var(--accent); color:var(--accent); border-radius:6px; padding:6px 8px; font-size:0.72rem; cursor:pointer; font-family:var(--mono); font-weight:700;">Save Camera</button>
+                        <button class="draw-roi-btn" id="roi-btn-${id}" onclick="handleRoiButtonClick(${id})" style="flex:1;background:rgba(0,240,255,0.1);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:6px 10px;font-size:0.72rem;cursor:pointer;font-family:var(--mono);font-weight:600;">Draw ROI</button>
                     </div>
-                    <button class="btn-remove-camera-card" data-stream-id="${id}" style="width:100%; margin-top:4px; background:rgba(255,65,85,0.12); color:var(--danger); border:1px solid rgba(255,65,85,0.4); border-radius:6px; padding:7px; font-size:0.72rem; font-family:var(--mono); font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; transition:all .2s ease;">
-                        Remove Camera
+                    <button class="btn-remove-camera-card" data-stream-id="${id}" style="width:100%;margin-top:8px;background:rgba(255,65,85,0.12);color:var(--danger);border:1px solid rgba(255,65,85,0.4);border-radius:6px;padding:8px;font-size:0.74rem;font-family:var(--mono);font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s ease;">
+                        ✕ Remove Camera
                     </button>
                 </div>
             </div>`;
@@ -576,12 +567,8 @@ class LocationDashboard {
         const isExpanded = this.expandedLocs.has(locId);
         card.className = isExpanded ? "widget-card expanded" : "widget-card collapsed";
         card.innerHTML = LocationDashboardTemplates.locationCard(loc, locIdx, cameras);
-        cameras.forEach(stream => {
-            const mount = card.querySelector(`#cam-editor-${stream.id}`);
-            if (mount) {
-                mount.appendChild(this.cameraEditorRow(stream));
-            }
-        });
+        const editor = card.querySelector(".camera-editor");
+        cameras.forEach(stream => editor.appendChild(this.cameraEditorRow(stream)));
         card.querySelector(".widget-header").addEventListener("click", () => {
             const isCollapsed = card.classList.contains("collapsed");
             card.classList.toggle("collapsed");
@@ -592,18 +579,7 @@ class LocationDashboard {
                 this.expandedLocs.delete(locId);
             }
         });
-        card.querySelectorAll(".add-camera").forEach(btn => {
-            btn.addEventListener("click", () => this.addCamera(loc, locIdx));
-        });
-        card.querySelectorAll(".save-cameras").forEach(btn => {
-            btn.addEventListener("click", () => this.saveCameras(true));
-        });
-        card.querySelectorAll(".btn-save-camera").forEach(btn => {
-            btn.addEventListener("click", () => {
-                const targetId = Number(btn.getAttribute("data-stream-id"));
-                this.saveSingleCamera(targetId);
-            });
-        });
+        card.querySelector(".add-camera").addEventListener("click", () => this.addCamera(loc, locIdx));
 
         card.querySelectorAll(".btn-remove-camera-card").forEach(btn => {
             btn.addEventListener("click", (e) => {
@@ -641,35 +617,45 @@ class LocationDashboard {
             }
         });
 
+        card.querySelector(".save-cameras").addEventListener("click", () => this.saveCameras(true));
         return card;
     }
 
     cameraEditorRow(stream) {
         const row = document.createElement("div");
         row.className = "camera-edit-block";
-        row.style.cssText = "display: flex; flex-direction: column; gap: 10px; align-items: stretch; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 0.72rem; box-sizing: border-box;";
+        row.style.cssText = "display: flex; flex-direction: column; gap: 12px; align-items: stretch; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); border-radius: 8px; padding: 14px; font-size: 0.72rem; box-sizing: border-box;";
         row.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                <span style="font-weight: 600; color: var(--text); font-size: 0.78rem;">${this.escapeHtml(stream.location || stream.label || `Camera ${Number(stream.id) + 1}`)}</span>
+                <button class="btn-remove" style="background: transparent; color: var(--danger); border: 1px solid rgba(255, 65, 85, 0.3); padding: 4px 10px; border-radius: 6px; font-size: 0.68rem; cursor: pointer; transition: all 0.2s;">Remove</button>
+            </div>
             <div style="display: flex; flex-direction: column; gap: 4px; width: 100%;">
-                <label style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">RTSP Stream URL</label>
-                <input class="camera-rtsp-input" value="${this.escapeHtml(stream.rtsp || "")}" placeholder="rtsp://camera-url" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 0.72rem; padding: 7px 10px; border-radius: 6px; box-sizing: border-box; outline: none;">
+                <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">RTSP Stream URL</span>
+                <input class="camera-rtsp-input" value="${this.escapeHtml(stream.rtsp || "")}" placeholder="rtsp://camera-url" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 0.72rem; padding: 8px; border-radius: 6px; box-sizing: border-box; outline: none;">
             </div>
             <div style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <label style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">Select Detection Models</label>
-                    <span style="font-size: 0.58rem; color: var(--muted);">Check a model to show its classes</span>
-                </div>
-                <div class="model-assign-row" style="margin: 0; display: flex; flex-direction: column; gap: 6px; width: 100%; max-height: 220px; overflow-y: auto; padding: 6px; background: rgba(0,0,0,0.25); border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">${this.modelChips(stream.id, stream)}</div>
+                <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; font-weight: 600;">Select Models & Classes</span>
+                <div class="model-assign-row" style="margin: 0; display: flex; flex-wrap: wrap; gap: 8px; width: 100%;">${this.modelChips(stream.id, stream)}</div>
             </div>`;
         row.querySelector(".camera-rtsp-input").addEventListener("input", e => { stream.rtsp = e.target.value; });
-        row.querySelectorAll('.parent-model-checkbox').forEach(cb => this.bindParentModelCheckbox(cb, stream));
-        row.querySelectorAll('.class-checkbox').forEach(cb => this.bindClassCheckbox(cb, stream));
-        row.querySelectorAll('.btn-toggle-classes').forEach(btn => this.bindToggleClasses(btn, stream));
+        row.querySelectorAll('input[type="checkbox"]').forEach(cb => this.bindModelCheckbox(cb, stream));
+        row.querySelector(".btn-remove").addEventListener("click", () => this.removeCamera(stream));
         return row;
     }
 
     modelChips(cameraIndex, stream) {
         const assigned = this.cameraModels[String(cameraIndex)] || [];
         if (!this.allModels.length) return '<span style="color:var(--muted);font-size:.68rem;">No models available</span>';
+
+        let html = "";
+
+        const palette = [
+            "#00ffaa", "#f5a623", "#fb7185", "#eab308", "#a78bfa",
+            "#f97316", "#ef4444", "#ec4899", "#06b6d4", "#10b981",
+            "#84cc16", "#6366f1", "#38bdf8", "#14b8a6", "#d946ef",
+            "#f43f5e", "#8b5cf6", "#0ea5e9", "#22c55e", "#e11d48"
+        ];
 
         const fallbackModelClasses = {
             "ppe_new.pt": ["Cap-Lamp","Gloves","Gum-Boots","Hard-Hat","Mask","NO-Mask","No-Cap-Lamp","No-Gloves","No-Gum-Boots","No-Hard-Hat","No-Saftey-Belt","No-Saftey-Vest","Saftey-Belt","Saftey-Vest"],
@@ -686,25 +672,29 @@ class LocationDashboard {
             "tyre_final.pt": ["Defective","Good_tyre"],
             "Valve_box_best.pt": ["Valve_Box_Close","Valve_Box_Open"],
             "dome_open_closed_best.pt": ["Dome_Closed","Dome_Opened"],
-            "yolov8n.pt": ["person", "truck"],
-            "leakage_final_best.pt": ["leak"]
+            "yolov8n.pt": ["person", "truck"]
         };
 
-        const customColors = {
-            "hansung_ppe_violations.pt": "#fb7185",
-            "ppe_new.pt": "#00ffaa",
-            "nik_ppe_best.pt": "#f5a623",
-            "construction.pt": "#eab308",
-            "fire_smoke.pt": "#f97316",
-            "Final_Fire_smoke.pt": "#ef4444",
-            "120_spillage_best.pt": "#06b6d4",
-            "150_firehose_best.pt": "#ec4899",
-            "sand_ext_chocks.pt": "#84cc16",
-            "Valve_box_best.pt": "#38bdf8",
-            "dome_open_closed_best.pt": "#14b8a6",
-            "yolov8n.pt": "#a78bfa",
-            "leakage_final_best.pt": "#38bdf8"
+        const customMeta = {
+            "ppe_new.pt": { label: "PPE-NEW CLASSES", color: "#00ffaa" },
+            "nik_ppe_best.pt": { label: "NIK-PPE CLASSES", color: "#f5a623" },
+            "hansung_ppe_violations.pt": { label: "HANSUNG VIOLATIONS CLASSES", color: "#fb7185" },
+            "construction.pt": { label: "CONSTRUCTION PPE CLASSES", color: "#eab308" },
+            "hf_ppe_detection.pt": { label: "HF PPE DETECTION CLASSES", color: "#a78bfa" },
+            "fire_smoke.pt": { label: "FIRE & SMOKE CLASSES", color: "#f97316" },
+            "Final_Fire_smoke.pt": { label: "FINAL FIRE & SMOKE CLASSES", color: "#ef4444" },
+            "150_firehose_best.pt": { label: "FIREHOSE DETECTION CLASSES", color: "#ec4899" },
+            "120_spillage_best.pt": { label: "SPILLAGE DETECTION CLASSES", color: "#06b6d4" },
+            "best_tape.pt": { label: "REFLECTIVE TAPE CLASSES", color: "#10b981" },
+            "sand_ext_chocks.pt": { label: "SAND EXT CHOCKS CLASSES", color: "#84cc16" },
+            "tyre_final.pt": { label: "TYRE INSPECTION CLASSES", color: "#6366f1" },
+            "Valve_box_best.pt": { label: "VALVE BOX CLASSES", color: "#38bdf8" },
+            "dome_open_closed_best.pt": { label: "DOME OPEN/CLOSED CLASSES", color: "#14b8a6" },
+            "yolov8n.pt": { label: "YOLO V8N CLASSES", color: "#38bdf8" }
         };
+
+        const modelsWithClasses = [];
+        const modelsWithoutClasses = [];
 
         const findClasses = (dict, targetName) => {
             if (!dict || typeof dict !== "object") return null;
@@ -720,236 +710,94 @@ class LocationDashboard {
             return null;
         };
 
-        let html = "";
-        this.allModels.forEach(model => {
+        const findMeta = (dict, targetName) => {
+            if (!dict || typeof dict !== "object") return null;
+            const targetLower = String(targetName || "").toLowerCase();
+            const targetClean = targetLower.replace(/\.pt$/, "");
+            for (const key of Object.keys(dict)) {
+                const kLower = key.toLowerCase();
+                const kClean = kLower.replace(/\.pt$/, "");
+                if (kLower === targetLower || kClean === targetClean) {
+                    return dict[key];
+                }
+            }
+            return null;
+        };
+
+        this.allModels.forEach((model, idx) => {
             const cleanM = model.replace(/\.pt$/i, "");
             const normM = `${cleanM}.pt`;
-            const isAssigned = assigned.includes(model) || assigned.includes(cleanM) || assigned.includes(normM);
-            const classes = findClasses(this.modelClasses, model) || findClasses(fallbackModelClasses, model) || [];
-            const hasClasses = Array.isArray(classes) && classes.length > 0;
-            const color = customColors[model] || customColors[normM] || "#00ffaa";
+            let classes = findClasses(this.modelClasses, model) || findClasses(fallbackModelClasses, model);
 
-            const cfg = (stream && stream.model_configs && (stream.model_configs[model] || stream.model_configs[normM] || stream.model_configs[cleanM])) || {};
-            const enabledClasses = cfg.enabled_classes || [];
-
-            let drawerHtml = "";
-            if (hasClasses) {
-                let chipsHtml = "";
-                classes.forEach(cls => {
-                    const isClassChecked = isAssigned && (enabledClasses.length === 0 || enabledClasses.includes(cls));
-                    chipsHtml += '<label class="class-chip ' + (isClassChecked ? 'checked' : '') + '" style="display:inline-flex; align-items:center; gap:4px; font-size:0.65rem; padding:2px 6px; border-radius:4px; background:' + (isClassChecked ? color + '22' : 'rgba(255,255,255,0.03)') + '; border:1px solid ' + (isClassChecked ? color + '66' : 'rgba(255,255,255,0.08)') + '; cursor:pointer;">' +
-                        '<input type="checkbox" class="class-checkbox" value="' + this.escapeHtml(cls) + '" data-camera="' + cameraIndex + '" data-model="' + model + '" data-color="' + color + '" ' + (isClassChecked ? 'checked' : '') + ' style="cursor:pointer; accent-color:' + color + '; width:11px; height:11px; margin:0;">' +
-                        '<span style="color:' + (isClassChecked ? color : 'var(--muted)') + '; font-weight:500;">' + this.escapeHtml(cls) + '</span>' +
-                        '</label>';
+            if (Array.isArray(classes) && classes.length > 0) {
+                const meta = findMeta(customMeta, model) || {
+                    label: `${cleanM.replace(/_/g, " ").toUpperCase()} CLASSES`,
+                    color: palette[idx % palette.length]
+                };
+                modelsWithClasses.push({
+                    file: model,
+                    label: meta.label,
+                    color: meta.color,
+                    classes: classes
                 });
-
-                drawerHtml = '<div class="model-classes-drawer" id="drawer-' + cameraIndex + '-' + cleanM + '" style="display:' + (isAssigned ? 'flex' : 'none') + '; flex-direction:column; gap:5px; padding:6px 8px; background:rgba(0,0,0,0.35); border-radius:5px; border-left:3px solid ' + color + '; margin-top:2px;">' +
-                    '<div style="display:flex; justify-content:space-between; align-items:center;">' +
-                    '<span style="font-size:0.58rem; color:' + color + '; font-weight:700; text-transform:uppercase;">Enabled Classes</span>' +
-                    '<button type="button" class="btn-toggle-classes" data-camera="' + cameraIndex + '" data-clean="' + cleanM + '" style="background:transparent; border:none; color:var(--accent); font-size:0.58rem; cursor:pointer; text-decoration:underline; font-family:var(--mono);">Toggle All</button>' +
-                    '</div>' +
-                    '<div style="display:flex; flex-wrap:wrap; gap:4px;">' + chipsHtml + '</div>' +
-                    '</div>';
+            } else {
+                modelsWithoutClasses.push(model);
             }
-
-            html += '<div class="model-selection-card" id="card-' + cameraIndex + '-' + cleanM + '" style="display:flex; flex-direction:column; gap:5px; background:rgba(255,255,255,0.02); border:1px solid ' + (isAssigned ? color + '55' : 'rgba(255,255,255,0.06)') + '; border-radius:6px; padding:6px 10px; transition:border-color .2s;">' +
-                '<div style="display:flex; justify-content:space-between; align-items:center;">' +
-                '<label style="display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; font-size:0.72rem; color:' + (isAssigned ? color : 'var(--text)') + ';">' +
-                '<input type="checkbox" class="parent-model-checkbox" value="' + this.escapeHtml(model) + '" data-camera="' + cameraIndex + '" data-clean="' + cleanM + '" data-color="' + color + '" ' + (isAssigned ? 'checked' : '') + ' style="cursor:pointer; accent-color:' + color + '; width:14px; height:14px; margin:0;">' +
-                '<span>' + this.escapeHtml(cleanM.replace(/_/g, " ").toUpperCase()) + '</span>' +
-                '</label>' +
-                (hasClasses ? '<span style="font-size:0.58rem; color:var(--muted);">' + classes.length + ' classes</span>' : '') +
-                '</div>' +
-                drawerHtml +
-                '</div>';
         });
+
+        // First render models without classes (simple parent checkboxes)
+        modelsWithoutClasses.forEach(model => {
+            const checked = assigned.includes(model);
+            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
+                <input type="checkbox" class="parent-model-checkbox" value="${this.escapeHtml(model)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" style="cursor: pointer; accent-color: #00ffaa; margin: 0; margin-right: 4px;">
+                <span>${this.escapeHtml(model.replace(".pt", ""))}</span>
+            </label>`;
+        });
+
+        // Next render models with class checkboxes
+        modelsWithClasses.forEach(spec => {
+            const cleanM = spec.file.replace(".pt", "");
+            const cfg = (stream && stream.model_configs && (stream.model_configs[spec.file] || stream.model_configs[cleanM] || stream.model_configs[`${cleanM}.pt`])) || {};
+            const enabled = cfg.enabled_classes || [];
+
+            html += `<div style="width:100%;font-size:0.62rem;color:${spec.color};font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">${this.escapeHtml(spec.label)}</div>`;
+            spec.classes.forEach(cls => {
+                const checked = enabled.includes(cls);
+                html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
+                    <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="${spec.file}" data-color="${spec.color}" style="cursor: pointer; accent-color: ${spec.color}; margin: 0; margin-right: 4px;">
+                    <span style="color:${checked ? spec.color : ''}">${this.escapeHtml(cls)}</span>
+                </label>`;
+            });
+        });
+
         return html;
     }
 
-    bindParentModelCheckbox(cb, stream) {
+    bindModelCheckbox(cb, stream) {
         cb.addEventListener("change", () => {
-            const model = cb.value;
-            const cleanM = cb.getAttribute("data-clean");
-            const color = cb.getAttribute("data-color") || "#00ffaa";
-            const camId = String(stream.id);
-            const drawer = document.getElementById(`drawer-${camId}-${cleanM}`);
-            const card = document.getElementById(`card-${camId}-${cleanM}`);
-
-            if (drawer) {
-                drawer.style.display = cb.checked ? "flex" : "none";
-                drawer.querySelectorAll(".class-checkbox").forEach(classCb => {
-                    classCb.checked = cb.checked;
-                    const chip = classCb.closest(".class-chip");
-                    if (chip) {
-                        chip.classList.toggle("checked", cb.checked);
-                        chip.style.background = cb.checked ? color + "22" : "rgba(255,255,255,0.03)";
-                        chip.style.borderColor = cb.checked ? color + "66" : "rgba(255,255,255,0.08)";
-                        const span = chip.querySelector("span");
-                        if (span) span.style.color = cb.checked ? color : "var(--muted)";
-                    }
-                });
+            cb.closest(".model-chip").classList.toggle("checked", cb.checked);
+            const labelSpan = cb.nextElementSibling;
+            const accentColor = cb.getAttribute("data-color") || cb.style.accentColor || "#00ffaa";
+            if (labelSpan) {
+                labelSpan.style.color = cb.checked ? accentColor : "";
             }
-
-            if (card) {
-                card.style.borderColor = cb.checked ? color + "55" : "rgba(255,255,255,0.06)";
-                const label = card.querySelector("label");
-                if (label) label.style.color = cb.checked ? color : "var(--text)";
-            }
-
-            this.updateAssignedChipsUI(camId, stream);
         });
-    }
-
-    bindClassCheckbox(cb, stream) {
-        cb.addEventListener("change", () => {
-            const camId = String(stream.id);
-            const model = cb.getAttribute("data-model");
-            const color = cb.getAttribute("data-color") || "#00ffaa";
-            const cleanM = model.replace(/\.pt$/i, "");
-            const chip = cb.closest(".class-chip");
-            if (chip) {
-                chip.classList.toggle("checked", cb.checked);
-                chip.style.background = cb.checked ? color + "22" : "rgba(255,255,255,0.03)";
-                chip.style.borderColor = cb.checked ? color + "66" : "rgba(255,255,255,0.08)";
-                const span = chip.querySelector("span");
-                if (span) span.style.color = cb.checked ? color : "var(--muted)";
-            }
-
-            const drawer = document.getElementById(`drawer-${camId}-${cleanM}`);
-            if (drawer) {
-                const anyChecked = drawer.querySelectorAll(".class-checkbox:checked").length > 0;
-                const parentCb = document.querySelector(`.parent-model-checkbox[data-camera="${camId}"][data-clean="${cleanM}"]`);
-                if (parentCb && parentCb.checked !== anyChecked) {
-                    parentCb.checked = anyChecked;
-                    const card = document.getElementById(`card-${camId}-${cleanM}`);
-                    if (card) card.style.borderColor = anyChecked ? color + "55" : "rgba(255,255,255,0.06)";
-                }
-            }
-
-            this.updateAssignedChipsUI(camId, stream);
-        });
-    }
-
-    bindToggleClasses(btn, stream) {
-        btn.addEventListener("click", () => {
-            const camId = String(stream.id);
-            const cleanM = btn.getAttribute("data-clean");
-            const drawer = document.getElementById(`drawer-${camId}-${cleanM}`);
-            if (!drawer) return;
-            const cbs = drawer.querySelectorAll(".class-checkbox");
-            const allChecked = Array.from(cbs).every(c => c.checked);
-            cbs.forEach(c => {
-                c.checked = !allChecked;
-                c.dispatchEvent(new Event("change"));
-            });
-        });
-    }
-
-    updateAssignedChipsUI(camId, stream) {
-        const camBox = document.getElementById(`cam-box-${camId}`);
-        if (!camBox) return;
-        const chipsList = camBox.querySelector(".assigned-chips-list");
-        if (!chipsList) return;
-
-        const parentCbs = camBox.querySelectorAll(`.parent-model-checkbox:checked`);
-        const checkedModels = Array.from(parentCbs).map(cb => cb.value);
-
-        this.cameraModels[String(camId)] = checkedModels;
-        if (window.cameraModelsMap) {
-            window.cameraModelsMap[String(camId)] = checkedModels;
-        }
-
-        chipsList.innerHTML = "";
-        if (checkedModels.length === 0) {
-            chipsList.innerHTML = '<span style="font-size:0.65rem;color:var(--muted);font-style:italic;">No models selected. Check a model above.</span>';
-            return;
-        }
-
-        checkedModels.forEach(m => {
-            const cleanName = m.replace(".pt", "");
-            const card = document.createElement("div");
-            card.className = "model-card-box";
-            card.setAttribute("data-model", m);
-            card.style.cssText = "background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 8px; margin-bottom: 6px;";
-            card.innerHTML = `
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                    <span style="font-size:0.72rem; font-weight:700; color:var(--accent); text-transform:uppercase;">${cleanName.replace(/_/g, " ")}</span>
-                    <span style="font-size:0.60rem; color:var(--muted);">ACTIVE</span>
-                </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                    <div>
-                        <div style="display:flex; justify-content:space-between; font-size:0.62rem; color:var(--muted); margin-bottom:2px;">
-                            <span>CONF</span>
-                            <span class="m-conf-val">0.40</span>
-                        </div>
-                        <input type="range" class="model-conf-slider" min="0.10" max="0.95" step="0.05" value="0.40" style="width:100%; accent-color:var(--accent); cursor:pointer;">
-                    </div>
-                    <div>
-                        <div style="display:flex; justify-content:space-between; font-size:0.62rem; color:var(--muted); margin-bottom:2px;">
-                            <span>IOU</span>
-                            <span class="m-iou-val">0.45</span>
-                        </div>
-                        <input type="range" class="model-iou-slider" min="0.10" max="0.95" step="0.05" value="0.45" style="width:100%; accent-color:var(--accent); cursor:pointer;">
-                    </div>
-                </div>`;
-            const cSlider = card.querySelector(".model-conf-slider");
-            const iSlider = card.querySelector(".model-iou-slider");
-            const cVal = card.querySelector(".m-conf-val");
-            const iVal = card.querySelector(".m-iou-val");
-            if (cSlider && cVal) cSlider.addEventListener("input", e => { cVal.textContent = parseFloat(e.target.value).toFixed(2); });
-            if (iSlider && iVal) iSlider.addEventListener("input", e => { iVal.textContent = parseFloat(e.target.value).toFixed(2); });
-            chipsList.appendChild(card);
-        });
-    }
-
-    async saveSingleCamera(streamId) {
-        const camBox = document.getElementById(`cam-box-${streamId}`);
-        const saveBtn = camBox ? camBox.querySelector(".btn-save-camera") : null;
-        if (saveBtn) {
-            saveBtn.disabled = true;
-            saveBtn.textContent = "Saving...";
-        }
-
-        try {
-            await this.saveCameras(false);
-            if (saveBtn) {
-                saveBtn.disabled = false;
-                saveBtn.textContent = "Saved ✓";
-                saveBtn.style.background = "rgba(0, 229, 160, 0.4)";
-                setTimeout(() => {
-                    saveBtn.textContent = "Save Camera";
-                    saveBtn.style.background = "rgba(0, 229, 160, 0.15)";
-                }, 2000);
-            }
-        } catch (err) {
-            console.error("Save camera failed:", err);
-            if (saveBtn) {
-                saveBtn.disabled = false;
-                saveBtn.textContent = "Error";
-                setTimeout(() => { saveBtn.textContent = "Save Camera"; }, 2500);
-            }
-            alert("Error saving camera: " + err.message);
-        }
     }
 
     addCamera(loc, locIdx) {
         const nextId = this.streams.length;
-        const locId = this.locationId(locIdx, loc);
 
         this.cameraModels[String(nextId)] = [];
 
         this.streams.push({
             id: nextId,
-            label: loc.location ? `${loc.location} - Cam ${nextId + 1}` : `Camera ${nextId + 1}`,
+            label: loc.location || `Camera ${nextId + 1}`,
             rtsp: "",
-            location_id: locId,
-            location: loc.location || `Location ${locIdx + 1}`,
-            device_id: loc.device_id || "",
-            device_ip: loc.device_ip || "",
-            device_status: loc.device_status || "offline",
-            conf: 0.40,
-            iou: 0.45,
-            model_configs: {},
+            location_id: this.locationId(locIdx, loc),
+            location: loc.location,
+            device_id: loc.device_id,
+            device_ip: loc.device_ip,
+            device_status: loc.device_status,
             hls_live: `/hls/camera/${nextId}/playlist.m3u8`,
             hls_raw: `/hls/stream${nextId}_raw/playlist.m3u8`,
             hls_detected: `/hls/stream${nextId}_detected/playlist.m3u8`
@@ -963,17 +811,8 @@ class LocationDashboard {
             item.hls_detected = `/hls/stream${idx}_detected/playlist.m3u8`;
         });
 
-        this.expandedLocs.add(locId);
+        this.expandedLocs.add(this.locationId(locIdx, loc));
         this.renderLocationWidgets(true);
-
-        setTimeout(() => {
-            const newBox = document.getElementById(`cam-box-${nextId}`);
-            if (newBox) {
-                newBox.scrollIntoView({ behavior: "smooth", block: "center" });
-                const input = newBox.querySelector(".camera-rtsp-input");
-                if (input) input.focus();
-            }
-        }, 120);
     }
 
     async removeCamera(stream) {
