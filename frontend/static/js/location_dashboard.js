@@ -653,121 +653,24 @@ class LocationDashboard {
         const palette = [
             "#00ffaa", "#f5a623", "#fb7185", "#eab308", "#a78bfa",
             "#f97316", "#ef4444", "#ec4899", "#06b6d4", "#10b981",
-            "#84cc16", "#6366f1", "#38bdf8", "#14b8a6", "#d946ef",
-            "#f43f5e", "#8b5cf6", "#0ea5e9", "#22c55e", "#e11d48"
+            "#84cc16", "#6366f1", "#38bdf8", "#14b8a6", "#d946ef"
         ];
 
-        const fallbackModelClasses = {
-            "ppe_new.pt": ["Cap-Lamp","Gloves","Gum-Boots","Hard-Hat","Mask","NO-Mask","No-Cap-Lamp","No-Gloves","No-Gum-Boots","No-Hard-Hat","No-Saftey-Belt","No-Saftey-Vest","Saftey-Belt","Saftey-Vest"],
-            "nik_ppe_best.pt": ["Fall-Detected","Gloves","Goggles","Helmet","Mask","NO-Mask","No_Gloves","No_Goggles","No_Harness","No_boots","No_helmet","No_safety_vest","Safety Vest","boots","harness"],
-            "hansung_ppe_violations.pt": ["Hardhat","Mask","NO-Hardhat","NO-Mask","NO-Safety Vest","Person","Safety Cone","Safety Vest","machinery","vehicle"],
-            "construction.pt": ["helmet","gloves","vest","boots","goggles","none","Person","no_helmet","no_goggle","no_gloves","no_boots"],
-            "hf_ppe_detection.pt": ["helmet","human","no-helmet","vest"],
-            "fire_smoke.pt": ["Fire","Smoke"],
-            "Final_Fire_smoke.pt": ["fire","smoke","Gas"],
-            "150_firehose_best.pt": ["fire_hose","firehose_box"],
-            "120_spillage_best.pt": ["spillage"],
-            "best_tape.pt": ["reflective_tape_floor","reflective_tape_person","reflective_tape_vehicles","traffic_tape_bollards","traffic_tape_cone"],
-            "sand_ext_chocks.pt": ["Fire_Extinguisher","Sand-Bucket","wheel-choke"],
-            "tyre_final.pt": ["Defective","Good_tyre"],
-            "Valve_box_best.pt": ["Valve_Box_Close","Valve_Box_Open"],
-            "dome_open_closed_best.pt": ["Dome_Closed","Dome_Opened"],
-            "yolov8n.pt": ["person", "truck"]
-        };
+        // Filter out leakage model as requested
+        const modelsToRender = this.allModels.filter(m => !m.toLowerCase().includes("leakage"));
 
-        const customMeta = {
-            "ppe_new.pt": { label: "PPE-NEW CLASSES", color: "#00ffaa" },
-            "nik_ppe_best.pt": { label: "NIK-PPE CLASSES", color: "#f5a623" },
-            "hansung_ppe_violations.pt": { label: "HANSUNG VIOLATIONS CLASSES", color: "#fb7185" },
-            "construction.pt": { label: "CONSTRUCTION PPE CLASSES", color: "#eab308" },
-            "hf_ppe_detection.pt": { label: "HF PPE DETECTION CLASSES", color: "#a78bfa" },
-            "fire_smoke.pt": { label: "FIRE & SMOKE CLASSES", color: "#f97316" },
-            "Final_Fire_smoke.pt": { label: "FINAL FIRE & SMOKE CLASSES", color: "#ef4444" },
-            "150_firehose_best.pt": { label: "FIREHOSE DETECTION CLASSES", color: "#ec4899" },
-            "120_spillage_best.pt": { label: "SPILLAGE DETECTION CLASSES", color: "#06b6d4" },
-            "best_tape.pt": { label: "REFLECTIVE TAPE CLASSES", color: "#10b981" },
-            "sand_ext_chocks.pt": { label: "SAND EXT CHOCKS CLASSES", color: "#84cc16" },
-            "tyre_final.pt": { label: "TYRE INSPECTION CLASSES", color: "#6366f1" },
-            "Valve_box_best.pt": { label: "VALVE BOX CLASSES", color: "#38bdf8" },
-            "dome_open_closed_best.pt": { label: "DOME OPEN/CLOSED CLASSES", color: "#14b8a6" },
-            "yolov8n.pt": { label: "YOLO V8N CLASSES", color: "#38bdf8" }
-        };
-
-        const modelsWithClasses = [];
-        const modelsWithoutClasses = [];
-
-        const findClasses = (dict, targetName) => {
-            if (!dict || typeof dict !== "object") return null;
-            const targetLower = String(targetName || "").toLowerCase();
-            const targetClean = targetLower.replace(/\.pt$/, "");
-            for (const key of Object.keys(dict)) {
-                const kLower = key.toLowerCase();
-                const kClean = kLower.replace(/\.pt$/, "");
-                if (kLower === targetLower || kClean === targetClean) {
-                    if (Array.isArray(dict[key]) && dict[key].length > 0) return dict[key];
-                }
-            }
-            return null;
-        };
-
-        const findMeta = (dict, targetName) => {
-            if (!dict || typeof dict !== "object") return null;
-            const targetLower = String(targetName || "").toLowerCase();
-            const targetClean = targetLower.replace(/\.pt$/, "");
-            for (const key of Object.keys(dict)) {
-                const kLower = key.toLowerCase();
-                const kClean = kLower.replace(/\.pt$/, "");
-                if (kLower === targetLower || kClean === targetClean) {
-                    return dict[key];
-                }
-            }
-            return null;
-        };
-
-        this.allModels.forEach((model, idx) => {
+        modelsToRender.forEach((model, idx) => {
             const cleanM = model.replace(/\.pt$/i, "");
-            const normM = `${cleanM}.pt`;
-            let classes = findClasses(this.modelClasses, model) || findClasses(fallbackModelClasses, model);
-
-            if (Array.isArray(classes) && classes.length > 0) {
-                const meta = findMeta(customMeta, model) || {
-                    label: `${cleanM.replace(/_/g, " ").toUpperCase()} CLASSES`,
-                    color: palette[idx % palette.length]
-                };
-                modelsWithClasses.push({
-                    file: model,
-                    label: meta.label,
-                    color: meta.color,
-                    classes: classes
-                });
-            } else {
-                modelsWithoutClasses.push(model);
-            }
-        });
-
-        // First render models without classes (simple parent checkboxes)
-        modelsWithoutClasses.forEach(model => {
-            const checked = assigned.includes(model);
-            html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
-                <input type="checkbox" class="parent-model-checkbox" value="${this.escapeHtml(model)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" style="cursor: pointer; accent-color: #00ffaa; margin: 0; margin-right: 4px;">
-                <span>${this.escapeHtml(model.replace(".pt", ""))}</span>
-            </label>`;
-        });
-
-        // Next render models with class checkboxes
-        modelsWithClasses.forEach(spec => {
-            const cleanM = spec.file.replace(".pt", "");
-            const cfg = (stream && stream.model_configs && (stream.model_configs[spec.file] || stream.model_configs[cleanM] || stream.model_configs[`${cleanM}.pt`])) || {};
-            const enabled = cfg.enabled_classes || [];
-
-            html += `<div style="width:100%;font-size:0.62rem;color:${spec.color};font-weight:700;letter-spacing:0.5px;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">${this.escapeHtml(spec.label)}</div>`;
-            spec.classes.forEach(cls => {
-                const checked = enabled.includes(cls);
-                html += `<label class="${checked ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; cursor: pointer;">
-                    <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" ${checked ? "checked" : ""} data-camera="${cameraIndex}" data-model="${spec.file}" data-color="${spec.color}" style="cursor: pointer; accent-color: ${spec.color}; margin: 0; margin-right: 4px;">
-                    <span style="color:${checked ? spec.color : ''}">${this.escapeHtml(cls)}</span>
-                </label>`;
+            const color = palette[idx % palette.length];
+            const isAssigned = assigned.some(a => {
+                const aNorm = String(a).toLowerCase().replace(/\.pt$/i, "");
+                return aNorm === cleanM.toLowerCase();
             });
+
+            html += `<label class="${isAssigned ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; align-items: center; cursor: pointer; gap: 6px; padding: 6px 12px; background: ${isAssigned ? 'rgba(0,255,170,0.1)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${isAssigned ? color : 'var(--border)'}; border-radius: 6px; transition: all 0.2s;">
+                <input type="checkbox" class="parent-model-checkbox" value="${this.escapeHtml(model)}" ${isAssigned ? "checked" : ""} data-camera="${cameraIndex}" data-color="${color}" style="cursor: pointer; accent-color: ${color}; width: 14px; height: 14px; margin: 0;">
+                <span style="font-size: 0.72rem; font-weight: 600; color: ${isAssigned ? color : 'var(--text)'};">${this.escapeHtml(cleanM)}</span>
+            </label>`;
         });
 
         return html;
@@ -775,11 +678,16 @@ class LocationDashboard {
 
     bindModelCheckbox(cb, stream) {
         cb.addEventListener("change", () => {
-            cb.closest(".model-chip").classList.toggle("checked", cb.checked);
+            const chip = cb.closest(".model-chip");
             const labelSpan = cb.nextElementSibling;
-            const accentColor = cb.getAttribute("data-color") || cb.style.accentColor || "#00ffaa";
+            const accentColor = cb.getAttribute("data-color") || "#00ffaa";
+            if (chip) {
+                chip.classList.toggle("checked", cb.checked);
+                chip.style.borderColor = cb.checked ? accentColor : "var(--border)";
+                chip.style.background = cb.checked ? "rgba(0,255,170,0.1)" : "rgba(255,255,255,0.03)";
+            }
             if (labelSpan) {
-                labelSpan.style.color = cb.checked ? accentColor : "";
+                labelSpan.style.color = cb.checked ? accentColor : "var(--text)";
             }
         });
     }
