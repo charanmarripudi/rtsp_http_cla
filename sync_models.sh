@@ -9,7 +9,7 @@ PI_LOCAL_IP="10.246.47.179"
 PI_TAILSCALE_HOST="raspberrypi.tail43e835.ts.net"
 PI_TAILSCALE_IP="100.75.167.102"
 PI_USER="algo"
-PI_PASS="QuantyxEdgeBSK@70"
+PI_PASS="\${PI_PASS:-}"
 PI_MODELS_DIR="/home/algo/Documents/rtsp_http_cla/models"
 
 # 1. Determine Host Connection (Local Wi-Fi vs. Tailscale)
