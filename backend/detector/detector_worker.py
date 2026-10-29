@@ -1,0 +1,1856 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
+os.environ["NUMEXPR_NUM_THREADS"] = "2"
+os.environ["TORCH_NUM_THREADS"] = "2"
+os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|timeout;5000000"
+
+import cv2, subprocess, time, threading, queue, json, math, glob, hashlib, traceback
+from collections import Counter
+import numpy as np
+try:
+    cv2.setNumThreads(1)
+    cv2.ocl.setUseOpenCL(False)
+except Exception:
+    pass
+from datetime import datetime
+from ultralytics import YOLO
+from ultralytics.utils.plotting import Annotator, colors
+try:
+    import psycopg2
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    PSYCOPG2_AVAILABLE = False
+
+# Load .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+from pathlib import Path
+import sys
+
+_curr = Path(__file__).resolve()
+BASE_DIR = None
+for p in [_curr.parent, _curr.parent.parent, _curr.parent.parent.parent]:
+    if (p / "models").is_dir() and (p / "backend").is_dir():
+        BASE_DIR = p
+        break
+if BASE_DIR is None:
+    BASE_DIR = _curr.parents[2] if len(_curr.parents) > 2 else _curr.parent.parent
+
+BACKEND_DIR = BASE_DIR / "backend"
+DETECTOR_DIR = BACKEND_DIR / "detector"
+
+for p in [str(DETECTOR_DIR), str(BACKEND_DIR), str(BASE_DIR)]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+# Optimize PyTorch CPU threading to 2 dedicated cores on Raspberry Pi 4 CPU
+try:
+    import torch
+    torch.set_num_threads(2)
+    if hasattr(torch, "set_num_interop_threads"):
+        torch.set_num_interop_threads(1)
+except Exception:
+    pass
+
+import re
+
+from alert_store import DB_DSN, ensure_alerts_schema, insert_alert_db, insert_alert_via_psql
+
+try:
+    from vehicle_speed_tracker.speed_tracker import VehicleSpeedTracker
+except ImportError:
+    try:
+        from speed_tracker import VehicleSpeedTracker
+    except ImportError:
+        VehicleSpeedTracker = None
+
+try:
+    from crowd_tracker.Crowd import CrowdMonitoring
+except ImportError:
+    try:
+        from Crowd import CrowdMonitoring
+    except ImportError:
+        CrowdMonitoring = None
+
+YOLO_CACHE = {}
+
+# ------------------------------------------------------------------------------
+# TUNABLE KNOBS
+# ------------------------------------------------------------------------------
+# Shorter track age (1.0s) ensures snappy box movement that tracks moving people cleanly
+TRACK_MAX_AGE_S = 1.0
+
+# 0.0 EMA gives 100% instant weight to fresh coordinates so boxes lock tightly to moving objects with zero lag
+BOX_EMA_ALPHA = 0.0
+
+# Minimum IoU overlap to consider two boxes the same detection (same-class NMS)
+NMS_SAME_IOU_THRESH = 0.30
+NMS_SAME_IO_MIN_THRESH = 0.50
+
+# Minimum IoU overlap to suppress the weaker side of an opposite-class pair
+# (e.g.  Safety-Vest vs NO-Safety-Vest on the same person)
+NMS_OPP_IOU_THRESH = 0.20
+NMS_OPP_IO_MIN_THRESH = 0.30
+
+# Hard floor for YOLO confidence passed to model.predict().
+# Keeping this at 0.06 lets us catch low-confidence detections for per-class
+# post-filtering, but we apply a stricter per-class gate afterwards.
+PREDICT_CONF_FLOOR = 0.10   # raised from 0.06 -> fewer ghost boxes fed into NMS
+
+# Scheduler inter-camera sleep (seconds). Allows CPU cooldown and prevents thermal throttling.
+SCHEDULER_SLEEP_S = 0.06
+
+# Label rendering
+LABEL_FONT_SCALE   = 0.55
+LABEL_THICKNESS    = 1
+LABEL_BOX_PADDING  = 5
+
+def clean_str(s):
+    res = re.sub(r'[^a-z0-9]', '', str(s).lower())
+    return res.replace("saftey", "safety")
+
+def extract_negation_and_core(s):
+    s_str = str(s).strip()
+    if " - " in s_str:
+        s_str = s_str.split(" - ")[-1]
+    elif ":" in s_str:
+        s_str = s_str.split(":")[-1]
+    elif "/" in s_str:
+        s_str = s_str.split("/")[-1]
+        
+    cleaned = clean_str(s_str)
+    
+    # Generic violation keywords
+    if cleaned in ("none", "noppe", "noviolation", "violation", "withoutppe"):
+        return True, "violation", cleaned
+
+    neg_prefixes = ["no", "without", "non", "un"]
+    is_neg = False
+    core = cleaned
+    for p in neg_prefixes:
+        if cleaned.startswith(p):
+            is_neg = True
+            core = cleaned[len(p):]
+            break
+    
+    synonym_map = {
+        "hardhat": "headgear",
+        "helmet": "headgear",
+        "safetyhelmet": "headgear",
+        "headprotection": "headgear",
+        "head": "headgear",
+        "vest": "bodyvest",
+        "safetyvest": "bodyvest",
+        "reflectivevest": "bodyvest",
+        "jacket": "bodyvest",
+        "mask": "facemask",
+        "facemask": "facemask",
+        "facecover": "facemask",
+        "goggles": "eyegoggles",
+        "glasses": "eyegoggles",
+        "safetyglasses": "eyegoggles",
+        "eyewear": "eyegoggles",
+        "glove": "handgloves",
+        "gloves": "handgloves",
+        "handglove": "handgloves",
+        "shoe": "footshoes",
+        "shoes": "footshoes",
+        "boot": "footshoes",
+        "boots": "footshoes",
+        "safetyshoe": "footshoes",
+        "safetyshoes": "footshoes",
+        "person": "person",
+        "worker": "person",
+        "human": "person",
+        "man": "person",
+        "woman": "person",
+        "fire": "fire",
+        "flame": "fire",
+        "smoke": "smoke",
+    }
+    mapped_core = synonym_map.get(core, core)
+    return is_neg, mapped_core, cleaned
+
+def match_class(box_cls, enabled_cls):
+    """
+    Robust negation and synonym-aware class matcher.
+    Returns True if box_cls matches enabled_cls dynamically across models.
+    """
+    if not box_cls or not enabled_cls:
+        return False
+        
+    b_neg, b_core, b_clean = extract_negation_and_core(box_cls)
+    e_neg, e_core, e_clean = extract_negation_and_core(enabled_cls)
+    
+    if b_clean == e_clean:
+        return True
+        
+    if b_neg != e_neg:
+        return False
+        
+    # Generic violation matching (e.g. 'none' from construction.pt matches 'NO-Hardhat' / 'NO-Safety Vest')
+    if b_core == "violation" or e_core == "violation":
+        return True
+        
+    if b_core == e_core:
+        return True
+        
+    if (b_core in e_core or e_core in b_core) and len(b_core) >= 3 and len(e_core) >= 3:
+        return True
+        
+    return False
+
+INFERENCE_LOCK = threading.RLock()
+
+def get_yolo_model(model_path):
+    resolved_path = str(model_path)
+    m_dir = os.path.join(str(BASE_DIR), "models")
+    
+    if not os.path.exists(resolved_path):
+        basename = os.path.basename(resolved_path)
+        candidates = [
+            os.path.join(m_dir, resolved_path),
+            os.path.join(m_dir, basename),
+            os.path.join(str(BASE_DIR), basename),
+            os.path.join(str(BASE_DIR), "backend", "models", basename)
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                resolved_path = c
+                break
+
+    if not os.path.exists(resolved_path):
+        if "vehicle_speed" in resolved_path or "speed" in resolved_path:
+            fallback = os.path.join(str(BASE_DIR), "models", "yolov8n.pt")
+            if not os.path.exists(fallback):
+                fallback = os.path.join(str(BASE_DIR), "yolov8n.pt")
+            if os.path.exists(fallback):
+                print(f"[CACHE-FALLBACK] vehicle_speed.pt not found on disk, falling back to {fallback}", flush=True)
+                resolved_path = fallback
+            else:
+                return None
+        else:
+            # File is not on disk - return None to prevent Ultralytics from freezing with GitHub 429 errors
+            return None
+
+    if resolved_path not in YOLO_CACHE:
+        with INFERENCE_LOCK:
+            if resolved_path not in YOLO_CACHE:
+                try:
+                    print(f"[CACHE] Loading model weights into memory: {resolved_path}", flush=True)
+                    model = YOLO(resolved_path)
+                    # Warm up model once with a dummy frame to avoid PyTorch first-pass graph compilation latency
+                    try:
+                        dummy_frame = np.zeros((480, 854, 3), dtype=np.uint8)
+                        if 'torch' in globals() and hasattr(torch, 'inference_mode'):
+                            with torch.inference_mode():
+                                model.predict(source=dummy_frame, imgsz=480, verbose=False)
+                        else:
+                            model.predict(source=dummy_frame, imgsz=480, verbose=False)
+                        print(f"[CACHE] Model warmed up successfully: {resolved_path}", flush=True)
+                    except Exception as we:
+                        print(f"[CACHE-WARN] Warmup skipped: {we}", flush=True)
+                    YOLO_CACHE[resolved_path] = model
+                except Exception as e:
+                    print(f"[CACHE-ERR] Could not load model weights {resolved_path}: {e}", flush=True)
+                    return None
+    return YOLO_CACHE.get(resolved_path)
+
+def get_alerts_base_url():
+    try:
+        env_url = os.getenv("PUBLIC_URL") or os.getenv("TAILSCALE_URL") or os.getenv("BASE_URL")
+        if env_url and not env_url.startswith("("):
+            return env_url.strip()
+        candidate_paths = [
+            os.path.join(str(BASE_DIR), "hls", "public_url.txt"),
+            os.path.join(str(BASE_DIR), "public_url.txt"),
+            "/home/algo/rtsp_http_cla/hls/public_url.txt",
+            "hls/public_url.txt"
+        ]
+        for cp in candidate_paths:
+            if os.path.exists(cp):
+                with open(cp) as f:
+                    val = f.read().strip()
+                    if val and not val.startswith("(") and ("http://" in val or "https://" in val):
+                        return val
+    except: pass
+    return ""
+
+def is_opposite_class(cls1, cls2):
+    try:
+        b_neg, b_core, _ = extract_negation_and_core(cls1)
+        e_neg, e_core, _ = extract_negation_and_core(cls2)
+        if b_neg != e_neg and b_core == e_core and len(b_core) >= 3:
+            return True
+    except Exception:
+        pass
+    return False
+
+DYNAMIC_CLASS_COLOR_MAP = {
+    # Violations (NO-PPE) -> Distinct Warning Colors (Red, Orange, Magenta, Pink)
+    "no-safety-vest": (0, 0, 255),        # Bright Crimson Alert Red (BGR)
+    "no-vest": (0, 0, 255),
+    "nosafetyvest": (0, 0, 255),
+    "novest": (0, 0, 255),
+    "no-saftey-vest": (0, 0, 255),
+
+    "no-hardhat": (0, 100, 255),         # Vivid Amber Orange (BGR)
+    "no-helmet": (0, 100, 255),
+    "nohardhat": (0, 100, 255),
+    "nohelmet": (0, 100, 255),
+
+    "no-mask": (255, 0, 255),            # Electric Magenta / Fuchsia (BGR)
+    "nomask": (255, 0, 255),
+
+    "no-gloves": (200, 80, 255),         # Neon Pink (BGR)
+    "nogloves": (200, 80, 255),
+
+    "no-goggles": (220, 30, 180),        # Deep Violet (BGR)
+    "nogoggles": (220, 30, 180),
+    "no-glasses": (220, 30, 180),
+
+    "no-shoes": (0, 140, 220),           # Amber Rust (BGR)
+    "noshoes": (0, 140, 220),
+    "no-boots": (0, 140, 220),
+
+    # Compliant Equipment -> Emerald Green, Cyan Sky-Blue, Lemon Yellow
+    "safety-vest": (255, 220, 0),        # Electric Sky Blue / Cyan (BGR)
+    "vest": (255, 220, 0),
+    "saftey-vest": (255, 220, 0),
+
+    "hardhat": (0, 230, 80),             # Emerald Lime Green (BGR)
+    "helmet": (0, 230, 80),
+
+    "mask": (0, 230, 255),               # Lemon Yellow (BGR)
+    "goggles": (255, 120, 30),           # Cobalt Blue (BGR)
+    "gloves": (180, 230, 50),            # Turquoise Teal (BGR)
+    "shoes": (50, 205, 50),              # Spring Green (BGR)
+    "boots": (50, 205, 50),
+
+    # Objects & People
+    "person": (200, 100, 50),            # Slate Blue (BGR)
+    "worker": (200, 100, 50),
+    "human": (200, 100, 50),
+    "fire": (0, 0, 255),                 # Pure Red
+    "smoke": (180, 180, 180),            # Silver Grey
+}
+
+def get_dynamic_class_color(class_name):
+    """
+    Returns a unique, fixed, high-contrast BGR color for each class name.
+    Guarantees NO-Hardhat, NO-Safety Vest, NO-Mask, etc., have completely distinct colors.
+    """
+    if not class_name:
+        return (0, 255, 255)
+    
+    norm_name = clean_str(class_name).replace("_", "-").replace(" ", "-")
+    if norm_name in DYNAMIC_CLASS_COLOR_MAP:
+        return DYNAMIC_CLASS_COLOR_MAP[norm_name]
+        
+    for k, v in DYNAMIC_CLASS_COLOR_MAP.items():
+        if k in norm_name or norm_name in k:
+            return v
+            
+    h = int(hashlib.md5(norm_name.encode('utf-8')).hexdigest(), 16)
+    palette = [
+        (0, 140, 255),   # Vivid Orange
+        (255, 190, 40),  # Electric Cyan
+        (30, 45, 255),   # Coral Red
+        (0, 230, 115),   # Emerald Green
+        (180, 20, 255),  # Magenta
+        (0, 215, 255),   # Golden Yellow
+        (255, 105, 180), # Neon Pink
+        (210, 230, 0),   # Turquoise
+        (50, 205, 50),   # Lime Green
+        (238, 130, 238), # Violet
+        (30, 144, 255),  # Sky Blue
+        (255, 215, 0),   # Gold
+        (255, 69, 0),    # Red Orange
+        (0, 255, 127),   # Spring Green
+    ]
+    return palette[h % len(palette)]
+
+def get_config_for_model(model_configs, m_name):
+    if not isinstance(model_configs, dict) or not model_configs:
+        return {}
+    m_clean = m_name.replace(".pt", "")
+    m_norm = m_clean.lower().replace("_", "-").replace(" ", "-")
+    for k, v in model_configs.items():
+        if isinstance(v, dict):
+            k_clean = str(k).replace(".pt", "")
+            k_norm = k_clean.lower().replace("_", "-").replace(" ", "-")
+            if k_norm == m_norm or k_clean == m_clean:
+                return v
+    if "enabled_classes" in model_configs or "class_configs" in model_configs or "conf" in model_configs:
+        return model_configs
+    return {}
+
+class InferenceScheduler:
+    """
+    Centralized, Fair Multi-Camera Inference Scheduler.
+    Executes AI inference in strict round-robin sequence across all active cameras.
+    Guarantees exactly ONE PyTorch inference runs on the Pi CPU at any time,
+    eliminating lock contention, overheating, and thread starvation.
+    """
+    def __init__(self):
+        self._workers = {}
+        self._lock = threading.Lock()
+        self._thread = None
+        self._stop_event = threading.Event()
+
+    def register_worker(self, worker):
+        with self._lock:
+            self._workers[worker.cam_id] = worker
+            worker._needs_immediate_inference = True
+            print(f"[SCHEDULER] Registered Camera {worker.cam_id} into Central Inference Scheduler (Total Active: {len(self._workers)})", flush=True)
+        self.ensure_running()
+
+    def unregister_worker(self, worker):
+        with self._lock:
+            self._workers.pop(worker.cam_id, None)
+            print(f"[SCHEDULER] Unregistered Camera {worker.cam_id} from Central Inference Scheduler (Remaining Active: {len(self._workers)})", flush=True)
+
+    def ensure_running(self):
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._stop_event.clear()
+                self._thread = threading.Thread(target=self._run_loop, daemon=True, name="CentralInferenceScheduler")
+                self._thread.start()
+
+    def _run_loop(self):
+        print("[SCHEDULER] Centralized Multi-Camera Inference Scheduler active", flush=True)
+        while not self._stop_event.is_set():
+            with self._lock:
+                new_workers = [w for w in self._workers.values() if getattr(w, '_needs_immediate_inference', False)]
+                other_workers = [w for w in self._workers.values() if not getattr(w, '_needs_immediate_inference', False)]
+                active_workers = new_workers + other_workers
+
+            if not active_workers:
+                time.sleep(0.05)
+                continue
+
+            for worker in active_workers:
+                if self._stop_event.is_set():
+                    break
+                if worker._stop_event.is_set():
+                    continue
+                try:
+                    worker.run_single_inference_cycle()
+                    worker._needs_immediate_inference = False
+                except Exception as e:
+                    print(f"[SCHEDULER-ERR] Camera {worker.cam_id} inference error: {e}", flush=True)
+
+                time.sleep(SCHEDULER_SLEEP_S)
+
+GLOBAL_INFERENCE_SCHEDULER = InferenceScheduler()
+
+
+class DetectorWorker:
+    @property
+    def model_configs(self):
+        return getattr(self, "_model_configs", {})
+
+    @model_configs.setter
+    def model_configs(self, val):
+        self._model_configs = val or {}
+        new_roi = self._model_configs.get("roi_polygon")
+        if new_roi != getattr(self, "roi_polygon", None):
+            self.roi_polygon = new_roi
+            if hasattr(self, "_box_lock"):
+                with self._box_lock:
+                    self._tracked_boxes = []
+        print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, roi_polygon={self.roi_polygon}", flush=True)
+
+    def __init__(self, rtsp_url, output_dir, model_paths, conf=0.20, iou=0.45, location="Camera", model_configs=None):
+        self._model_configs = model_configs or {}
+        self.roi_polygon = self._model_configs.get("roi_polygon") if isinstance(self._model_configs, dict) else None
+        self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
+        self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
+        self.is_speed_worker = (str(self.cam_id) == "speed")
+        _check_models = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+
+        def _check_crowd(models):
+            if str(self.cam_id) == "crowd":
+                return True
+            for mp in models:
+                m_str = str(mp).lower()
+                if "crowd" in m_str:
+                    return True
+                if "yolov8n" in m_str:
+                    cfg = get_config_for_model(self.model_configs, os.path.basename(mp)) if self.model_configs else {}
+                    enabled = cfg.get("enabled_classes") if isinstance(cfg, dict) else None
+                    if enabled is None or any("person" in str(e).lower() for e in enabled):
+                        return True
+            return False
+
+        self.is_crowd_worker = _check_crowd(_check_models)
+        self.fps = 10.0
+        self.width, self.height = 640, 360
+        self._latest_raw_frame = None
+        self._latest_speed_frame = None
+        self._tracked_boxes = []
+        self._prev_inference_boxes = []
+        self._frame_lock, self._box_lock = threading.Lock(), threading.Lock()
+        self._stop_event = threading.Event()
+        self._last_frame_time, self._cap_ok = time.time(), True
+        self.alert_timers, self.alert_triggered = {}, set()
+        self.speed_limit_kmh = float(os.getenv("TERMINAL_SPEED_LIMIT", "10.0"))
+        self.road_distance_meters = float(os.getenv("TERMINAL_GATE_GANTRY_METERS", "20.0"))
+        self.line_a_ratio = float(os.getenv("LINE_A_RATIO", "0.40"))
+        self.line_b_ratio = float(os.getenv("LINE_B_RATIO", "0.75"))
+        self.vehicle_counts = Counter()
+        self.overspeed_count = 0
+        self.speed_records = []
+        if isinstance(model_paths, list):
+            seen = []
+            for p in model_paths:
+                if p not in seen: seen.append(p)
+            self.model_paths = seen
+        else:
+            self.model_paths = model_paths
+        self.models = None
+        self._db_conn = None
+        self._start_time = time.time()
+        self._models_active_time = None
+        self._first_box_logged = False
+        self._ema_tracks = {}
+        self._ema_next_id = 0
+
+        # Standalone VehicleSpeedTracker Engine (Low-CPU imgsz=320, skip=2)
+        if self.is_speed_worker and VehicleSpeedTracker is not None:
+            veh_model = self.model_paths[0] if (isinstance(self.model_paths, list) and self.model_paths) else str(self.model_paths)
+            speed_cfg_file = os.path.join(BASE_DIR, "speed_config.json")
+            persisted_cfg = {}
+            if os.path.exists(speed_cfg_file):
+                try:
+                    with open(speed_cfg_file, "r") as scf:
+                        persisted_cfg = json.load(scf)
+                except: pass
+            
+            line_a_cfg = persisted_cfg.get("line_a", {"x1_pct": 5, "y1_pct": int(self.line_a_ratio * 100), "x2_pct": 95, "y2_pct": int(self.line_a_ratio * 100)})
+            line_b_cfg = persisted_cfg.get("line_b", {"x1_pct": 5, "y1_pct": int(self.line_b_ratio * 100), "x2_pct": 95, "y2_pct": int(self.line_b_ratio * 100)})
+
+            speed_cfg = {
+                "model_path": veh_model,
+                "speed_limit_kmh": float(persisted_cfg.get("speed_limit_kmh", self.speed_limit_kmh)),
+                "road_distance_meters": float(persisted_cfg.get("road_distance_meters", self.road_distance_meters)),
+                "confidence_threshold": max(0.20, float(self.conf)),
+                "imgsz": 320,
+                "frame_skip": 1,
+                "line_a": line_a_cfg,
+                "line_b": line_b_cfg,
+                "allowed_classes": ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle", "van", "bus"],
+                "alerts_dir": os.path.join(str(BASE_DIR), "alerts")
+            }
+            self.speed_tracker_engine = VehicleSpeedTracker(speed_cfg)
+            try:
+                dummy = np.zeros((320, 320, 3), dtype=np.uint8)
+                self.speed_tracker_engine.model.predict(source=dummy, imgsz=320, verbose=False)
+                print(f"[SPEED-ENGINE] Pre-warmed YOLO model weights in memory", flush=True)
+            except Exception as e:
+                print(f"[SPEED-ENGINE] Model pre-warm warning: {e}", flush=True)
+            print(f"[SPEED-ENGINE] Initialized standalone VehicleSpeedTracker for Camera {self.cam_id} (imgsz=320, limit={self.speed_limit_kmh}km/h)", flush=True)
+        else:
+            self.speed_tracker_engine = None
+
+        # Standalone CrowdMonitoring Engine (YOLOv8n Person Tracking & ROI Group Clustering)
+        if self.is_crowd_worker and CrowdMonitoring is not None:
+            crowd_model = "yolov8n.pt"
+            roi_c = None
+            if self.roi_polygon and len(self.roi_polygon) == 2:
+                try:
+                    min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                    max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                    min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                    max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                    roi_c = (int(min_x * self.width), int(min_y * self.height), int(max_x * self.width), int(max_y * self.height))
+                except Exception:
+                    roi_c = None
+
+            cfg = get_config_for_model(self.model_configs, "yolov8n.pt") if self.model_configs else {}
+            class_cfg = cfg.get("class_configs", {}).get("person", {}) if isinstance(cfg, dict) else {}
+            thresh = int(class_cfg.get("crowd_threshold") or cfg.get("crowd_threshold") or os.getenv("CROWD_THRESHOLD", "4"))
+            dist_px = int(cfg.get("group_distance_px", 180)) if isinstance(cfg, dict) else 180
+
+            self.crowd_engine = CrowdMonitoring(
+                model_path=crowd_model,
+                crowd_threshold=thresh,
+                group_distance_px=dist_px,
+                roi_coords=roi_c,
+                alert_cooldown_seconds=4.0
+            )
+            self.crowd_stats = {
+                "in_roi_count": 0,
+                "total_visible": 0,
+                "clusters_count": 0,
+                "has_crowd": False,
+                "is_alert": False
+            }
+            print(f"[CROWD-ENGINE] Initialized standalone CrowdMonitoring for Camera {self.cam_id} using yolov8n.pt (threshold={thresh})", flush=True)
+        else:
+            self.crowd_engine = None
+            self.crowd_stats = {}
+
+        self._latest_jpeg_frame = None
+        print(f"[TIMER-START] Camera {self.cam_id} Start request initialized at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
+
+    def get_jpeg_frame(self):
+        with self._frame_lock:
+            return getattr(self, '_latest_jpeg_frame', None)
+
+    def update_models(self, model_paths, model_configs=None, conf=None, iou=None, location=None):
+        if model_paths is not None:
+            paths = model_paths if isinstance(model_paths, list) else [model_paths]
+            seen = []
+            for p in paths:
+                if p not in seen: seen.append(p)
+            self.model_paths = seen
+            self.models = [get_yolo_model(mp) for mp in seen]
+            self._models_active_time = time.time()
+        if model_configs is not None:
+            self.model_configs = model_configs
+        if conf is not None:
+            self.conf = conf
+        if iou is not None:
+            self.iou = iou
+        if location is not None:
+            self.location = location
+        if hasattr(self, "_box_lock"):
+            with self._box_lock:
+                self._tracked_boxes = []
+        # Reset EMA tracks when models change so stale boxes from old model don't linger
+        self._ema_tracks = {}
+        self._ema_next_id = 0
+        self._needs_immediate_inference = True
+
+        _check_models = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+        def _check_crowd_dyn(models):
+            if str(self.cam_id) == "crowd":
+                return True
+            for mp in models:
+                m_str = str(mp).lower()
+                if "crowd" in m_str:
+                    return True
+                if "yolov8n" in m_str:
+                    cfg = get_config_for_model(self.model_configs, os.path.basename(mp)) if self.model_configs else {}
+                    enabled = cfg.get("enabled_classes") if isinstance(cfg, dict) else None
+                    if enabled is None or any("person" in str(e).lower() for e in enabled):
+                        return True
+            return False
+
+        self.is_crowd_worker = _check_crowd_dyn(_check_models)
+        if self.is_crowd_worker and CrowdMonitoring is not None:
+            crowd_model = "yolov8n.pt"
+            cfg = get_config_for_model(self.model_configs, "yolov8n.pt") if self.model_configs else {}
+            class_cfg = cfg.get("class_configs", {}).get("person", {}) if isinstance(cfg, dict) else {}
+            thresh = int(class_cfg.get("crowd_threshold") or cfg.get("crowd_threshold") or os.getenv("CROWD_THRESHOLD", "4"))
+            dist_px = int(cfg.get("group_distance_px", 180)) if isinstance(cfg, dict) else 180
+            roi_c = None
+            if self.roi_polygon and len(self.roi_polygon) == 2:
+                try:
+                    min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                    max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                    min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                    max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                    roi_c = (int(min_x * self.width), int(min_y * self.height), int(max_x * self.width), int(max_y * self.height))
+                except Exception:
+                    roi_c = None
+            self.crowd_engine = CrowdMonitoring(
+                model_path=crowd_model,
+                crowd_threshold=thresh,
+                group_distance_px=dist_px,
+                roi_coords=roi_c,
+                alert_cooldown_seconds=4.0
+            )
+
+        if not getattr(self, 'is_speed_worker', False) and not getattr(self, 'is_crowd_worker', False):
+            GLOBAL_INFERENCE_SCHEDULER.register_worker(self)
+        print(f"[WORKER-DYNAMIC-UPDATE] Camera {getattr(self, 'cam_id', '?')} dynamically updated models to {self.model_paths} in 0ms without restarting RTSP or FFmpeg", flush=True)
+
+    def stop(self):
+        self._stop_event.set()
+        if not getattr(self, 'is_speed_worker', False) and not getattr(self, 'is_crowd_worker', False):
+            GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)
+
+    def _get_db_conn(self):
+        if not PSYCOPG2_AVAILABLE:
+            return None
+        if self._db_conn is None or getattr(self._db_conn, 'closed', 1) != 0:
+            try:
+                self._db_conn = psycopg2.connect(DB_DSN, connect_timeout=5)
+            except Exception as e:
+                print(f"[ALERT-DB-CONN-ERR] PostgreSQL connection to {DB_DSN} failed: {e}", flush=True)
+                self._db_conn = None
+        return self._db_conn
+
+    def _create_ffmpeg(self):
+        os.makedirs(self.output_dir, exist_ok=True)
+        for f in glob.glob(os.path.join(self.output_dir, "*")):
+            try:
+                if os.path.isfile(f) or os.path.islink(f):
+                    os.remove(f)
+            except Exception:
+                pass
+
+        session_id = int(time.time())
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+            "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{self.width}x{self.height}", 
+            "-r", str(int(self.fps)), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
+            "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
+            "-profile:v", "baseline", "-level:v", "3.1",
+            "-b:v", "800k", "-maxrate", "1200k", "-bufsize", "2000k",
+            "-g", str(int(self.fps)), 
+            "-keyint_min", str(int(self.fps)), "-sc_threshold", "0",
+            "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
+            "-hls_flags", "delete_segments+independent_segments+discont_start+omit_endlist+temp_file", 
+            "-hls_segment_filename", os.path.join(self.output_dir, f"segment_{session_id}_%d.ts"), 
+            os.path.join(self.output_dir, "playlist.m3u8")
+        ]
+        # NOTE: hls_list_size=6 keeps 6x2s = 12s of segments for remote viewers to buffer
+        # without stuttering over high-latency tunnels (ngrok/cloudflare).
+        log = open(os.path.join(self.output_dir, "ffmpeg.log"), "a")
+        print(f"[LOG] Camera {self.cam_id} detector stream started with resolution: {self.width}x{self.height}, FPS: {self.fps}, Bitrate: 350k (max 450k)", flush=True)
+        return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL, bufsize=10*1024*1024)
+
+    # --------------------------------------------------------------------------
+    # NMS HELPERS
+    # --------------------------------------------------------------------------
+    @staticmethod
+    def _box_iou_and_io_min(b1, b2):
+        """Compute IoU and intersection-over-min-area for two [x1,y1,x2,y2] boxes."""
+        x1 = max(b1[0], b2[0]); y1 = max(b1[1], b2[1])
+        x2 = min(b1[2], b2[2]); y2 = min(b1[3], b2[3])
+        if x2 <= x1 or y2 <= y1:
+            return 0.0, 0.0
+        inter  = (x2 - x1) * (y2 - y1)
+        area1  = max(1.0, (b1[2]-b1[0]) * (b1[3]-b1[1]))
+        area2  = max(1.0, (b2[2]-b2[0]) * (b2[3]-b2[1]))
+        union  = area1 + area2 - inter
+        return inter / max(1.0, union), inter / min(area1, area2)
+
+    @staticmethod
+    def _apply_nms(boxes):
+        """
+        Full multi-class NMS pass over a list of (xyxy, color, conf, cls_name) tuples.
+        - Boxes sorted by confidence (high->low).
+        - Same-class duplicates removed when IoU >= NMS_SAME_IOU_THRESH or io_min >= NMS_SAME_IO_MIN_THRESH.
+        - Opposite-class pairs resolved by keeping the higher-confidence box when
+          IoU >= NMS_OPP_IOU_THRESH or io_min >= NMS_OPP_IO_MIN_THRESH.
+        """
+        if not boxes:
+            return []
+        sorted_boxes = sorted(boxes, key=lambda x: x[2], reverse=True)
+        kept = []
+        veh_kws = ("car", "truck", "bus", "van", "pickup", "bike", "vehicle")
+        for item in sorted_boxes:
+            b1, col1, conf1, cls1 = item
+            is_veh1 = any(vk in cls1.lower() for vk in veh_kws)
+            suppress = False
+            for k_item in kept:
+                b2, col2, conf2, cls2 = k_item
+                is_veh2 = any(vk in cls2.lower() for vk in veh_kws)
+                iou, io_min = DetectorWorker._box_iou_and_io_min(b1, b2)
+                is_same = match_class(cls1, cls2)
+                is_opp  = is_opposite_class(cls1, cls2)
+                if is_same and (iou >= NMS_SAME_IOU_THRESH or io_min >= NMS_SAME_IO_MIN_THRESH):
+                    suppress = True; break
+                if is_veh1 and is_veh2 and (iou >= 0.40 or io_min >= 0.50):
+                    suppress = True; break
+                if is_opp and (iou >= NMS_OPP_IOU_THRESH or io_min >= NMS_OPP_IO_MIN_THRESH):
+                    suppress = True; break
+            if not suppress:
+                kept.append(item)
+        return kept
+
+    def run_single_inference_cycle(self):
+        """
+        Executed by the Centralized InferenceScheduler in the background.
+        1. Captures the latest live frame ONCE.
+        2. Evaluates all assigned models on that identical frame snapshot.
+        3. Fuses detections with per-model filtering, negation handling, and multi-model NMS.
+        4. Updates the smooth bounding box tracker and checks the 3.0s alert timer.
+        """
+        if self._stop_event.is_set():
+            return
+
+        with self._frame_lock:
+            f = self._latest_raw_frame
+
+        if f is None:
+            return
+
+        # -- Resolve output canvas size --------------------------------------
+        orig_h, orig_w = f.shape[:2]
+        # We run inference on the ORIGINAL raw frame so YOLO gets best quality.
+        # We then scale coordinates to the output stream resolution afterward.
+        scale_x = float(self.width)  / max(1.0, float(orig_w))
+        scale_y = float(self.height) / max(1.0, float(orig_h))
+
+        f_h, f_w = self.height, self.width
+
+        cur_cls, now = set(), time.time()
+        raw_boxes = []   # list of (xyxy_in_output_res, color, conf, cls_name)
+
+        if not self.models:
+            paths = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+            self.models = [get_yolo_model(mp) for mp in paths]
+            self._models_active_time = time.time()
+
+        for midx, model in enumerate(self.models):
+            if model is None:
+                continue
+            m_path = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
+            m_name = os.path.basename(m_path)
+
+            m_conf = self.conf
+            m_iou  = self.iou
+            enabled_classes = None
+            is_veh_model    = ("vehicle" in m_name.lower() or "speed" in m_name.lower())
+            default_imgsz   = 320 if is_veh_model else int(os.getenv("DEFAULT_IMGSZ", "640"))
+            m_imgsz         = default_imgsz
+            cfg             = get_config_for_model(self.model_configs, m_name)
+            class_configs   = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}
+            if cfg and isinstance(cfg, dict):
+                m_conf          = float(cfg.get("conf", self.conf))
+                m_iou           = float(cfg.get("iou", self.iou))
+                enabled_classes = cfg.get("enabled_classes")
+                m_imgsz         = int(cfg.get("imgsz", default_imgsz))
+
+            if m_imgsz % 32 != 0:
+                m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
+
+            filter_classes = enabled_classes if (enabled_classes is not None) else []
+            if not filter_classes and class_configs:
+                filter_classes = list(class_configs.keys())
+
+            effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
+            min_class_conf = effective_conf
+            if class_configs and isinstance(class_configs, dict):
+                for cc in class_configs.values():
+                    if isinstance(cc, dict) and "conf" in cc:
+                        min_class_conf = min(min_class_conf, float(cc["conf"]))
+
+            predict_kwargs = {
+                "source": f,
+                "conf":   max(PREDICT_CONF_FLOOR, min(min_class_conf, effective_conf)),
+                "iou":    m_iou,
+                "imgsz":  m_imgsz,
+                "verbose": False
+            }
+
+            try:
+                t_infer_start = time.time()
+                if 'torch' in globals() and hasattr(torch, 'inference_mode'):
+                    with torch.inference_mode():
+                        results = model.predict(**predict_kwargs)
+                else:
+                    results = model.predict(**predict_kwargs)
+                infer_ms = int((time.time() - t_infer_start) * 1000)
+
+                mod_dets   = []
+                all_raw_dets = []
+                for r in results:
+                    if r.boxes:
+                        for b in r.boxes:
+                            cls_id   = int(b.cls[0].item())
+                            cls_name = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
+                            conf_val = float(b.conf[0].item())
+                            all_raw_dets.append(f"{cls_name} {conf_val:.2f}")
+                            if not filter_classes or any(match_class(cls_name, e) for e in filter_classes):
+                                mod_dets.append(f"{cls_name} {conf_val:.2f}")
+
+                print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure: {infer_ms}ms | Selected: {filter_classes if filter_classes else 'ALL'} | Filtered Match: {mod_dets if mod_dets else 'None'} | Raw YOLO Output: {all_raw_dets if all_raw_dets else 'None'} ({datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
+            except Exception as pred_err:
+                print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name}: {pred_err}", flush=True)
+                continue
+
+            for r in results:
+                if r.boxes:
+                    for b in r.boxes:
+                        cls_id   = int(b.cls[0].item())
+                        cls      = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
+                        conf_val = float(b.conf[0].item())
+
+                        if filter_classes:
+                            if not any(match_class(cls, e) for e in filter_classes):
+                                continue
+
+                        # Per-class confidence gate (hard reject)
+                        req_conf = effective_conf
+                        if class_configs:
+                            for cc_name, cc_val in class_configs.items():
+                                if match_class(cls, cc_name) and isinstance(cc_val, dict) and "conf" in cc_val:
+                                    req_conf = float(cc_val["conf"])
+                                    break
+                        if conf_val < req_conf:
+                            continue
+
+                        # Scale coordinates from original raw frame space -> output stream resolution
+                        box_raw = b.xyxy[0].cpu().numpy().tolist()
+                        rx1, ry1, rx2, ry2 = box_raw
+                        x1 = max(0, min(self.width  - 1, rx1 * scale_x))
+                        y1 = max(0, min(self.height - 1, ry1 * scale_y))
+                        x2 = max(0, min(self.width  - 1, rx2 * scale_x))
+                        y2 = max(0, min(self.height - 1, ry2 * scale_y))
+                        box_xyxy = [x1, y1, x2, y2]
+                        
+                        bw = max(0, x2 - x1)
+                        bh = max(0, y2 - y1)
+                        is_veh_cls = any(vk in cls.lower() for vk in ("car", "truck", "bus", "van", "pickup", "tank truck", "vehicle", "bike"))
+                        if is_veh_cls:
+                            # -- Filter 1: Min area / box size for 640x360 stream canvas --
+                            if bw < 14 or bh < 12 or (bw * bh) < 180:
+                                continue
+                            # -- Filter 2: Roadside reflector poles on image borders --
+                            if (bh / max(1, bw)) > 3.2 and (x1 < self.width * 0.10 or x2 > self.width * 0.90):
+                                continue
+                            # -- Filter 3: Sky filter --
+                            if y2 < self.height * 0.16:
+                                continue
+                        elif bw < 10 or bh < 10:
+                            continue
+                            
+                        cx = (x1 + x2) / 2.0
+                        cy = (y1 + y2) / 2.0
+
+                        if self.roi_polygon and len(self.roi_polygon) == 2:
+                            try:
+                                roi_x1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                                roi_y1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                                roi_x2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                                roi_y2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                                in_roi = (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2)
+                                if not in_roi:
+                                    ix1, iy1 = max(x1, roi_x1), max(y1, roi_y1)
+                                    ix2, iy2 = min(x2, roi_x2), min(y2, roi_y2)
+                                    if ix2 > ix1 and iy2 > iy1:
+                                        in_roi = True
+                                if not in_roi:
+                                    continue
+                            except Exception:
+                                pass
+
+                        color_val = get_dynamic_class_color(cls)
+                        raw_boxes.append((box_xyxy, color_val, conf_val, cls))
+
+        # -- Multi-Model NMS ---------------------------------------------------
+        kept_items = self._apply_nms(raw_boxes)
+
+        # -- Robust Vehicle Centroid & Ground Tracking Engine ------------------
+        now_t = time.time()
+        if not hasattr(self, '_ema_tracks'):
+            self._ema_tracks = {}
+            self._ema_next_id = 1
+
+        matched_ids = set()
+        vehicle_keywords = ("truck", "car", "pickup", "bike", "tank", "vehicle", "bus", "motorcycle", "van")
+
+        for b_xyxy, color_val, conf_val, cls_name in kept_items:
+            bx1, by1, bx2, by2 = b_xyxy
+            b_cx = (bx1 + bx2) / 2.0
+            b_cy = (by1 + by2) / 2.0
+            b_w  = max(1.0, bx2 - bx1)
+            b_h  = max(1.0, by2 - by1)
+            is_veh = any(vk in cls_name.lower() for vk in vehicle_keywords)
+
+            best_id, best_score = None, 0.0
+            for tid, trk in self._ema_tracks.items():
+                if tid in matched_ids:
+                    continue
+                trk_cls_lower = str(trk.get('cls', '')).lower()
+                trk_is_veh = any(vk in trk_cls_lower for vk in vehicle_keywords)
+
+                if is_veh:
+                    if not trk_is_veh:
+                        continue
+                    # Vehicle ground contact centroid matching (bottom-center tyre contact)
+                    tx1, ty1, tx2, ty2 = trk['box']
+                    t_cx = (tx1 + tx2) / 2.0
+                    t_cy = ty2  # Tyre contact
+                    curr_cx = b_cx
+                    curr_cy = by2
+                    dist = math.hypot(curr_cx - t_cx, curr_cy - t_cy)
+                    max_veh_dist = min(110.0, max(60.0, float(self.width) * 0.16))
+                    if dist <= max_veh_dist:  # Tight distance threshold prevents swapping between different cars
+                        score = max(0.01, 1.0 - (dist / max_veh_dist))
+                        if score > best_score:
+                            best_score = score
+                            best_id = tid
+                else:
+                    if not match_class(trk['cls'], cls_name):
+                        continue
+                    iou_v, io_min_v = DetectorWorker._box_iou_and_io_min(trk['box'], b_xyxy)
+                    tx1, ty1, tx2, ty2 = trk['box']
+                    t_cx = (tx1 + tx2) / 2.0
+                    t_cy = (ty1 + ty2) / 2.0
+                    dist_x = abs(b_cx - t_cx) / max(b_w, (tx2 - tx1), 1.0)
+                    dist_y = abs(b_cy - t_cy) / max(b_h, (ty2 - ty1), 1.0)
+                    dist_score = max(0.0, 1.0 - (dist_x**2 + dist_y**2) ** 0.5)
+                    score = max(iou_v * 1.2, io_min_v * 0.8, dist_score * 0.5)
+                    if score > best_score and score >= 0.10:
+                        best_score = score
+                        best_id = tid
+
+            if best_id is not None:
+                old_b = self._ema_tracks[best_id]['box']
+                a = 0.35 if is_veh else BOX_EMA_ALPHA
+                smoothed = [
+                    old_b[0] * a + b_xyxy[0] * (1 - a),
+                    old_b[1] * a + b_xyxy[1] * (1 - a),
+                    old_b[2] * a + b_xyxy[2] * (1 - a),
+                    old_b[3] * a + b_xyxy[3] * (1 - a),
+                ]
+                
+                hist = self._ema_tracks[best_id].get('history', [])
+                hist.append(1)
+                if len(hist) > 5:
+                    hist = hist[-5:]
+
+                assigned_cls = cls_name
+                if 'truck' in str(self._ema_tracks[best_id]['cls']).lower() and 'car' in cls_name.lower():
+                    assigned_cls = self._ema_tracks[best_id]['cls']
+
+                pos_hist = self._ema_tracks[best_id].get('pos_history', [])
+                pos_hist.append(((smoothed[0] + smoothed[2]) / 2.0, smoothed[3], now_t))
+                if len(pos_hist) > 25:
+                    pos_hist = pos_hist[-25:]
+
+                self._ema_tracks[best_id].update({
+                    'box':         smoothed,
+                    'color':       color_val,
+                    'conf':        conf_val,
+                    'cls':         assigned_cls,
+                    'last_seen':   now_t,
+                    'hit_count':   self._ema_tracks[best_id].get('hit_count', 0) + 1,
+                    'history':     hist,
+                    'pos_history': pos_hist,
+                })
+                matched_ids.add(best_id)
+            else:
+                new_id = self._ema_next_id
+                self._ema_next_id += 1
+                b_init = list(b_xyxy)
+                self._ema_tracks[new_id] = {
+                    'box':             b_init,
+                    'color':           color_val,
+                    'conf':            conf_val,
+                    'cls':             cls_name,
+                    'last_seen':       now_t,
+                    'first_seen':      now_t,
+                    'hit_count':       1,
+                    'history':         [1],
+                    'pos_history':     [((b_init[0] + b_init[2]) / 2.0, b_init[3], now_t)],
+                    'time_a':          None,
+                    'time_b':          None,
+                    'speed_kmh':       None,
+                    'disp_speed':      None,
+                    'is_over_speed':   False,
+                    'last_alert_time': 0.0,
+                }
+                matched_ids.add(new_id)
+
+        # Record a 0 (miss) in history for active tracks not detected in this cycle
+        for tid, trk in self._ema_tracks.items():
+            if tid not in matched_ids:
+                hist = trk.get('history', [])
+                hist.append(0)
+                if len(hist) > 5:
+                    hist = hist[-5:]
+                trk['history'] = hist
+
+        # Expire stale tracks (1.2s persistence for vehicles so new cars never inherit old timestamps)
+        for tid in list(self._ema_tracks.keys()):
+            trk_cls = self._ema_tracks[tid].get('cls', '').lower()
+            is_veh = any(vk in trk_cls for vk in vehicle_keywords)
+            max_age = 1.2 if is_veh else TRACK_MAX_AGE_S
+            if now_t - self._ema_tracks[tid].get('last_seen', 0.0) > max_age:
+                del self._ema_tracks[tid]
+                if hasattr(self, '_last_side_a') and tid in self._last_side_a:
+                    del self._last_side_a[tid]
+                if hasattr(self, '_last_side_b') and tid in self._last_side_b:
+                    del self._last_side_b[tid]
+
+        # -- Vehicle Speed Estimation & Dual-Line Timing --
+        la_y = int(self.height * getattr(self, 'line_a_ratio', 0.40))
+        lb_y = int(self.height * getattr(self, 'line_b_ratio', 0.75))
+
+        speed_limit = float(getattr(self, 'speed_limit_kmh', 10.0))
+        dist_m = float(getattr(self, 'road_distance_meters', 20.0))
+
+        for tid, trk in self._ema_tracks.items():
+            cls_lower = str(trk.get('cls', '')).lower()
+            if any(vk in cls_lower for vk in vehicle_keywords):
+                bx = trk['box']
+                cx = (bx[0] + bx[2]) / 2.0
+                cy = bx[3]  # Tyre contact point at bottom edge of bounding box
+
+                # Reset stale timing if a vehicle took > 10.0s (e.g. stopped or turned around)
+                if trk.get('time_a') is not None and (now_t - trk['time_a'] > 10.0) and trk.get('time_b') is None:
+                    trk['time_a'] = None
+                if trk.get('time_b') is not None and (now_t - trk['time_b'] > 10.0) and trk.get('time_a') is None:
+                    trk['time_b'] = None
+
+                # Check Line A (Gate Entry Line)
+                side_a = cy - la_y
+                if not hasattr(self, '_last_side_a'): self._last_side_a = {}
+                if tid in self._last_side_a:
+                    if (self._last_side_a[tid] < 0 and side_a >= 0) or (self._last_side_a[tid] > 0 and side_a <= 0):
+                        if trk.get('time_a') is None:
+                            trk['time_a'] = now_t
+                            print(f"[GATE-LINE-A] Vehicle #{tid} ({trk['cls']}) passed Line A at {now_t:.2f}s", flush=True)
+                self._last_side_a[tid] = side_a
+
+                # Check Line B (Gantry Road Line)
+                side_b = cy - lb_y
+                if not hasattr(self, '_last_side_b'): self._last_side_b = {}
+                if tid in self._last_side_b:
+                    if (self._last_side_b[tid] < 0 and side_b >= 0) or (self._last_side_b[tid] > 0 and side_b <= 0):
+                        if trk.get('time_b') is None:
+                            trk['time_b'] = now_t
+                            print(f"[GANTRY-LINE-B] Vehicle #{tid} ({trk['cls']}) passed Line B at {now_t:.2f}s", flush=True)
+                            if not hasattr(self, 'vehicle_counts'): self.vehicle_counts = Counter()
+                            if not hasattr(self, 'counted_ids'): self.counted_ids = set()
+                            if tid not in self.counted_ids:
+                                self.vehicle_counts[trk['cls']] += 1
+                                self.counted_ids.add(tid)
+                self._last_side_b[tid] = side_b
+
+                # Continuous displacement speed estimation
+                pos_hist = trk.get('pos_history', [])
+                if len(pos_hist) >= 2:
+                    curr_cx, curr_cy, curr_t = pos_hist[-1]
+                    ref_cx, ref_cy, ref_t = pos_hist[0]
+                    for h_cx, h_cy, h_t in reversed(pos_hist[:-1]):
+                        if 0.10 <= (curr_t - h_t) <= 0.85:
+                            ref_cx, ref_cy, ref_t = h_cx, h_cy, h_t
+                            break
+                    dt_h = max(0.001, curr_t - ref_t)
+                    dy_h = curr_cy - ref_cy
+                    if dt_h >= 0.08 and dy_h > 2:
+                        dist_px = max(20, lb_y - la_y)
+                        meters_per_px = dist_m / float(dist_px)
+                        calc_v = (dy_h * meters_per_px / dt_h) * 3.6
+                        if 3.0 <= calc_v <= 150.0:
+                            old_disp = trk.get('disp_speed')
+                            if old_disp is not None:
+                                trk['disp_speed'] = old_disp * 0.35 + calc_v * 0.65
+                            else:
+                                trk['disp_speed'] = calc_v
+
+                # Compute Speed when both lines crossed (Gate -> Gantry or Gantry -> Gate)
+                if trk.get('time_b') is not None and trk.get('speed_kmh') is None:
+                    if trk.get('time_a') is not None:
+                        delta_t = abs(trk['time_b'] - trk['time_a'])
+                        if 0.1 <= delta_t <= 10.0:
+                            trk['speed_kmh'] = (dist_m / delta_t) * 3.6
+                    elif trk.get('disp_speed') is not None:
+                        trk['speed_kmh'] = trk['disp_speed']
+
+                    v = trk.get('speed_kmh')
+                    if v is not None:
+                        if not hasattr(self, 'speed_records'): self.speed_records = []
+                        self.speed_records.append({
+                            "vehicle_id": tid,
+                            "cls": trk['cls'],
+                            "speed_kmh": round(v, 1),
+                            "is_over_speed": bool(v > speed_limit),
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        })
+                        if len(self.speed_records) > 200:
+                            self.speed_records = self.speed_records[-200:]
+
+                        if v > speed_limit:
+                            trk['is_over_speed'] = True
+                            trk['color'] = (0, 0, 255)  # Pure Red Alert
+                            if not hasattr(self, 'overspeed_count'): self.overspeed_count = 0
+                            self.overspeed_count += 1
+                            print(f"[ALERT] [SPEED-VIOLATION] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Limit: {speed_limit:.0f} km/h)!", flush=True)
+                            trk['should_alert_overspeed'] = True
+
+                            # Save alert snapshot
+                            try:
+                                alerts_dir = os.path.join(BASE_DIR, "alerts")
+                                os.makedirs(alerts_dir, exist_ok=True)
+                                snap_name = f"speed_violation_cam{self.cam_id}_id{tid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{int(v)}kmh.jpg"
+                                snap_path = os.path.join(alerts_dir, snap_name)
+                                cv2.imwrite(snap_path, pf if 'pf' in locals() else f)
+                                print(f"[ALERT-SAVED] Saved speed violation snapshot: {snap_path}", flush=True)
+                            except Exception as e_snap:
+                                print(f"[ALERT-SNAP-ERR] Failed to save speed snapshot: {e_snap}", flush=True)
+                        else:
+                            trk['color'] = (0, 255, 100)  # Green Normal
+                            print(f"[SPEED-NORMAL] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h", flush=True)
+
+        # Build display list from live EMA tracks
+        display_boxes = []
+        for tid, trk in self._ema_tracks.items():
+            trk_cls = trk.get('cls', '')
+            is_veh = any(vk in trk_cls.lower() for vk in vehicle_keywords)
+            max_age = 1.2 if is_veh else TRACK_MAX_AGE_S
+            age = now_t - trk.get('last_seen', 0.0)
+            if age > max_age:
+                continue
+            cur_cls.add(trk_cls)
+            
+            # Format speed label
+            speed_val = trk.get('speed_kmh') or trk.get('disp_speed')
+            conf_pct = trk.get('conf', 0.8)
+            box_header = f"{trk_cls.upper()} #{tid} ({conf_pct:.0%})"
+            sub_lbl = None
+            bx = trk.get('box', [0, 0, 0, 0])
+            by2 = bx[3]
+
+            if trk.get('is_over_speed') or (speed_val is not None and speed_val > speed_limit):
+                sub_lbl = f"OVER SPEED: {speed_val:.1f} km/h (LIMIT: {speed_limit:.0f})"
+                box_col = (0, 0, 255)  # Bright Red
+            elif speed_val is not None:
+                sub_lbl = f"SPEED: {speed_val:.1f} km/h"
+                box_col = (0, 255, 100)  # Bright Green
+            elif is_veh:
+                if by2 >= lb_y:
+                    sub_lbl = "PAST LINE B"
+                    box_col = (180, 180, 180)
+                else:
+                    sub_lbl = "APPROACHING LINE A"
+                    box_col = (0, 220, 255)
+            else:
+                box_header = f"{trk_cls} {conf_pct:.2f}"
+                box_col = trk.get('color', (0, 255, 0))
+
+            display_boxes.append({
+                'box':   trk['box'],
+                'label': box_header,
+                'sub':   sub_lbl,
+                'is_veh': is_veh,
+                'color': box_col,
+                'cls':   trk['cls'],
+                'conf':  trk['conf'],
+            })
+
+        with self._box_lock:
+            self._tracked_boxes = display_boxes
+
+        if not getattr(self, '_first_box_logged', False) and display_boxes:
+            self._first_box_logged = True
+            t_start  = getattr(self, '_start_time', None) or now_t
+            t_active = getattr(self, '_models_active_time', None) or t_start
+            delay_from_start_ms  = int((now_t - t_start)  * 1000)
+            delay_from_active_ms = int((now_t - t_active) * 1000)
+            detected_labels     = [b['label'] for b in display_boxes]
+            all_classes_str     = ", ".join(list(cur_cls)) if cur_cls else "ALL"
+            detected_classes_str = ", ".join(detected_labels)
+            print(f"\n==================================================================", flush=True)
+            print(f"[STREAM-TIMING] Camera {self.cam_id} FIRST BOUNDING BOX DETECTED & RENDERED!", flush=True)
+            print(f" -> Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}", flush=True)
+            print(f" -> Stream Active Classes   : [{all_classes_str}]", flush=True)
+            print(f" -> Stream Detected Classes : [{detected_classes_str}]", flush=True)
+            print(f" -> Delay from Click 'Start': {delay_from_start_ms}ms ({delay_from_start_ms/1000.0:.2f}s)", flush=True)
+            print(f" -> Delay from Model Active : {delay_from_active_ms}ms ({delay_from_active_ms/1000.0:.2f}s)", flush=True)
+            print(f"==================================================================\n", flush=True)
+
+        # -- Snapshot for Alerts -----------------------------------------------
+        # -- Fully Annotated Snapshot for Alerts (Includes Timing Lines, HUD, and Speed) --
+        frame_snapshot = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+        snap_h, snap_w = frame_snapshot.shape[:2]
+
+        active_mods = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+        is_speed_model = (str(self.cam_id) == "speed" or any("speed" in str(mp).lower() or "vehicle" in str(mp).lower() for mp in active_mods))
+
+        if is_speed_model:
+            # Draw timing lines onto alert snapshot
+            la_y = int(snap_h * getattr(self, 'line_a_ratio', 0.40))
+            lb_y = int(snap_h * getattr(self, 'line_b_ratio', 0.75))
+            cv2.line(frame_snapshot, (int(snap_w * 0.05), la_y), (int(snap_w * 0.95), la_y), (255, 200, 0), 2)
+            cv2.putText(frame_snapshot, "LINE A (GATE ENTRY)", (int(snap_w * 0.06), la_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 200, 0), 1, cv2.LINE_AA)
+            cv2.line(frame_snapshot, (int(snap_w * 0.05), lb_y), (int(snap_w * 0.95), lb_y), (0, 255, 100), 2)
+            cv2.putText(frame_snapshot, "LINE B (GANTRY ROAD)", (int(snap_w * 0.06), lb_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 100), 1, cv2.LINE_AA)
+
+            # Top-Left Telemetry HUD
+            hud_w, hud_h = 240, 78
+            hud_x1, hud_y1 = 12, 12
+            overlay = frame_snapshot.copy()
+            cv2.rectangle(overlay, (hud_x1, hud_y1), (hud_x1 + hud_w, hud_y1 + hud_h), (15, 15, 15), -1)
+            cv2.addWeighted(overlay, 0.82, frame_snapshot, 0.18, 0, frame_snapshot)
+            cv2.rectangle(frame_snapshot, (hud_x1, hud_y1), (hud_x1 + hud_w, hud_y1 + hud_h), (60, 60, 60), 1)
+
+            v_counts = getattr(self, 'vehicle_counts', {})
+            trucks = v_counts.get('truck', 0) + v_counts.get('pickup truck', 0)
+            cars = v_counts.get('car', 0)
+            tot_cnt = sum(v_counts.values()) if v_counts else 0
+            sp_lim = getattr(self, 'speed_limit_kmh', 10.0)
+            dist_m = getattr(self, 'road_distance_meters', 20.0)
+
+            cv2.putText(frame_snapshot, "TERMINAL SPEED MONITOR", (hud_x1 + 10, hud_y1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 255, 170), 2, cv2.LINE_AA)
+            cv2.putText(frame_snapshot, f"Speed Limit : {sp_lim:.0f} km/h (Gate-Gantry: {dist_m:.0f}m)", (hud_x1 + 10, hud_y1 + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 200, 200), 1, cv2.LINE_AA)
+            cv2.putText(frame_snapshot, f"Total Count : {tot_cnt}", (hud_x1 + 10, hud_y1 + 54), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(frame_snapshot, f"  car: {cars}  truck: {trucks}", (hud_x1 + 10, hud_y1 + 70), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 190, 40), 1, cv2.LINE_AA)
+
+        # Draw all bounding boxes with vehicle IDs, types, and speed banners onto snapshot
+        DetectorWorker._draw_boxes(frame_snapshot, display_boxes)
+
+        # -- PPE Alert Processing (Excluded for speed monitor cameras and vehicle models) --
+        if not is_speed_model:
+            for tid, trk in list(self._ema_tracks.items()):
+                c = trk.get('cls', '')
+                if not c:
+                    continue
+
+                # Non-alert baseline classes (persons/machinery/vehicles) are not violation alerts
+                is_neg, core_type, cleaned_cls = extract_negation_and_core(c)
+                if cleaned_cls in ("person", "worker", "human", "man", "woman", "machinery", "vehicle", "car", "truck", "bike", "pickup truck", "bus", "van"):
+                    continue
+
+                # 1. Strict 30-Second Cooldown per class per camera
+                if not hasattr(self, 'alert_cooldowns'):
+                    self.alert_cooldowns = {}
+                if (now_t - self.alert_cooldowns.get(c, 0.0)) < 30.0:
+                    continue
+
+                total_hits = trk.get('hit_count', 0)
+                if total_hits >= 1:
+                    self.alert_cooldowns[c] = now_t
+                    trk['last_alert_time'] = now_t
+                    print(f"[ALERT-TRIGGER] Instant alert generated: cam={self.cam_id}, class={c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
+                    self._save_alert(c, frame_snapshot)
+
+        # -- Over Speed Alert Trigger (ONLY triggers when measured speed > limit) --
+        for tid, trk in list(self._ema_tracks.items()):
+            if trk.get('should_alert_overspeed') and not trk.get('overspeed_alerted'):
+                trk['overspeed_alerted'] = True
+                spd = trk.get('speed_kmh', 0.0)
+                alert_cls = f"OVER SPEED: {spd:.1f} km/h (Limit: {speed_limit:.0f} km/h)"
+                print(f"[ALERT-TRIGGER-SPEED] Over speed alert generated: cam={self.cam_id}, vehicle_id={tid}, class={trk.get('cls')}, speed={spd:.1f} km/h", flush=True)
+                self._save_alert(alert_cls, frame_snapshot)
+
+    def _save_alert(self, class_name, frame, vehicle_label=None):
+        try:
+            now_dt = datetime.now()
+            ts = now_dt.strftime("%Y%m%d_%H%M%S")
+            if vehicle_label:
+                safe_cls_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', str(vehicle_label).lower().strip().replace(" ", "_"))
+            else:
+                disp_name = "NO-PPE" if str(class_name).lower() == "none" else str(class_name)
+                safe_cls_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', disp_name)
+            filename = f"cam{self.cam_id}_{ts}_{safe_cls_filename}.jpg"
+            adir = os.path.join(BASE_DIR, "alerts")
+            os.makedirs(adir, exist_ok=True)
+            img_saved = cv2.imwrite(os.path.join(adir, filename), frame)
+            print(f"[ALERT-IMG] Saved snapshot {filename}, ok={img_saved}", flush=True)
+
+            base_url = get_alerts_base_url()
+            if base_url:
+                image_path = f"{base_url.rstrip('/')}/hls/alerts/{filename}"
+            else:
+                image_path = f"/hls/alerts/{filename}"
+
+            if "OVER SPEED" in str(class_name).upper():
+                type_of_alert_str = str(class_name)
+            elif vehicle_label:
+                type_of_alert_str = f"{vehicle_label} Detected"
+            else:
+                type_of_alert_str = f"{class_name} Detected"
+
+            # 1. Append to alerts.json for immediate UI dashboard update
+            alerts_json_file = os.path.join(adir, "alerts.json")
+            alert_entry = {
+                "id":           int(time.time() * 1000),
+                "camera_id":    str(self.cam_id),
+                "location":     str(self.location),
+                "type_of_alert": type_of_alert_str,
+                "image":        image_path,
+                "created_at":   now_dt.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            try:
+                data = []
+                if os.path.exists(alerts_json_file):
+                    with open(alerts_json_file, "r") as jf:
+                        try: data = json.load(jf)
+                        except: data = []
+                if not isinstance(data, list): data = []
+                data.insert(0, alert_entry)
+                data = data[:100]
+                with open(alerts_json_file, "w") as jf:
+                    json.dump(data, jf, indent=2)
+                print(f"[ALERT-JSON] Appended alert to alerts.json: {type_of_alert_str}", flush=True)
+            except Exception as jerr:
+                print(f"[ALERT-JSON-ERR] Failed updating alerts.json: {jerr}", flush=True)
+
+            # 2. Store directly into PostgreSQL DB (psycopg2 or psql CLI fallback)
+            conn = self._get_db_conn()
+            db_stored = False
+            if conn:
+                try:
+                    cur = conn.cursor()
+                    ensure_alerts_schema(cur)
+                    insert_alert_db(cur, self.cam_id, self.location, type_of_alert_str, image_path, now_dt)
+                    conn.commit()
+                    cur.close()
+                    db_stored = True
+                    print(f"[ALERT-DB] Alert stored successfully in DB: cam={self.cam_id}, class={type_of_alert_str}, location={self.location}", flush=True)
+                except Exception as dbe:
+                    print(f"[ALERT-DB-ERR] DB insert error: {dbe}", flush=True)
+                    try: conn.rollback()
+                    except: pass
+                    try: self._db_conn.close()
+                    except: pass
+                    self._db_conn = None
+
+            if not db_stored:
+                ok = insert_alert_via_psql(self.cam_id, self.location, type_of_alert_str, image_path, now_dt)
+                if ok:
+                    print(f"[ALERT-DB] Alert stored successfully via psql CLI: cam={self.cam_id}, class={type_of_alert_str}, location={self.location}", flush=True)
+        except Exception as e:
+            print(f"[ALERT-ERR] Failed to save alert: {e}", flush=True)
+
+    def _get_connecting_frame(self):
+        frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        cv2.putText(frame, "Connecting to Camera...", 
+                   (int(self.width*0.2), int(self.height*0.5)), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+        return frame
+
+    def _capture_thread(self, cap, cap_stop_evt):
+        consecutive_fails = 0
+        is_local_file = os.path.isfile(str(self.rtsp_url)) or not str(self.rtsp_url).lower().startswith("rtsp")
+
+        while not self._stop_event.is_set() and not cap_stop_evt.is_set():
+            try:
+                ret, f = cap.read()
+                if not ret or f is None:
+                    if is_local_file:
+                        # Auto-loop video file from beginning
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        time.sleep(0.02)
+                        continue
+                    consecutive_fails += 1
+                    time.sleep(0.02)
+                    if consecutive_fails > 150:
+                        print(f"[WARN] Camera {self.cam_id} RTSP stream disconnected, requesting reconnect...", flush=True)
+                        break
+                    continue
+                consecutive_fails = 0
+                with self._frame_lock:
+                    self._latest_raw_frame = f.copy()
+                    self._last_frame_time  = time.time()
+                    self._cap_ok = True
+
+                # Yield minimally to OS scheduler
+                time.sleep(0.005 if not is_local_file else 0.015)
+            except Exception:
+                time.sleep(0.02)
+            except Exception:
+                time.sleep(0.02)
+
+    # --------------------------------------------------------------------------
+    # DRAWING HELPER
+    # --------------------------------------------------------------------------
+    @staticmethod
+    def _draw_boxes(pf, display_boxes):
+        """
+        Draw all bounding boxes and labels onto pf (in-place).
+
+        Features:
+          -  Area-based z-order so small PPE boxes render on top of large person boxes.
+          -  Thick border (2 px) + black inner glow (1 px outline trick) for visibility.
+          -  Larger, bolder labels with padded background panels.
+          -  Vertical label stacking to avoid overlapping label text when two boxes
+            share the same top-left corner region.
+        """
+        if not display_boxes:
+            return
+
+        f_h, f_w = pf.shape[:2]
+
+        # Sort: large boxes first (person/body) -> drawn below; small boxes last -> drawn on top
+        sorted_boxes = sorted(
+            display_boxes,
+            key=lambda b: max(0, b['box'][2] - b['box'][0]) * max(0, b['box'][3] - b['box'][1]),
+            reverse=True
+        )
+
+        # Track used label regions to stack them vertically
+        used_label_slots = []   # list of (lx1, ly1, lx2, ly2)
+
+        def find_free_label_y(lx1, lx2, preferred_y1, preferred_y2, step=2):
+            """Shift label upward until it doesn't collide with any occupied slot."""
+            ly1, ly2 = preferred_y1, preferred_y2
+            h = ly2 - ly1
+            for _ in range(60):
+                collision = False
+                for (ux1, uy1, ux2, uy2) in used_label_slots:
+                    # Check horizontal overlap
+                    if lx1 < ux2 and lx2 > ux1:
+                        # Check vertical overlap
+                        if ly1 < uy2 and ly2 > uy1:
+                            collision = True
+                            break
+                if not collision:
+                    break
+                ly1 = max(0, ly1 - step)
+                ly2 = ly1 + h
+            return ly1, ly2
+
+        for t_box in sorted_boxes:
+            try:
+                x1, y1, x2, y2 = [int(v) for v in t_box['box']]
+                x1 = max(0, min(f_w - 1, x1))
+                y1 = max(0, min(f_h - 1, y1))
+                x2 = max(0, min(f_w - 1, x2))
+                y2 = max(0, min(f_h - 1, y2))
+
+                label_text = t_box['label']
+                color_val  = t_box['color']
+
+                # Draw box: black shadow first (offset 1px) then coloured border
+                cv2.rectangle(pf, (x1+1, y1+1), (x2+1, y2+1), (0, 0, 0), 2)      # shadow
+                cv2.rectangle(pf, (x1, y1), (x2, y2), color_val, 2)               # main
+
+                sub_text = t_box.get('sub')
+                if sub_text:
+                    (tw1, th1), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+                    (tw2, th2), _ = cv2.getTextSize(sub_text, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 2)
+                    max_w = max(tw1, tw2) + 12
+                    pref_bg_y1 = max(0, y1 - 34)
+                    pref_bg_y2 = y1
+                    pref_bg_x1 = x1
+                    pref_bg_x2 = min(f_w - 1, x1 + max_w)
+                    bg_y1, bg_y2 = find_free_label_y(pref_bg_x1, pref_bg_x2, pref_bg_y1, pref_bg_y2)
+                    cv2.rectangle(pf, (pref_bg_x1, bg_y1), (pref_bg_x2, bg_y2), color_val, -1)
+                    cv2.putText(pf, label_text, (pref_bg_x1 + 4, bg_y1 + 13), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1, cv2.LINE_AA)
+                    cv2.putText(pf, sub_text, (pref_bg_x1 + 4, bg_y1 + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 2, cv2.LINE_AA)
+                    used_label_slots.append((pref_bg_x1, bg_y1, pref_bg_x2, bg_y2))
+                else:
+                    # Standard PPE single-line label
+                    (tw, th), baseline = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE, LABEL_THICKNESS)
+                    pad = LABEL_BOX_PADDING
+                    pref_bg_y1 = y1 - th - 2*pad
+                    pref_bg_y2 = y1
+                    pref_bg_x1 = x1
+                    pref_bg_x2 = min(f_w - 1, x1 + tw + 2*pad)
+                    if pref_bg_y1 < 0:
+                        pref_bg_y1 = y1
+                        pref_bg_y2 = y1 + th + 2*pad
+                    bg_y1, bg_y2 = find_free_label_y(pref_bg_x1, pref_bg_x2, pref_bg_y1, pref_bg_y2)
+                    bg_x1, bg_x2 = pref_bg_x1, pref_bg_x2
+                    text_y = bg_y1 + th + pad - 1
+                    cv2.rectangle(pf, (bg_x1, bg_y1), (bg_x2, bg_y2), color_val, -1)
+                    cv2.putText(pf, label_text, (bg_x1 + pad, text_y),
+                                cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE,
+                                (0, 0, 0), LABEL_THICKNESS + 1, cv2.LINE_AA)
+                    cv2.putText(pf, label_text, (bg_x1 + pad, text_y),
+                                cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE,
+                                (255, 255, 255), LABEL_THICKNESS, cv2.LINE_AA)
+                    used_label_slots.append((bg_x1, bg_y1, bg_x2, bg_y2))
+            except Exception:
+                pass
+
+    def run(self):
+        ffmpeg, cap = None, None
+        cap_stop_evt = threading.Event()
+        cap_t = None
+
+        def cleanup_subthreads():
+            nonlocal cap, ffmpeg, cap_t
+            cap_stop_evt.set()
+            if cap_t and cap_t.is_alive():
+                cap_t.join(timeout=1.0)
+                cap_t = None
+            if cap:
+                try: cap.release()
+                except Exception: pass
+                cap = None
+            if ffmpeg:
+                try: ffmpeg.stdin.close()
+                except Exception: pass
+                try: ffmpeg.kill(); ffmpeg.wait(timeout=1.0)
+                except Exception: pass
+                ffmpeg = None
+
+        try:
+            if not getattr(self, 'is_speed_worker', False):
+                GLOBAL_INFERENCE_SCHEDULER.register_worker(self)
+
+            while not self._stop_event.is_set():
+                cleanup_subthreads()
+                cap_stop_evt.clear()
+
+                if self._stop_event.is_set():
+                    break
+
+                try:
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} creating FFmpeg process...", flush=True)
+                    t_ff_start = time.time()
+                    ffmpeg = self._create_ffmpeg()
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} FFmpeg process created in {int((time.time() - t_ff_start)*1000)}ms", flush=True)
+
+                    is_local_file = os.path.isfile(str(self.rtsp_url)) or not str(self.rtsp_url).lower().startswith("rtsp")
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} connecting to {'local video file' if is_local_file else 'RTSP'} ({self.rtsp_url}) at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...", flush=True)
+                    t_conn_start = time.time()
+                    if is_local_file:
+                        cap = cv2.VideoCapture(str(self.rtsp_url))
+                    else:
+                        cap = cv2.VideoCapture(str(self.rtsp_url), cv2.CAP_FFMPEG)
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+                    retry_count = 0
+                    while not cap.isOpened() and retry_count < 10 and not self._stop_event.is_set():
+                        time.sleep(0.5)
+                        if is_local_file:
+                            cap = cv2.VideoCapture(str(self.rtsp_url))
+                        else:
+                            cap = cv2.VideoCapture(str(self.rtsp_url), cv2.CAP_FFMPEG)
+                            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        retry_count += 1
+
+                    if self._stop_event.is_set() or not cap.isOpened():
+                        if not cap.isOpened():
+                            print(f"[ERROR] Camera {self.cam_id} could not open video stream: {self.rtsp_url}", flush=True)
+                        break
+
+                    print(f"[WORKER-TIMER] Camera {self.cam_id} {'video file' if is_local_file else 'RTSP'} connected in {int((time.time() - t_conn_start)*1000)}ms at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+
+                    if self.is_speed_worker and getattr(self, 'speed_tracker_engine', None) is not None:
+                        # ----------------------------------------------------------
+                        # DEDICATED SPEED TRACKER PIPELINE (MATCHES run_speed_tracker.py)
+                        # ----------------------------------------------------------
+                        src_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                        if src_fps <= 0 or src_fps > 120:
+                            src_fps = 25.0
+                        
+                        target_interval = 1.0 / self.fps
+                        next_frame_time = time.time()
+                        frame_idx = 0
+
+                        while not self._stop_event.is_set():
+                            if is_local_file:
+                                now = time.time()
+                                if now < next_frame_time:
+                                    time.sleep(max(0.001, next_frame_time - now))
+                                next_frame_time += target_interval
+                                if now - next_frame_time > 0.5:
+                                    next_frame_time = now + target_interval
+
+                                # Skip intermediate frame for exact parity with CLI --skip 2
+                                cap.grab()
+                                frame_idx += 1
+
+                            ret, raw_frame = cap.read()
+                            if not ret or raw_frame is None:
+                                if is_local_file:
+                                    cap.release()
+                                    cap = cv2.VideoCapture(str(self.rtsp_url))
+                                    frame_idx = 0
+                                    continue
+                                else:
+                                    print(f"[SPEED-WORKER] Camera {self.cam_id} RTSP stream finished or disconnected.", flush=True)
+                                    break
+
+                            frame_idx += 1
+                            curr_t = (frame_idx / src_fps) if is_local_file else time.time()
+
+                            with self._frame_lock:
+                                self._latest_raw_frame = raw_frame
+                                self._last_frame_time = time.time()
+
+                            # Downscale frame to worker dimensions if needed for high-speed inference
+                            if (raw_frame.shape[1], raw_frame.shape[0]) != (self.width, self.height):
+                                proc_frame = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                            else:
+                                proc_frame = raw_frame
+
+                            pf, violations = self.speed_tracker_engine.process_frame(proc_frame, curr_t)
+                            if (self.width, self.height) != (pf.shape[1], pf.shape[0]):
+                                pf = cv2.resize(pf, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+
+                            # Immediately encode and cache latest annotated JPEG frame in memory (zero latency, zero black screen)
+                            ret_j, j_bytes = cv2.imencode('.jpg', pf, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                            if ret_j:
+                                with self._frame_lock:
+                                    self._latest_jpeg_frame = j_bytes.tobytes()
+
+                            self.vehicle_counts = self.speed_tracker_engine.counts
+
+                            # Update live speed records from tracker
+                            if not hasattr(self, 'speed_records'): self.speed_records = []
+                            for tid, trk in list(self.speed_tracker_engine.tracker.tracks.items()):
+                                spd = trk.get("speed_kmh") or trk.get("disp_speed")
+                                if spd is not None and not trk.get("_stat_logged", False):
+                                    trk["_stat_logged"] = True
+                                    is_over = bool(spd > self.speed_limit_kmh)
+                                    self.speed_records.append({
+                                        "vehicle_id": tid,
+                                        "cls": trk.get("label", "vehicle"),
+                                        "speed_kmh": round(spd, 1),
+                                        "is_over_speed": is_over,
+                                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    })
+                                    if len(self.speed_records) > 200:
+                                        self.speed_records = self.speed_records[-200:]
+
+                            # Handle any overspeed violations triggered this frame
+                            for v in violations:
+                                if not hasattr(self, 'overspeed_count'): self.overspeed_count = 0
+                                self.overspeed_count += 1
+                                v_spd = v.get("speed_kmh", 0.0)
+                                v_lbl = v.get("label", "vehicle")
+                                alert_cls = f"OVER SPEED: {v_spd:.1f} km/h (Limit: {self.speed_limit_kmh:.0f} km/h)"
+                                print(f"[ALERT] [ALERT-TRIGGER-SPEED] Standalone Engine Over speed alert: cam={self.cam_id}, vehicle_id={v.get('track_id')}, class={v_lbl}, speed={v_spd:.1f} km/h", flush=True)
+                                self._save_alert(alert_cls, pf, vehicle_label=v_lbl)
+
+                            if ffmpeg.poll() is not None:
+                                break
+
+                            try:
+                                ffmpeg.stdin.write(pf.tobytes())
+                                ffmpeg.stdin.flush()
+                            except Exception:
+                                break
+                    elif self.is_crowd_worker and getattr(self, 'crowd_engine', None) is not None:
+                        # ----------------------------------------------------------
+                        # DEDICATED CROWD MONITORING PIPELINE
+                        # ----------------------------------------------------------
+                        src_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                        if src_fps <= 0 or src_fps > 120:
+                            src_fps = 25.0
+
+                        target_interval = 1.0 / self.fps
+                        next_frame_time = time.time()
+                        frame_idx = 0
+
+                        while not self._stop_event.is_set():
+                            if is_local_file:
+                                now = time.time()
+                                if now < next_frame_time:
+                                    time.sleep(max(0.001, next_frame_time - now))
+                                next_frame_time += target_interval
+                                if now - next_frame_time > 0.5:
+                                    next_frame_time = now + target_interval
+
+                            ret, raw_frame = cap.read()
+                            if not ret or raw_frame is None:
+                                if is_local_file:
+                                    cap.release()
+                                    cap = cv2.VideoCapture(str(self.rtsp_url))
+                                    frame_idx = 0
+                                    continue
+                                else:
+                                    print(f"[CROWD-WORKER] Camera {self.cam_id} RTSP stream finished or disconnected.", flush=True)
+                                    break
+
+                            frame_idx += 1
+                            with self._frame_lock:
+                                self._latest_raw_frame = raw_frame
+                                self._last_frame_time = time.time()
+
+                            # Downscale frame to worker dimensions if needed
+                            if (raw_frame.shape[1], raw_frame.shape[0]) != (self.width, self.height):
+                                proc_frame = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                            else:
+                                proc_frame = raw_frame
+
+                            pf, metrics = self.crowd_engine.process_frame(proc_frame, return_metrics=True)
+                            if (self.width, self.height) != (pf.shape[1], pf.shape[0]):
+                                pf = cv2.resize(pf, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+
+                            self.crowd_stats = metrics
+
+                            # Immediately encode and cache latest annotated JPEG frame in memory
+                            ret_j, j_bytes = cv2.imencode('.jpg', pf, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                            if ret_j:
+                                with self._frame_lock:
+                                    self._latest_jpeg_frame = j_bytes.tobytes()
+
+                            # Trigger alert if crowd threshold reached
+                            if metrics.get("is_alert"):
+                                cnt = metrics.get("in_roi_count", 0)
+                                print(f"[ALERT] [ALERT-TRIGGER-CROWD] Crowd Gathering alert: cam={self.cam_id}, count={cnt} (threshold={self.crowd_engine.crowd_threshold})", flush=True)
+                                self._save_alert(f"CROWD ALERT: {cnt} Persons in ROI", pf)
+
+                            if ffmpeg.poll() is not None:
+                                break
+
+                            try:
+                                ffmpeg.stdin.write(pf.tobytes())
+                                ffmpeg.stdin.flush()
+                            except Exception:
+                                break
+                    else:
+                        # ----------------------------------------------------------
+                        # LOCATION CAMERAS PIPELINE (CENTRAL INFERENCE SCHEDULER)
+                        # ----------------------------------------------------------
+                        cap_t = threading.Thread(target=self._capture_thread, args=(cap, cap_stop_evt), daemon=True)
+                        cap_t.start()
+
+                        f_int          = 1.0 / self.fps
+                        next_frame_time = time.time()
+
+                        while not self._stop_event.is_set():
+                            now = time.time()
+                            if now < next_frame_time:
+                                time.sleep(max(0.001, next_frame_time - now))
+                                continue
+                            next_frame_time += f_int
+                            if now - next_frame_time > 0.3:
+                                next_frame_time = now + f_int
+
+                            if time.time() - getattr(self, '_last_frame_time', now) > 15.0 and self._latest_raw_frame is not None:
+                                print(f"[WARN] Camera {self.cam_id} frame timeout (>15s), reconnecting...", flush=True)
+                                break
+
+                            with self._frame_lock:
+                                raw_frame = self._latest_raw_frame
+
+                            if raw_frame is None:
+                                time.sleep(0.02)
+                                continue
+
+                            pf = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+                            f_h, f_w = pf.shape[:2]
+
+                            # Draw ROI boundary if configured
+                            if self.roi_polygon and len(self.roi_polygon) == 2:
+                                try:
+                                    min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                                    max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0])
+                                    min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                                    max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1])
+                                    rx1, ry1 = int(min_x * f_w), int(min_y * f_h)
+                                    rx2, ry2 = int(max_x * f_w), int(max_y * f_h)
+                                    cv2.rectangle(pf, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
+                                except: pass
+
+                            # Draw latest tracked bounding boxes from Central Inference Scheduler
+                            with self._box_lock:
+                                display_boxes = list(self._tracked_boxes)
+
+                            DetectorWorker._draw_boxes(pf, display_boxes)
+
+                            # Immediately encode and cache latest annotated JPEG frame in memory
+                            ret_j, j_bytes = cv2.imencode('.jpg', pf, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                            if ret_j:
+                                with self._frame_lock:
+                                    self._latest_jpeg_frame = j_bytes.tobytes()
+
+                            if ffmpeg.poll() is not None:
+                                break
+
+                            try:
+                                ffmpeg.stdin.write(pf.tobytes())
+                                ffmpeg.stdin.flush()
+                            except:
+                                break
+                except:
+                    traceback.print_exc()
+        finally:
+            cleanup_subthreads()
+            if not getattr(self, 'is_speed_worker', False) and not getattr(self, 'is_crowd_worker', False):
+                GLOBAL_INFERENCE_SCHEDULER.unregister_worker(self)

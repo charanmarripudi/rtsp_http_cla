@@ -1,0 +1,395 @@
+import os
+import time
+import urllib.request
+import base64
+from typing import Optional, List
+
+try:
+    import urdhva_base
+    HAS_URDHVA_BASE = True
+except ImportError:
+    urdhva_base = None
+    HAS_URDHVA_BASE = False
+
+try:
+    from onvif import ONVIFCamera
+    HAS_ONVIF = True
+except ImportError:
+    ONVIFCamera = None
+    HAS_ONVIF = False
+
+
+class OnvifController:
+    def __init__(self, ip: str, port: int, username: str, password: str):
+        self.ip = ip
+        port_val = int(port) if port is not None else 80
+        if port_val == 8888:
+            port_val = 80
+        self.port = port_val
+        self.username = username
+
+        if HAS_URDHVA_BASE and hasattr(urdhva_base, 'types') and hasattr(urdhva_base.types, 'Secret'):
+            try:
+                self.password = urdhva_base.types.Secret(password).get_secret()
+            except Exception:
+                self.password = str(password) if password is not None else ""
+        elif hasattr(password, 'get_secret'):
+            self.password = password.get_secret()
+        else:
+            self.password = str(password) if password is not None else ""
+
+        self.camera: Optional[ONVIFCamera] = None
+        self.media_service = None
+        self.ptz_service = None
+        self.profile = None
+
+        if HAS_URDHVA_BASE and hasattr(urdhva_base, '__file__') and urdhva_base.__file__:
+            calculated_wsdl = os.path.abspath(os.path.join(os.path.dirname(urdhva_base.__file__),
+                                                           '..', '..', 'services',
+                                                           'base_configuration', 'wsdl'))
+            if os.path.exists(calculated_wsdl):
+                self.wsdl_dir = calculated_wsdl
+            else:
+                self.wsdl_dir = None
+        else:
+            self.wsdl_dir = None
+
+    def connect(self):
+        if not HAS_ONVIF:
+            self.camera = None
+            self.media_service = None
+            self.profile = None
+            self.ptz_service = None
+            return
+
+        try:
+            if self.wsdl_dir and os.path.exists(self.wsdl_dir):
+                self.camera = ONVIFCamera(self.ip, self.port, self.username, self.password,
+                                          wsdl_dir=self.wsdl_dir)
+            else:
+                self.camera = ONVIFCamera(self.ip, self.port, self.username, self.password)
+
+            self.media_service = self.camera.create_media_service()
+            profiles = self.media_service.GetProfiles()
+            if profiles:
+                self.profile = profiles[0]
+            try:
+                self.ptz_service = self.camera.create_ptz_service()
+            except Exception:
+                self.ptz_service = None
+        except Exception:
+            # Fallback for cameras where ONVIF SOAP WSDL returns fault
+            self.camera = None
+            self.media_service = None
+            self.profile = None
+            self.ptz_service = None
+
+    def _send_cgi_ptz(self, act: str, speed: int = 5, duration: float = 1.0):
+        """
+        Fallback HTTP CGI interface for Ambicam / HiSilicon / IPC devices.
+        """
+        url = f"http://{self.ip}:{self.port}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={act}&-speed={speed}&-presetNUM=0"
+        auth_bytes = f"{self.username}:{self.password}".encode('utf-8')
+        auth_header = f"Basic {base64.b64encode(auth_bytes).decode('ascii')}"
+
+        # 1. Try standard GET request for CGI script
+        try:
+            req_get = urllib.request.Request(url)
+            req_get.add_header('Authorization', auth_header)
+            with urllib.request.urlopen(req_get, timeout=5) as resp:
+                result = resp.read().decode('utf-8', errors='ignore')
+                if duration > 0 and act != 'stop':
+                    time.sleep(duration)
+                    self._send_cgi_ptz('stop', duration=0)
+                return True, result
+        except Exception as e_get:
+            # 2. Try PUT request if GET fails
+            try:
+                req_put = urllib.request.Request(url, method='PUT')
+                req_put.add_header('Authorization', auth_header)
+                with urllib.request.urlopen(req_put, timeout=5) as resp:
+                    result = resp.read().decode('utf-8', errors='ignore')
+                    if duration > 0 and act != 'stop':
+                        time.sleep(duration)
+                        self._send_cgi_ptz('stop', duration=0)
+                    return True, result
+            except Exception as e_put:
+                return False, f"GET err: {e_get} | PUT err: {e_put}"
+
+    def validate_credentials(self) -> bool:
+        # 1. Try standard ONVIF protocol
+        try:
+            self.connect()
+            if self.profile and self.media_service:
+                self.media_service.GetStreamUri({'StreamSetup': {'Stream': 'RTP-Unicast',
+                                                                 'Transport': {'Protocol': 'RTSP'}},
+                                                 'ProfileToken': self.profile.token})
+                return True
+        except Exception:
+            pass
+
+        # 2. Fallback check for HTTP CGI camera interface
+        success, _ = self._send_cgi_ptz('stop', duration=0)
+        return success
+
+    def get_rtsp_url(self) -> str:
+        if self.profile and self.media_service:
+            stream_uri = self.media_service.GetStreamUri({
+                'StreamSetup': {'Stream': 'RTP-Unicast', 'Transport': {'Protocol': 'RTSP'}},
+                'ProfileToken': self.profile.token
+            })
+            return stream_uri.Uri
+        return f"rtsp://{self.username}:{self.password}@{self.ip}:554/ch0_0.264"
+
+    def get_basic_config(self) -> dict:
+        if not self.profile:
+            return {}
+        return {
+            "profile_token": getattr(self.profile, 'token', None),
+            "resolution": getattr(getattr(self.profile, 'VideoEncoderConfiguration', None), 'Resolution', None),
+            "encoding": getattr(getattr(self.profile, 'VideoEncoderConfiguration', None), 'Encoding', None),
+            "fps": getattr(getattr(getattr(self.profile, 'VideoEncoderConfiguration', None), 'RateControl', None), 'FrameRateLimit', None)
+        }
+
+    def pan_tilt(self, pan: float, tilt: float):
+        # Try standard ONVIF PTZ first
+        if self.ptz_service and self.profile:
+            try:
+                config = self.ptz_service.GetConfigurationOptions(
+                    {'ConfigurationToken': self.profile.PTZConfiguration.token}
+                )
+                request = self.ptz_service.create_type('ContinuousMove')
+                request.ProfileToken = self.profile.token
+                request.Velocity = {'PanTilt': {'x': pan, 'y': tilt}}
+                self.ptz_service.ContinuousMove(request)
+                time.sleep(1)
+                self.stop()
+                return
+            except Exception:
+                pass
+
+        # Fallback to HTTP CGI movement for all 8 directions
+        if pan < 0 and tilt > 0:
+            direction = 'leftup'
+        elif pan > 0 and tilt > 0:
+            direction = 'rightup'
+        elif pan < 0 and tilt < 0:
+            direction = 'leftdown'
+        elif pan > 0 and tilt < 0:
+            direction = 'rightdown'
+        elif pan < 0:
+            direction = 'left'
+        elif pan > 0:
+            direction = 'right'
+        elif tilt > 0:
+            direction = 'up'
+        elif tilt < 0:
+            direction = 'down'
+        else:
+            direction = 'stop'
+
+        self._send_cgi_ptz(direction, duration=1.0)
+
+    def zoom(self, zoom_val: float):
+        act = 'zoomin' if zoom_val > 0 else ('zoomout' if zoom_val < 0 else 'stop')
+        # Direct CGI zoom control (sends zoomin/zoomout, sleeps 1.0s, sends stop)
+        success, result = self._send_cgi_ptz(act, duration=1.0)
+        if success:
+            return True, result
+
+        # Try alternative CGI paths if primary path fails
+        for alt_path in ["/web/cgi-bin/hi3510/ptzctrl.cgi", "/cgi-bin/ptzctrl.cgi", "/ptzctrl.cgi"]:
+            url = f"http://{self.ip}:{self.port}{alt_path}?-step=0&-act={act}&-speed=5&-presetNUM=0"
+            auth_bytes = f"{self.username}:{self.password}".encode('utf-8')
+            auth_header = f"Basic {base64.b64encode(auth_bytes).decode('ascii')}"
+            try:
+                req = urllib.request.Request(url)
+                req.add_header('Authorization', auth_header)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    res_text = resp.read().decode('utf-8', errors='ignore')
+                    if act != 'stop':
+                        time.sleep(1.0)
+                        self._send_cgi_ptz('stop', duration=0)
+                    return True, f"Alt CGI zoom successful via {alt_path}"
+            except Exception:
+                pass
+
+        # Fallback to ONVIF PTZ SOAP if CGI fails
+        if self.ptz_service and self.profile:
+            try:
+                request = self.ptz_service.create_type('ContinuousMove')
+                request.ProfileToken = self.profile.token
+                request.Velocity = {'Zoom': {'x': zoom_val}}
+                self.ptz_service.ContinuousMove(request)
+                time.sleep(1)
+                self.stop()
+                return True, "ONVIF zoom successful"
+            except Exception as e:
+                return False, str(e)
+
+        return False, f"Zoom failed: {result}"
+
+    def move_direction(self, direction: str, duration: float = 1.0):
+        direction_lower = direction.lower()
+        direction_map = {
+            'left': (-0.5, 0.0),
+            'right': (0.5, 0.0),
+            'up': (0.0, 0.5),
+            'top': (0.0, 0.5),
+            'down': (0.0, -0.5),
+            'bottom': (0.0, -0.5),
+            'leftup': (-0.5, 0.5),
+            'up_left': (-0.5, 0.5),
+            'rightup': (0.5, 0.5),
+            'up_right': (0.5, 0.5),
+            'leftdown': (-0.5, -0.5),
+            'down_left': (-0.5, -0.5),
+            'rightdown': (0.5, -0.5),
+            'down_right': (0.5, -0.5)
+        }
+        if direction_lower in direction_map:
+            pan_val, tilt_val = direction_map[direction_lower]
+            self.pan_tilt(pan=pan_val, tilt=tilt_val)
+        elif direction_lower in ['zoomin', 'zoom_in']:
+            self.zoom(0.5)
+        elif direction_lower in ['zoomout', 'zoom_out']:
+            self.zoom(-0.5)
+        elif direction_lower == 'stop':
+            self.stop()
+        else:
+            raise ValueError(f"Unknown direction: {direction}")
+
+    def stop(self):
+        if self.ptz_service and self.profile:
+            try:
+                request = self.ptz_service.create_type('Stop')
+                request.ProfileToken = self.profile.token
+                request.PanTilt = True
+                request.Zoom = True
+                self.ptz_service.Stop(request)
+            except Exception:
+                pass
+        self._send_cgi_ptz('stop', duration=0)
+
+    def get_presets(self) -> List[str]:
+        if not self.ptz_service or not self.profile:
+            return []
+        try:
+            presets = self.ptz_service.GetPresets({'ProfileToken': self.profile.token})
+            return [preset.Name for preset in presets]
+        except Exception:
+            return []
+
+    def goto_preset(self, preset_token: str):
+        if self.ptz_service and self.profile:
+            request = self.ptz_service.create_type('GotoPreset')
+            request.ProfileToken = self.profile.token
+            request.PresetToken = preset_token
+            self.ptz_service.GotoPreset(request)
+
+    def get_device_info(self) -> dict:
+        """
+        Fetching system base information
+        """
+        if self.camera:
+            try:
+                device_info = self.camera.devicemgmt.GetDeviceInformation()
+                info = {
+                    "manufacturer": getattr(device_info, 'Manufacturer', None),
+                    "model": getattr(device_info, 'Model', None),
+                    "firmware_version": getattr(device_info, 'FirmwareVersion', None),
+                    "serial_number": getattr(device_info, 'SerialNumber', None),
+                    "hardware_id": getattr(device_info, 'HardwareId', None),
+                    **self.get_allowed_controls(),
+                    **self.get_device_time(),
+                }
+                onvif_details = {}
+                onvif_details['profile_data'], info['profiles'] = self.get_profiles()
+                info['onvif_details'] = onvif_details
+                return info
+            except Exception:
+                pass
+
+        return {
+            "manufacturer": "AMBICAM / HiSilicon",
+            "model": "IP Camera",
+            "pan_tilt_enabled": True,
+            "zoom_enabled": True,
+            "rtsp_url": self.get_rtsp_url()
+        }
+
+    def get_device_time(self) -> dict:
+        """
+        Fetching system time
+        """
+        if not self.camera:
+            return {"device_time": "N/A", "timezone": "N/A", "day_light_savings_enabled": False}
+        try:
+            device_time = self.camera.devicemgmt.GetSystemDateAndTime()
+            system_time = device_time.UTCDateTime
+            date = system_time.Date
+            time_val = system_time.Time
+            formatted_time = (f"{date.Year}-{date.Month:02d}-{date.Day:02d} "
+                              f"{time_val.Hour:02d}:{time_val.Minute:02d}:{time_val.Second:02d} UTC")
+            return {"device_time": formatted_time, "timezone": getattr(device_time.TimeZone, 'TZ', None),
+                    "day_light_savings_enabled": getattr(device_time, 'DaylightSavings', False)}
+        except Exception:
+            return {"device_time": "N/A", "timezone": "N/A", "day_light_savings_enabled": False}
+
+    def get_allowed_controls(self) -> dict:
+        """
+        Fetching allowed hardware controls
+        """
+        allowed_controls = {"pan_tilt_enabled": True, "zoom_enabled": True}
+        if self.ptz_service and self.profile:
+            try:
+                ptz_config_options = self.ptz_service.GetConfigurationOptions(
+                    {'ConfigurationToken': self.profile.PTZConfiguration.token})
+
+                if ptz_config_options.Spaces.AbsolutePanTiltPositionSpace is not None and \
+                        len(ptz_config_options.Spaces.AbsolutePanTiltPositionSpace) > 0:
+                    allowed_controls["pan_tilt_enabled"] = True
+
+                if ptz_config_options.Spaces.AbsoluteZoomPositionSpace is not None and \
+                        len(ptz_config_options.Spaces.AbsoluteZoomPositionSpace) > 0:
+                    allowed_controls["zoom_enabled"] = True
+            except Exception:
+                pass
+        return allowed_controls
+
+    def get_profiles(self):
+        if not self.media_service:
+            return [], []
+        profile_data = []
+        protocols = ['UDP', 'RTSP', 'HTTP', 'TCP']
+        try:
+            profiles = self.media_service.GetProfiles()
+            for profile in profiles:
+                profile_info = {
+                    "profile_name": profile.Name,
+                    "profile_token": profile.token,
+                    "stream_uris": []
+                }
+                for protocol in protocols:
+                    try:
+                        stream_uri = self.media_service.GetStreamUri({
+                            'StreamSetup': {
+                                'Stream': 'RTP-Unicast',
+                                'Transport': {'Protocol': 'RTSP'}
+                            },
+                            'ProfileToken': profile.token
+                        })
+                        profile_info["stream_uris"].append({
+                            "Protocol": protocol,
+                            "URI": stream_uri.Uri
+                        })
+                    except Exception as e:
+                        profile_info["stream_uris"].append({
+                            "Protocol": protocol,
+                            "URI": None,
+                            "Error": str(e)
+                        })
+                profile_data.append(profile_info)
+        except Exception as e:
+            print(f"Failed to retrieve profiles: {str(e)}")
+        return profile_data, [rec['profile_name'] for rec in profile_data]

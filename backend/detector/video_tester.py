@@ -1,0 +1,1061 @@
+"""
+video_tester.py - Edge AI Video Testing Engine for RTSP & Edge Server.
+Supports both Instant Live Stream Mode (real-time MJPEG detection playback with live slider tuning)
+and Offline Web-Compatible H.264 MP4 export.
+"""
+
+import os
+import sys
+import time
+import math
+import uuid
+import shutil
+import logging
+import threading
+import subprocess
+import re
+import hashlib
+from datetime import datetime
+from pathlib import Path
+import cv2
+import numpy as np
+
+try:
+    import torch
+    torch.set_num_threads(4)
+except Exception:
+    torch = None
+
+# Ensure root directory is on path
+_curr = Path(__file__).resolve()
+BASE_DIR = None
+for p in [_curr.parent, _curr.parent.parent, _curr.parent.parent.parent]:
+    if (p / "models").is_dir() and (p / "backend").is_dir():
+        BASE_DIR = p
+        break
+if BASE_DIR is None:
+    BASE_DIR = _curr.parents[2] if len(_curr.parents) > 2 else _curr.parent.parent
+
+BACKEND_DIR = BASE_DIR / "backend"
+DETECTOR_DIR = BACKEND_DIR / "detector"
+
+for p in [str(DETECTOR_DIR), str(BACKEND_DIR), str(BASE_DIR)]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
+
+try:
+    from detector_worker import (
+        get_yolo_model,
+        get_dynamic_class_color,
+        match_class,
+        clean_str,
+        extract_negation_and_core
+    )
+except ImportError:
+    try:
+        from detector.detector_worker import (
+            get_yolo_model,
+            get_dynamic_class_color,
+            match_class,
+            clean_str,
+            extract_negation_and_core
+        )
+    except ImportError:
+        YOLO_CACHE = {}
+        def get_yolo_model(model_path):
+            if model_path not in YOLO_CACHE:
+                YOLO_CACHE[model_path] = YOLO(model_path)
+            return YOLO_CACHE[model_path]
+
+    def clean_str(s):
+        res = re.sub(r'[^a-z0-9]', '', str(s).lower())
+        return res.replace("saftey", "safety")
+
+    def extract_negation_and_core(s):
+        s_str = str(s).strip()
+        if " - " in s_str:
+            s_str = s_str.split(" - ")[-1]
+        elif ":" in s_str:
+            s_str = s_str.split(":")[-1]
+        elif "/" in s_str:
+            s_str = s_str.split("/")[-1]
+            
+        cleaned = clean_str(s_str)
+        neg_prefixes = ["no", "without", "non", "un"]
+        is_neg = False
+        core = cleaned
+        for p in neg_prefixes:
+            if cleaned.startswith(p):
+                is_neg = True
+                core = cleaned[len(p):]
+                break
+        
+        synonym_map = {
+            "hardhat": "headgear",
+            "helmet": "headgear",
+            "safetyhelmet": "headgear",
+            "headprotection": "headgear",
+            "head": "headgear",
+            "vest": "bodyvest",
+            "safetyvest": "bodyvest",
+            "reflectivevest": "bodyvest",
+            "jacket": "bodyvest",
+            "mask": "facemask",
+            "facemask": "facemask",
+            "facecover": "facemask",
+            "goggles": "eyegoggles",
+            "glasses": "eyegoggles",
+            "safetyglasses": "eyegoggles",
+            "eyewear": "eyegoggles",
+            "glove": "handgloves",
+            "gloves": "handgloves",
+            "handglove": "handgloves",
+            "shoe": "footshoes",
+            "shoes": "footshoes",
+            "boot": "footshoes",
+            "boots": "footshoes",
+            "safetyshoe": "footshoes",
+            "safetyshoes": "footshoes",
+            "person": "person",
+            "worker": "person",
+            "human": "person",
+            "man": "person",
+            "woman": "person",
+            "fire": "fire",
+            "flame": "fire",
+            "smoke": "smoke",
+        }
+        mapped_core = synonym_map.get(core, core)
+        return is_neg, mapped_core, cleaned
+
+    def match_class(box_cls, enabled_cls):
+        if not box_cls or not enabled_cls:
+            return False
+        b_neg, b_core, b_clean = extract_negation_and_core(box_cls)
+        e_neg, e_core, e_clean = extract_negation_and_core(enabled_cls)
+        if b_clean == e_clean: return True
+        if b_neg != e_neg: return False
+        if b_core == e_core: return True
+        if (b_core in e_core or e_core in b_core) and len(b_core) >= 3 and len(e_core) >= 3: return True
+        return False
+
+    def is_opposite_class(cls1, cls2):
+        try:
+            b_neg, b_core, _ = extract_negation_and_core(cls1)
+            e_neg, e_core, _ = extract_negation_and_core(cls2)
+            if b_neg != e_neg and b_core == e_core and len(b_core) >= 3:
+                return True
+        except Exception:
+            pass
+        return False
+
+    def get_dynamic_class_color(class_name):
+        if not class_name:
+            return (0, 255, 255)
+        is_neg, core, cleaned = extract_negation_and_core(class_name)
+        is_hazard = is_neg or any(w in cleaned for w in ("fire", "smoke", "fall", "danger", "hazard", "violation", "unauthorized"))
+        if is_hazard:
+            hazard_palette = [
+                (0, 0, 255),      # Bright Alert Red (BGR)
+                (0, 90, 255),     # Vivid Amber Orange (BGR)
+                (255, 0, 255),    # Electric Magenta / Fuchsia (BGR)
+                (180, 50, 255),   # Hot Crimson Pink (BGR)
+                (0, 140, 255),    # Deep Tangerine (BGR)
+                (220, 20, 180),   # Deep Purple Violet (BGR)
+            ]
+            core_h = int(hashlib.md5(core.encode('utf-8')).hexdigest(), 16)
+            return hazard_palette[core_h % len(hazard_palette)]
+        else:
+            safe_palette = [
+                (255, 215, 0),    # Bright Cyan Sky Blue (BGR)
+                (0, 230, 80),     # Emerald Lime Green (BGR)
+                (0, 230, 255),    # Golden Lemon Yellow (BGR)
+                (180, 230, 50),   # Mint Teal (BGR)
+                (255, 120, 180),  # Soft Lavender Violet (BGR)
+                (50, 205, 50),    # Spring Green (BGR)
+                (200, 100, 50),   # Slate Blue (BGR)
+                (255, 140, 0),    # Deep Cobalt Blue (BGR)
+            ]
+            core_h = int(hashlib.md5(core.encode('utf-8')).hexdigest(), 16)
+            return safe_palette[core_h % len(safe_palette)]
+
+logger = logging.getLogger("VideoTester")
+logger.setLevel(logging.INFO)
+
+STORAGE_DIR = BASE_DIR / "test_videos"
+RAW_DIR = STORAGE_DIR / "raw"
+RESULTS_DIR = STORAGE_DIR / "results"
+
+RAW_DIR.mkdir(parents=True, exist_ok=True)
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def resolve_model_path(model_name: str) -> str:
+    """Resolve model file path across models directory or project root."""
+    if not model_name or str(model_name).lower() in ("none", "raw", "preview", ""):
+        return ""
+    if os.path.isabs(model_name) and os.path.exists(model_name):
+        return model_name
+    basename = os.path.basename(model_name)
+    candidates = [
+        BASE_DIR / "models" / basename,
+        BASE_DIR / "models" / model_name,
+        BASE_DIR / "backend" / "models" / basename,
+        BASE_DIR / basename,
+        Path(model_name)
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return str(BASE_DIR / "models" / basename)
+
+
+def resolve_raw_path(raw_filename: str) -> str:
+    """Resolve raw uploaded video path across candidate storage directories or return RTSP URL directly."""
+    if not raw_filename:
+        return ""
+    if raw_filename.startswith("rtsp://") or raw_filename.startswith("rtsps://") or raw_filename.startswith("http://") or raw_filename.startswith("https://"):
+        return raw_filename
+    if os.path.isabs(raw_filename) and os.path.exists(raw_filename):
+        return raw_filename
+    basename = os.path.basename(raw_filename)
+    candidates = [
+        RAW_DIR / basename,
+        BASE_DIR / "test_videos" / "raw" / basename,
+        BASE_DIR / "backend" / "test_videos" / "raw" / basename,
+        Path(raw_filename)
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return str(RAW_DIR / basename)
+
+
+# In-memory Job Store
+JOBS = {}
+JOBS_LOCK = threading.Lock()
+
+# In-memory Live Streamers Store
+LIVE_STREAMERS = {}
+LIVE_STREAMERS_LOCK = threading.Lock()
+
+
+# =========================================================================
+# [LIVE] INSTANT LIVE VIDEO DETECTION STREAMER (REAL-TIME MJPEG)
+# =========================================================================
+class LiveVideoTestStreamer:
+    def __init__(self, session_id: str, raw_filename: str, model_name: str, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None, frame_step=1):
+        self.session_id = session_id
+        self.raw_filename = raw_filename
+        self.raw_path = resolve_raw_path(raw_filename)
+        self.model_name = model_name
+        self.model_path = resolve_model_path(model_name)
+        self.conf = float(conf)
+        self.iou = float(iou)
+        # On Raspberry Pi ARM CPU, clamp imgsz to max 416 for smooth real-time streaming
+        raw_sz = int(imgsz) if imgsz else 416
+        self.imgsz = min(raw_sz, 416)
+        self.enabled_classes = enabled_classes or []
+        self.frame_step = max(1, int(frame_step))
+        
+        self.running = False
+        self.paused = False
+        self.loop = True
+        self.reader_thread = None
+        self.infer_thread = None
+        
+        self.current_frame = None
+        self.current_jpeg_bytes = None
+        self.latest_detections = []
+        self.active_classes_count = {}
+        self.fps = 25.0
+        self.processed_fps = 0.0
+        self.lock = threading.Lock()
+        self.frame_lock = threading.Lock()
+        self._latest_raw_frame = None
+        self.model = None
+
+    def start(self):
+        if self.running:
+            return
+        self.running = True
+        self.reader_thread = threading.Thread(target=self._run_reader_loop, daemon=True, name=f"LiveStreamer-Reader-{self.session_id}")
+        self.reader_thread.start()
+        self.infer_thread = threading.Thread(target=self._run_inference_loop, daemon=True, name=f"LiveStreamer-Infer-{self.session_id}")
+        self.infer_thread.start()
+
+    def stop(self):
+        self.running = False
+
+    def update_params(self, conf=None, iou=None, imgsz=None, enabled_classes=None, model_name=None, frame_step=None):
+        with self.lock:
+            if conf is not None:
+                self.conf = float(conf)
+            if iou is not None:
+                self.iou = float(iou)
+            if imgsz is not None:
+                raw_sz = int(imgsz)
+                self.imgsz = min(raw_sz, 416)
+            if enabled_classes is not None:
+                self.enabled_classes = enabled_classes
+            if frame_step is not None:
+                self.frame_step = max(1, int(frame_step))
+            if model_name is not None and model_name != self.model_name:
+                self.model_name = model_name
+                self.model_path = resolve_model_path(model_name)
+                try:
+                    self.model = get_yolo_model(self.model_path)
+                except Exception as e:
+                    logger.error(f"Error loading new model {model_name}: {e}")
+
+    def get_jpeg_frame(self):
+        with self.lock:
+            return self.current_jpeg_bytes
+
+    def _run_reader_loop(self):
+        cap = cv2.VideoCapture(self.raw_path)
+        if not cap.isOpened():
+            alt_path = resolve_raw_path(self.raw_filename)
+            if alt_path != self.raw_path:
+                self.raw_path = alt_path
+                cap = cv2.VideoCapture(self.raw_path)
+
+        if not cap.isOpened():
+            logger.error(f"Cannot open video or RTSP stream for streaming: {self.raw_path}")
+            self.running = False
+            return
+
+        is_rtsp = self.raw_path.startswith("rtsp://") or self.raw_path.startswith("rtsps://") or self.raw_path.startswith("http://") or self.raw_path.startswith("https://")
+        if is_rtsp:
+            self.loop = False
+
+        native_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        if native_fps <= 0 or math.isnan(native_fps) or native_fps > 120:
+            native_fps = 25.0
+        self.fps = native_fps
+        target_fps = min(30.0, max(12.0, native_fps))
+        target_frame_time = 1.0 / target_fps
+        frame_idx = 0
+
+        # Publish initial raw frame IMMEDIATELY so stream never starts on black screen
+        ret, initial_frame = cap.read()
+        if ret and initial_frame is not None:
+            h_init, w_init = initial_frame.shape[:2]
+            if w_init > 854:
+                disp_init = cv2.resize(initial_frame, (854, int(h_init * 854 / float(w_init))), interpolation=cv2.INTER_LINEAR)
+            else:
+                disp_init = initial_frame
+            ret_j, jpeg = cv2.imencode('.jpg', disp_init, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+            if ret_j:
+                with self.lock:
+                    self.current_jpeg_bytes = jpeg.tobytes()
+            with self.frame_lock:
+                self._latest_raw_frame = disp_init.copy()
+
+        logger.info(f"LiveStreamer: Started streaming {self.raw_filename} at native {native_fps:.1f} FPS (pace: {target_frame_time*1000:.1f}ms/frame)")
+
+        while self.running:
+            if self.paused:
+                time.sleep(0.05)
+                continue
+
+            t_frame_start = time.time()
+
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                if self.loop and not is_rtsp:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = cap.read()
+                    if not ret or frame is None:
+                        cap.release()
+                        cap = cv2.VideoCapture(self.raw_path)
+                        ret, frame = cap.read()
+                    if not ret or frame is None:
+                        time.sleep(0.05)
+                        continue
+                elif is_rtsp:
+                    time.sleep(0.02)
+                    continue
+                else:
+                    break
+
+            h_orig, w_orig = frame.shape[:2]
+            max_disp_w = 854
+            if w_orig > max_disp_w:
+                disp_w = max_disp_w
+                disp_h = int(h_orig * (max_disp_w / float(w_orig)))
+                disp_frame = cv2.resize(frame, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
+                scale_disp_x = disp_w / float(w_orig)
+                scale_disp_y = disp_h / float(h_orig)
+            else:
+                disp_frame = frame
+                scale_disp_x = 1.0
+                scale_disp_y = 1.0
+
+            frame_idx += 1
+
+            # Feed downscaled display frame to async inference worker (saves huge memory copying)
+            with self.frame_lock:
+                self._latest_raw_frame = disp_frame.copy()
+
+            # Retrieve active detections
+            with self.lock:
+                dets = list(self.latest_detections)
+
+            h_d, w_d = disp_frame.shape[:2]
+            now_draw_t = time.time()
+
+            # Draw exact bounding boxes smoothly on this frame
+            for det in dets:
+                # Discard detections older than 1.2s to prevent lingering ghost boxes on empty road
+                det_ts = det.get("ts", 0.0)
+                if det_ts > 0 and (now_draw_t - det_ts) > 1.2:
+                    continue
+                box = det.get("box")
+                if box is None:
+                    continue
+                x1, y1, x2, y2 = box
+                x1 = max(0, min(w_d - 1, int(x1 * scale_disp_x)))
+                y1 = max(0, min(h_d - 1, int(y1 * scale_disp_y)))
+                x2 = max(0, min(w_d - 1, int(x2 * scale_disp_x)))
+                y2 = max(0, min(h_d - 1, int(y2 * scale_disp_y)))
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                
+                color = det.get("color", (0, 255, 128))
+                label = det.get("label", "")
+                conf = det.get("conf", 0.0)
+
+                cv2.rectangle(disp_frame, (x1, y1), (x2, y2), color, 2)
+                tag_text = f"{label} {conf:.2f}" if label else f"{conf:.2f}"
+                (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
+                
+                if y1 - th - 6 > 0:
+                    bg_y1 = y1 - th - 6
+                    bg_y2 = y1
+                    text_y = y1 - 4
+                else:
+                    bg_y1 = y1
+                    bg_y2 = min(h_d - 1, y1 + th + 6)
+                    text_y = y1 + th + 2
+                    
+                bg_x2 = min(w_d - 1, x1 + tw + 6)
+                cv2.rectangle(disp_frame, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
+                cv2.rectangle(disp_frame, (x1, bg_y1), (bg_x2, bg_y2), color, 1)
+                cv2.putText(disp_frame, tag_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
+
+            # Crowd Analysis Overlay (Proximity lines, cluster hulls, and HUD banner)
+            is_crowd_model = any(k in str(getattr(self, "model_name", "")).lower() for k in ("crowd", "yolo"))
+            if is_crowd_model:
+                person_pts = []
+                for det in dets:
+                    b = det.get("box")
+                    if b is not None:
+                        bx1, by1, bx2, by2 = b
+                        cx = int(((bx1 + bx2) / 2) * scale_disp_x)
+                        cy = int(by2 * scale_disp_y)
+                        person_pts.append((cx, cy))
+                if person_pts:
+                    _draw_crowd_hud_and_clusters(disp_frame, person_pts, threshold=4, dist_px=180)
+
+            # Encode to JPEG and publish to stream (ultra-fast <4ms at 854px display width)
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
+            ret_j, jpeg = cv2.imencode('.jpg', disp_frame, encode_param)
+            if ret_j:
+                with self.lock:
+                    self.current_jpeg_bytes = jpeg.tobytes()
+
+            # Real-time FPS Pacing: enforce smooth native playback speed
+            t_frame_end = time.time()
+            elapsed = t_frame_end - t_frame_start
+            sleep_needed = target_frame_time - elapsed
+            if sleep_needed > 0.002:
+                time.sleep(sleep_needed)
+
+        cap.release()
+        self.running = False
+
+    def _run_inference_loop(self):
+        # Pre-warm model in background without delaying video playback
+        if self.model_path and self.model is None:
+            try:
+                m = get_yolo_model(self.model_path)
+                with self.lock:
+                    self.model = m
+                print(f"[VideoTester] LiveStreamer loaded model {self.model_name}", flush=True)
+            except Exception as e:
+                print(f"[VideoTester] LiveStreamer failed to load model {self.model_name}: {e}", flush=True)
+
+        while self.running:
+            with self.frame_lock:
+                frame_to_infer = self._latest_raw_frame.copy() if self._latest_raw_frame is not None else None
+
+            if frame_to_infer is None:
+                time.sleep(0.04)
+                continue
+
+            with self.lock:
+                c_conf = self.conf
+                c_iou = self.iou
+                c_imgsz = min(self.imgsz, 320)
+                c_model = self.model
+                m_name = self.model_name
+                c_classes = list(self.enabled_classes)
+
+            # Lazy reload if model was not ready initially
+            if c_model is None and self.model_path:
+                try:
+                    c_model = get_yolo_model(self.model_path)
+                    if c_model is not None:
+                        with self.lock:
+                            self.model = c_model
+                except Exception:
+                    pass
+
+            if c_model is None:
+                time.sleep(0.1)
+                continue
+
+            dets = []
+            t_infer_0 = time.time()
+            try:
+                h_orig, w_orig = frame_to_infer.shape[:2]
+                infer_w = min(480, w_orig)
+                infer_h = int(h_orig * (infer_w / float(w_orig)))
+                infer_input = cv2.resize(frame_to_infer, (infer_w, infer_h), interpolation=cv2.INTER_LINEAR)
+                scale_x = float(w_orig) / float(infer_w)
+                scale_y = float(h_orig) / float(infer_h)
+
+                predict_kwargs = {
+                    "source": infer_input,
+                    "imgsz": c_imgsz,
+                    "conf": max(0.20, c_conf),
+                    "iou": c_iou,
+                    "verbose": False
+                }
+
+                if 'torch' in globals() and torch is not None and hasattr(torch, 'inference_mode'):
+                    with torch.inference_mode():
+                        results = c_model.predict(**predict_kwargs)
+                else:
+                    results = c_model.predict(**predict_kwargs)
+
+                if results and len(results) > 0:
+                    r = results[0]
+                    if r.boxes is not None and len(r.boxes) > 0:
+                        raw_dets = []
+                        for b in r.boxes:
+                            cls_id = int(b.cls[0].item())
+                            conf_val = float(b.conf[0].item())
+                            cls_name = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
+
+                            if c_classes and not any(match_class(cls_name, fc) for fc in c_classes):
+                                continue
+
+                            xyxy = b.xyxy[0].cpu().numpy()
+                            # Map coordinates back to original frame size
+                            if scale_x != 1.0 or scale_y != 1.0:
+                                xyxy = np.array([
+                                    xyxy[0] * scale_x,
+                                    xyxy[1] * scale_y,
+                                    xyxy[2] * scale_x,
+                                    xyxy[3] * scale_y
+                                ])
+                            raw_dets.append((xyxy, cls_name, conf_val))
+
+                        # Determine if vehicle model
+                        is_veh_model = "vehicle" in str(m_name).lower() or any(
+                            any(vk in str(c).lower() for vk in ("car", "truck", "bike", "vehicle", "bus", "van"))
+                            for c in (c_classes or [m_name])
+                        )
+
+                        now_ts = time.time()
+                        for (xyxy, cls_name, conf_val) in raw_dets:
+                            x1, y1, x2, y2 = xyxy
+                            bw = max(0, x2 - x1)
+                            bh = max(0, y2 - y1)
+
+                            if is_veh_model:
+                                # 1. Confidence floor for vehicle classes (reject road marking hallucinations)
+                                if conf_val < max(0.45, c_conf):
+                                    continue
+                                # 2. Discard tiny noise
+                                if bw < 35 or bh < 25 or (bw * bh) < 900:
+                                    continue
+                                # 3. Discard roadside reflector posts
+                                if (bh / max(1.0, bw)) > 3.0 and (x1 < w_orig * 0.12 or x2 > w_orig * 0.88):
+                                    continue
+                                # 4. Discard horizontal road dashed line noise
+                                if (bw / max(1.0, bh)) > 3.5 and bh < 40:
+                                    continue
+                                # 5. Discard sky / top foliage
+                                if y2 < h_orig * 0.20 and (x1 > w_orig * 0.60 or x2 < w_orig * 0.25):
+                                    continue
+                            elif bw < 12 or bh < 12:
+                                continue
+
+                            # 6. Suppress nested sub-boxes (e.g. smaller box inside a larger box)
+                            area = bw * bh
+                            is_sub_box = False
+                            for (other_xyxy, other_cls, other_conf) in raw_dets:
+                                if np.array_equal(other_xyxy, xyxy):
+                                    continue
+                                ox1, oy1, ox2, oy2 = other_xyxy
+                                o_area = max(0, ox2 - ox1) * max(0, oy2 - oy1)
+                                ix1, iy1 = max(x1, ox1), max(y1, oy1)
+                                ix2, iy2 = min(x2, ox2), min(y2, oy2)
+                                if ix1 < ix2 and iy1 < iy2:
+                                    inter = (ix2 - ix1) * (iy2 - iy1)
+                                    if o_area >= area and (inter / float(area)) > 0.55:
+                                        is_sub_box = True
+                                        break
+                            if is_sub_box:
+                                continue
+
+                            color = get_dynamic_class_color(cls_name)
+                            dets.append({
+                                "box": xyxy,
+                                "label": cls_name,
+                                "conf": conf_val,
+                                "color": color,
+                                "ts": now_ts
+                            })
+            except Exception as e:
+                print(f"[VideoTester] Live infer error in streamer: {e}", flush=True)
+
+            dt_infer = max(0.001, time.time() - t_infer_0)
+            p_fps = 1.0 / dt_infer
+
+            with self.lock:
+                self.latest_detections = dets
+                self.processed_fps = p_fps
+            print(f"[VideoTester] Infer cycle took {dt_infer*1000:.0f}ms -> {len(dets)} active detections", flush=True)
+
+            # Brief pause so CPU remains responsive for smooth video rendering
+            time.sleep(0.02)
+
+
+def get_or_create_live_streamer(session_id: str, raw_filename: str, model_name: str, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None, frame_step=1):
+    with LIVE_STREAMERS_LOCK:
+        if session_id in LIVE_STREAMERS:
+            s = LIVE_STREAMERS[session_id]
+            if s.running and s.raw_filename == raw_filename:
+                s.update_params(conf=conf, iou=iou, imgsz=imgsz, enabled_classes=enabled_classes, model_name=model_name, frame_step=frame_step)
+                return s
+            else:
+                s.stop()
+                del LIVE_STREAMERS[session_id]
+
+        streamer = LiveVideoTestStreamer(
+            session_id=session_id,
+            raw_filename=raw_filename,
+            model_name=model_name,
+            conf=conf,
+            iou=iou,
+            imgsz=imgsz,
+            enabled_classes=enabled_classes,
+            frame_step=frame_step
+        )
+        LIVE_STREAMERS[session_id] = streamer
+        streamer.start()
+        return streamer
+
+
+def get_live_streamer(session_id: str):
+    with LIVE_STREAMERS_LOCK:
+        return LIVE_STREAMERS.get(session_id)
+
+
+def stop_live_streamer(session_id: str):
+    with LIVE_STREAMERS_LOCK:
+        s = LIVE_STREAMERS.pop(session_id, None)
+        if s:
+            s.stop()
+            return True
+    return False
+
+
+# =========================================================================
+# [BATCH] BATCH JOB ENGINE (EXPORT H.264 MP4)
+# =========================================================================
+class VideoTestJob:
+    def __init__(self, job_id, raw_filename, model_name, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None, frame_skip=1):
+        self.job_id = job_id
+        self.raw_filename = raw_filename
+        self.raw_path = resolve_raw_path(raw_filename)
+        self.result_filename = f"{job_id}_annotated.mp4"
+        self.result_path = str(RESULTS_DIR / self.result_filename)
+        
+        self.model_name = model_name
+        self.model_path = resolve_model_path(model_name)
+        self.conf = float(conf)
+        self.iou = float(iou)
+        self.imgsz = int(imgsz)
+        self.enabled_classes = enabled_classes or []
+        self.frame_skip = max(1, int(frame_skip))
+        
+        self.status = "queued"
+        self.progress = 0.0
+        self.current_frame = 0
+        self.total_frames = 0
+        self.video_fps = 25.0
+        self.video_width = 0
+        self.video_height = 0
+        self.duration_sec = 0.0
+        
+        self.processing_fps = 0.0
+        self.start_time = None
+        self.elapsed_sec = 0.0
+        self.eta_sec = 0.0
+        
+        self.detections_total = 0
+        self.class_counts = {}
+        self.error = None
+        self.cancel_requested = False
+
+    def to_dict(self):
+        return {
+            "job_id": self.job_id,
+            "raw_filename": self.raw_filename,
+            "result_filename": self.result_filename,
+            "status": self.status,
+            "progress": round(self.progress, 1),
+            "current_frame": self.current_frame,
+            "total_frames": self.total_frames,
+            "video_fps": round(self.video_fps, 2),
+            "video_resolution": f"{self.video_width}x{self.video_height}" if self.video_width else "N/A",
+            "duration_sec": round(self.duration_sec, 2),
+            "processing_fps": round(self.processing_fps, 1),
+            "elapsed_sec": round(self.elapsed_sec, 1),
+            "eta_sec": round(self.eta_sec, 1),
+            "model_name": self.model_name,
+            "conf": self.conf,
+            "iou": self.iou,
+            "imgsz": self.imgsz,
+            "enabled_classes": self.enabled_classes,
+            "frame_skip": self.frame_skip,
+            "detections_total": self.detections_total,
+            "class_counts": self.class_counts,
+            "result_url": f"/api/video-test/result/{self.job_id}",
+            "raw_url": f"/api/video-test/raw/{self.job_id}",
+            "error": self.error,
+        }
+
+
+def get_job(job_id: str) -> VideoTestJob:
+    with JOBS_LOCK:
+        return JOBS.get(job_id)
+
+
+def create_job(raw_filename: str, model_name: str, conf=0.35, iou=0.45, imgsz=640, enabled_classes=None, frame_skip=1) -> VideoTestJob:
+    job_id = str(uuid.uuid4())[:8]
+    job = VideoTestJob(
+        job_id=job_id,
+        raw_filename=raw_filename,
+        model_name=model_name,
+        conf=conf,
+        iou=iou,
+        imgsz=imgsz,
+        enabled_classes=enabled_classes,
+        frame_skip=frame_skip
+    )
+    with JOBS_LOCK:
+        JOBS[job_id] = job
+    return job
+
+
+def delete_job(job_id: str):
+    with JOBS_LOCK:
+        job = JOBS.pop(job_id, None)
+    if job:
+        job.cancel_requested = True
+        try:
+            if os.path.exists(job.raw_path):
+                os.remove(job.raw_path)
+            if os.path.exists(job.result_path):
+                os.remove(job.result_path)
+        except Exception as e:
+            logger.error(f"Error removing files for job {job_id}: {e}")
+        return True
+    return False
+
+
+def _draw_crowd_hud_and_clusters(frame, person_points, threshold=4, dist_px=180):
+    """Draws cluster lines, convex hulls, and HUD banner for crowd detection."""
+    h, w = frame.shape[:2]
+    n = len(person_points)
+    if n == 0:
+        return
+
+    # Compute clusters
+    adj = {i: [] for i in range(n)}
+    for i in range(n):
+        for j in range(i + 1, n):
+            gx1, gy1 = person_points[i]
+            gx2, gy2 = person_points[j]
+            if math.hypot(gx1 - gx2, gy1 - gy2) <= dist_px:
+                adj[i].append(j)
+                adj[j].append(i)
+
+    visited = set()
+    groups = []
+    for i in range(n):
+        if i not in visited:
+            cluster = []
+            queue = [i]
+            visited.add(i)
+            while queue:
+                curr = queue.pop(0)
+                cluster.append(curr)
+                for neighbor in adj[curr]:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+            groups.append(cluster)
+
+    has_crowd = (n >= threshold) or any(len(g) >= threshold for g in groups)
+
+    # Connecting lines & hulls
+    for g in groups:
+        if len(g) > 1:
+            line_color = (0, 0, 255) if has_crowd else (0, 200, 255)
+            for i in range(len(g)):
+                for j in range(i + 1, len(g)):
+                    pt1 = person_points[g[i]]
+                    pt2 = person_points[g[j]]
+                    if math.hypot(pt1[0] - pt2[0], pt1[1] - pt2[1]) <= dist_px:
+                        cv2.line(frame, pt1, pt2, line_color, 2, cv2.LINE_AA)
+
+            if len(g) >= 3:
+                pts = np.array([person_points[idx] for idx in g], dtype=np.int32)
+                hull = cv2.convexHull(pts)
+                cv2.polylines(frame, [hull], True, (0, 0, 255) if has_crowd else (0, 255, 255), 2, cv2.LINE_AA)
+
+    # Top banner HUD
+    banner_h = 50
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (w, banner_h), (20, 20, 20), -1)
+    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+
+    badge_color = (0, 0, 255) if has_crowd else (0, 200, 0)
+    badge_text = f"CROWD ALERT: {n} DETECTED" if has_crowd else "STATUS: NORMAL"
+    cv2.rectangle(frame, (12, 8), (280, 42), badge_color, -1)
+    cv2.putText(frame, badge_text, (20, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+
+    stats_text = f"Total: {n} | Clusters: {len(groups)} | Threshold: {threshold}"
+    cv2.putText(frame, stats_text, (300, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 220, 220), 1, cv2.LINE_AA)
+
+
+def _draw_detection_overlay(frame, detections, job: VideoTestJob, frame_idx: int, total_frames: int):
+    h, w = frame.shape[:2]
+    
+    person_pts = []
+    for det in detections:
+        box = det["box"]
+        label = det["label"]
+        conf = det["conf"]
+        color = det["color"]
+        
+        x1, y1, x2, y2 = map(int, box)
+        x1 = max(0, min(w - 1, x1))
+        y1 = max(0, min(h - 1, y1))
+        x2 = max(0, min(w - 1, x2))
+        y2 = max(0, min(h - 1, y2))
+        
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        tag_text = f"{label} {conf:.2f}"
+        (tw, th), baseline = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
+        
+        if y1 - th - 6 > 0:
+            bg_y1 = y1 - th - 6
+            bg_y2 = y1
+            text_y = y1 - 4
+        else:
+            bg_y1 = y1
+            bg_y2 = min(h - 1, y1 + th + 6)
+            text_y = y1 + th + 2
+            
+        bg_x2 = min(w - 1, x1 + tw + 6)
+        cv2.rectangle(frame, (x1, bg_y1), (bg_x2, bg_y2), (18, 20, 24), -1)
+        cv2.rectangle(frame, (x1, bg_y1), (bg_x2, bg_y2), color, 1)
+        cv2.putText(frame, tag_text, (x1 + 3, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
+
+        if "person" in str(label).lower() or "crowd" in str(label).lower():
+            person_pts.append((int((x1 + x2) / 2), y2))
+    
+    is_crowd_model = any(k in str(getattr(job, "model_name", "")).lower() for k in ("crowd", "yolo"))
+    if is_crowd_model and person_pts:
+        _draw_crowd_hud_and_clusters(frame, person_pts, threshold=4, dist_px=180)
+
+    return frame
+
+
+def _process_video_worker(job: VideoTestJob):
+    job.status = "processing"
+    job.start_time = time.time()
+    
+    temp_avi_path = str(RESULTS_DIR / f"{job.job_id}_temp.avi")
+    
+    try:
+        if not os.path.exists(job.model_path):
+            raise FileNotFoundError(f"YOLO model not found at: {job.model_path}")
+            
+        model = get_yolo_model(job.model_path)
+        cap = cv2.VideoCapture(job.raw_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Unable to open uploaded video file: {job.raw_path}")
+            
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        video_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        job.total_frames = total_frames
+        job.video_fps = video_fps
+        job.video_width = width
+        job.video_height = height
+        job.duration_sec = total_frames / video_fps if video_fps > 0 else 0.0
+        
+        filter_classes = [c.strip() for c in job.enabled_classes if c.strip()]
+        target_class_ids = []
+        if hasattr(model, 'names') and isinstance(model.names, dict):
+            if filter_classes:
+                for cid, cname in model.names.items():
+                    for fc in filter_classes:
+                        if match_class(cname, fc):
+                            target_class_ids.append(cid)
+                            break
+        
+        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+        out_writer = cv2.VideoWriter(temp_avi_path, fourcc, video_fps, (width, height))
+        if not out_writer.isOpened():
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            out_writer = cv2.VideoWriter(temp_avi_path, fourcc, video_fps, (width, height))
+            
+        frame_idx = 0
+        last_detections = []
+        
+        while cap.isOpened():
+            if job.cancel_requested:
+                job.status = "cancelled"
+                break
+                
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                break
+                
+            frame_idx += 1
+            run_detection = ((frame_idx - 1) % job.frame_skip == 0)
+            current_frame_detections = []
+            
+            if run_detection:
+                predict_kwargs = {
+                    "source": frame,
+                    "imgsz": job.imgsz,
+                    "conf": job.conf,
+                    "iou": job.iou,
+                    "verbose": False,
+                }
+                if target_class_ids:
+                    predict_kwargs["classes"] = target_class_ids
+                    
+                results = model.predict(**predict_kwargs)
+                
+                if results and len(results) > 0:
+                    r = results[0]
+                    if r.boxes is not None and len(r.boxes) > 0:
+                        for b in r.boxes:
+                            cls_id = int(b.cls[0].item())
+                            conf_val = float(b.conf[0].item())
+                            cls_name = model.names.get(cls_id, str(cls_id)) if hasattr(model, 'names') else str(cls_id)
+                            
+                            if filter_classes:
+                                matched = any(match_class(cls_name, fc) for fc in filter_classes)
+                                if not matched:
+                                    continue
+                                    
+                            xyxy = b.xyxy[0].cpu().numpy()
+                            color = get_dynamic_class_color(cls_name)
+                            
+                            current_frame_detections.append({
+                                "box": xyxy,
+                                "label": cls_name,
+                                "conf": conf_val,
+                                "color": color
+                            })
+                            
+                            job.detections_total += 1
+                            job.class_counts[cls_name] = job.class_counts.get(cls_name, 0) + 1
+                            
+                last_detections = current_frame_detections
+            else:
+                current_frame_detections = last_detections
+                
+            annotated_frame = _draw_detection_overlay(frame, current_frame_detections, job, frame_idx, total_frames)
+            out_writer.write(annotated_frame)
+            
+            job.current_frame = frame_idx
+            if total_frames > 0:
+                job.progress = (frame_idx / total_frames) * 100.0
+                
+            now = time.time()
+            job.elapsed_sec = now - job.start_time
+            if job.elapsed_sec > 0:
+                job.processing_fps = frame_idx / job.elapsed_sec
+                remaining_frames = max(0, total_frames - frame_idx)
+                job.eta_sec = remaining_frames / job.processing_fps if job.processing_fps > 0 else 0.0
+
+        cap.release()
+        out_writer.release()
+        
+        if job.status == "cancelled":
+            if os.path.exists(temp_avi_path):
+                os.remove(temp_avi_path)
+            return
+
+        logger.info(f"[VideoTester] Remuxing job {job.job_id} to H.264 MP4 via FFmpeg...")
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-i", temp_avi_path,
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            job.result_path
+        ]
+        
+        res = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res.returncode != 0:
+            logger.warning(f"[VideoTester] FFmpeg libx264 conversion failed: {res.stderr.decode('utf-8', errors='ignore')}")
+            shutil.copyfile(temp_avi_path, job.result_path)
+            
+        if os.path.exists(temp_avi_path):
+            try: os.remove(temp_avi_path)
+            except: pass
+            
+        job.progress = 100.0
+        job.status = "completed"
+        logger.info(f"[VideoTester] Job {job.job_id} successfully completed in {job.elapsed_sec:.1f}s.")
+        
+    except Exception as e:
+        logger.error(f"[VideoTester] Job {job.job_id} failed with error: {e}", exc_info=True)
+        job.status = "failed"
+        job.error = str(e)
+        if os.path.exists(temp_avi_path):
+            try: os.remove(temp_avi_path)
+            except: pass
+
+
+def start_video_test(job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise ValueError(f"Job {job_id} not found")
+    t = threading.Thread(target=_process_video_worker, args=(job,), daemon=True, name=f"VideoTestWorker-{job_id}")
+    t.start()
+    return job

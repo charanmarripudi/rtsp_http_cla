@@ -1,0 +1,28 @@
+{
+  "source_type": "rtsp",
+  "rtsp_url": "rtsp://192.168.96.72:8554/petrolbunk",
+  "video_file_path": "sample_truck.mp4",
+  "loop_video": true,
+  "model_path": "../Vehicle_Detector_Tracking_Counter/best.pt",
+  "speed_limit_kmh": 10.0,
+  "road_distance_meters": 20.0,
+  "confidence_threshold": 0.30,
+  "imgsz": 416,
+  "line_a": {
+    "name": "Gate Entry",
+    "x1_pct": 15,
+    "y1_pct": 40,
+    "x2_pct": 85,
+    "y2_pct": 40
+  },
+  "line_b": {
+    "name": "Gantry Road",
+    "x1_pct": 15,
+    "y1_pct": 75,
+    "x2_pct": 85,
+    "y2_pct": 75
+  },
+  "allowed_classes": ["truck", "car", "pickup truck", "bike", "tank truck", "vehicle"],
+  "alerts_dir": "alerts",
+  "enable_anpr_hook": false
+}
