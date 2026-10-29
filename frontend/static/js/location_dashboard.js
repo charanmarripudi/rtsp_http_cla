@@ -23,14 +23,11 @@ class LocationDashboardTemplates {
                 <span class="expand-arrow">▼</span>
             </div>
             <div class="widget-body">
-                <div class="location-table">
-                    <div class="camera-editor" style="display: flex; flex-direction: column; gap: 12px;"></div>
-                </div>
-                <div class="widget-actions">
+                <div class="camera-live-grid">${cameras.map(stream => this.cameraBox(stream)).join("")}</div>
+                <div class="widget-actions" style="margin-top: 16px;">
                     <button class="btn-secondary add-camera">+ Add Camera</button>
                     <button class="btn-primary save-cameras">Save Cameras</button>
                 </div>
-                <div class="camera-live-grid">${cameras.map(stream => this.cameraBox(stream)).join("")}</div>
             </div>`;
     }
 
@@ -51,6 +48,7 @@ class LocationDashboardTemplates {
                     <div class="cam-label">${this.text(stream.location || stream.label || `Camera ${id + 1}`)}</div>
                 </div>
                 <div class="controls">
+                    <div class="camera-editor-mount" id="cam-editor-${id}" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
                     <div class="assignment-panel">
                         <div><span style="font-size:0.65rem;color:var(--muted);display:block;margin-bottom:6px;font-weight:600;letter-spacing:0.5px;">ASSIGNED MODELS</span><div class="assigned-chips-list" id="chips-${id}" style="display:flex;flex-direction:column;gap:8px;"></div></div>
                     </div>
@@ -567,8 +565,12 @@ class LocationDashboard {
         const isExpanded = this.expandedLocs.has(locId);
         card.className = isExpanded ? "widget-card expanded" : "widget-card collapsed";
         card.innerHTML = LocationDashboardTemplates.locationCard(loc, locIdx, cameras);
-        const editor = card.querySelector(".camera-editor");
-        cameras.forEach(stream => editor.appendChild(this.cameraEditorRow(stream)));
+        cameras.forEach(stream => {
+            const mount = card.querySelector(`#cam-editor-${stream.id}`);
+            if (mount) {
+                mount.appendChild(this.cameraEditorRow(stream));
+            }
+        });
         card.querySelector(".widget-header").addEventListener("click", () => {
             const isCollapsed = card.classList.contains("collapsed");
             card.classList.toggle("collapsed");
@@ -624,23 +626,18 @@ class LocationDashboard {
     cameraEditorRow(stream) {
         const row = document.createElement("div");
         row.className = "camera-edit-block";
-        row.style.cssText = "display: flex; flex-direction: column; gap: 12px; align-items: stretch; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); border-radius: 8px; padding: 14px; font-size: 0.72rem; box-sizing: border-box;";
+        row.style.cssText = "display: flex; flex-direction: column; gap: 10px; align-items: stretch; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 0.72rem; box-sizing: border-box;";
         row.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                <span style="font-weight: 600; color: var(--text); font-size: 0.78rem;">${this.escapeHtml(stream.location || stream.label || `Camera ${Number(stream.id) + 1}`)}</span>
-                <button class="btn-remove" style="background: transparent; color: var(--danger); border: 1px solid rgba(255, 65, 85, 0.3); padding: 4px 10px; border-radius: 6px; font-size: 0.68rem; cursor: pointer; transition: all 0.2s;">Remove</button>
-            </div>
             <div style="display: flex; flex-direction: column; gap: 4px; width: 100%;">
-                <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">RTSP Stream URL</span>
-                <input class="camera-rtsp-input" value="${this.escapeHtml(stream.rtsp || "")}" placeholder="rtsp://camera-url" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 0.72rem; padding: 8px; border-radius: 6px; box-sizing: border-box; outline: none;">
+                <label style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">RTSP Stream URL</label>
+                <input class="camera-rtsp-input" value="${this.escapeHtml(stream.rtsp || "")}" placeholder="rtsp://camera-url" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 0.72rem; padding: 7px 10px; border-radius: 6px; box-sizing: border-box; outline: none;">
             </div>
             <div style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
-                <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; font-weight: 600;">Select Models & Classes</span>
-                <div class="model-assign-row" style="margin: 0; display: flex; flex-wrap: wrap; gap: 8px; width: 100%;">${this.modelChips(stream.id, stream)}</div>
+                <label style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">Select Detection Models</label>
+                <div class="model-assign-row" style="margin: 0; display: flex; flex-wrap: wrap; gap: 6px; width: 100%; max-height: 140px; overflow-y: auto; padding: 6px; background: rgba(0,0,0,0.25); border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">${this.modelChips(stream.id, stream)}</div>
             </div>`;
         row.querySelector(".camera-rtsp-input").addEventListener("input", e => { stream.rtsp = e.target.value; });
         row.querySelectorAll('input[type="checkbox"]').forEach(cb => this.bindModelCheckbox(cb, stream));
-        row.querySelector(".btn-remove").addEventListener("click", () => this.removeCamera(stream));
         return row;
     }
 

@@ -73,14 +73,20 @@ except ImportError:
     PSYCOPG2_AVAILABLE = False
 
 # Application directory resolution
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR = os.path.dirname(BACKEND_DIR)
-DETECTOR_DIR = os.path.join(BACKEND_DIR, "detector")
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.basename(THIS_DIR) == "backend":
+    BACKEND_DIR = THIS_DIR
+    BASE_DIR = os.path.dirname(BACKEND_DIR)
+else:
+    BASE_DIR = THIS_DIR
+    BACKEND_DIR = os.path.join(BASE_DIR, "backend")
+
+DETECTOR_DIR = os.path.join(BACKEND_DIR, "detector") if os.path.exists(os.path.join(BACKEND_DIR, "detector")) else os.path.join(BASE_DIR, "detector")
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
-if DETECTOR_DIR not in sys.path:
+if os.path.exists(DETECTOR_DIR) and DETECTOR_DIR not in sys.path:
     sys.path.insert(0, DETECTOR_DIR)
-if BACKEND_DIR not in sys.path:
+if os.path.exists(BACKEND_DIR) and BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
@@ -4388,7 +4394,11 @@ class CachedStaticFiles(StaticFiles):
 
 STATIC_DIR = os.path.join(FRONTEND_DIR, "static")
 if not os.path.exists(STATIC_DIR):
-    STATIC_DIR = os.path.join(BASE_DIR, "static")
+    alt_static = os.path.join(BASE_DIR, "static")
+    if os.path.exists(alt_static):
+        STATIC_DIR = alt_static
+    else:
+        os.makedirs(STATIC_DIR, exist_ok=True)
 
 app.mount("/static", CachedStaticFiles(directory=STATIC_DIR), name="static")
 
