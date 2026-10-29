@@ -2,7 +2,7 @@
 
 **Backend Base URLs:**
 - **Local Network:** `http://10.246.47.179:8080`
-- **Public Tunnel:** `https://raspberrypi-1.tail43e835.ts.net`
+- **Public Tunnel:** `https://raspberrypi.tail43e835.ts.net`
 
 All APIs accept and return `Content-Type: application/json` unless otherwise specified (e.g. video streams / image files).
 

@@ -6,7 +6,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PI_LOCAL_IP="10.246.47.179"
-PI_TAILSCALE_HOST="raspberrypi-1.tail43e835.ts.net"
+PI_TAILSCALE_HOST="raspberrypi.tail43e835.ts.net"
 PI_TAILSCALE_IP="100.75.167.102"
 PI_USER="algo"
 PI_PASS="QuantyxEdgeBSK@70"
