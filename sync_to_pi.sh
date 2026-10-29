@@ -26,7 +26,7 @@ echo "========================================="
 echo "  1. PUSHING LOCAL CHANGES TO GITHUB"
 echo "========================================="
 if [ -d "$SCRIPT_DIR/.git" ]; then
-    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "rpi")
     echo "[INFO] Current branch is: $CURRENT_BRANCH"
     COMMIT_MSG="${1:-sync: update code from local workspace $(date '+%Y-%m-%d %H:%M:%S')}"
 
@@ -37,7 +37,7 @@ if [ -d "$SCRIPT_DIR/.git" ]; then
     fi
 
     echo "[INFO] Pushing to GitHub origin..."
-    git push origin "$CURRENT_BRANCH" 2>/dev/null || echo "[WARN] Git push failed or remote not configured"
+    git push -u origin "$CURRENT_BRANCH"
 else
     echo "[INFO] Local git repo not initialized yet. Skipping git push."
 fi
