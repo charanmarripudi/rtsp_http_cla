@@ -26,20 +26,20 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 import uuid
 
-import cv2
 try:
+    import cv2
     cv2.setNumThreads(1)
     cv2.ocl.setUseOpenCL(False)
-except Exception:
-    pass
+except Exception as e:
+    cv2 = None
 
-import torch
 try:
+    import torch
     torch.set_num_threads(1)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
-except Exception:
-    pass
+except Exception as e:
+    torch = None
 
 try:
     from dotenv import load_dotenv
