@@ -13,10 +13,10 @@ USAGE:
   python3 test_detection.py --cam 0 --models ppe_new.pt
 
   # Test multiple models simultaneously on camera 0
-  python3 test_detection.py --cam 0 --models ppe_new.pt fire_smoke.pt
+  python3 test_detection.py --cam 0 --models ppe_new.pt Final_Fire_smoke.pt
 
   # Test all models on camera 1 with custom thresholds
-  python3 test_detection.py --cam 1 --models ppe_new.pt fire_smoke.pt sand_ext_chocks.pt firehose.pt --conf 0.3 --iou 0.5
+  python3 test_detection.py --cam 1 --models ppe_new.pt Final_Fire_smoke.pt sand_ext_chocks.pt firehose.pt --conf 0.3 --iou 0.5
 
   # Use a direct RTSP URL instead of camera index
   python3 test_detection.py --rtsp "rtsp://admin:pass@192.168.1.10:554/stream" --models ppe_new.pt
@@ -208,7 +208,7 @@ def main():
     parser.add_argument("--list",   action="store_true", help="List streams and models then exit")
     parser.add_argument("--cam",    type=int, default=0,  help="Camera index from streams.conf (default: 0)")
     parser.add_argument("--rtsp",   type=str, default=None, help="Direct RTSP URL (overrides --cam)")
-    parser.add_argument("--models", nargs="+", required=False, help="Model filename(s) e.g. ppe_new.pt fire_smoke.pt")
+    parser.add_argument("--models", nargs="+", required=False, help="Model filename(s) e.g. ppe_new.pt Final_Fire_smoke.pt")
     parser.add_argument("--conf",   type=float, default=0.25, help="Confidence threshold (default: 0.25)")
     parser.add_argument("--iou",    type=float, default=0.45, help="IoU threshold (default: 0.45)")
     parser.add_argument("--fps",    type=int,   default=15,   help="Target display FPS (default: 15)")

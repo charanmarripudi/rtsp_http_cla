@@ -24,13 +24,12 @@ class LocationDashboardTemplates {
             </div>
             <div class="widget-body">
                 <div class="location-table">
-                    <div class="camera-editor" style="display: flex; flex-direction: column; gap: 12px;"></div>
+                    <div class="camera-editor" style="display: flex; flex-direction: column; gap: 16px;"></div>
                 </div>
-                <div class="widget-actions">
+                <div class="widget-actions" style="margin-top: 14px;">
                     <button class="btn-secondary add-camera">+ Add Camera</button>
                     <button class="btn-primary save-cameras">Save Cameras</button>
                 </div>
-                <div class="camera-live-grid">${cameras.map(stream => this.cameraBox(stream)).join("")}</div>
             </div>`;
     }
 
@@ -189,7 +188,7 @@ class LocationDashboardStore {
         this.locations = JSON.parse(localStorage.getItem("offline_locations") || "[]");
         this.streams = JSON.parse(localStorage.getItem("offline_streams") || "[]").map((item, idx) => this.streamView(item, idx));
         this.cameraModels = JSON.parse(localStorage.getItem("offline_camera_models") || "{}");
-        this.allModels = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "firehose.pt", "sand_ext_chocks.pt", "fire_smoke.pt", "construction.pt", "tape.pt", "tyre.pt", "spillage.pt"];
+        this.allModels = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "Final_Fire_smoke.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt"];
     }
 
     seedLocationsFromStreams() {
@@ -621,29 +620,60 @@ class LocationDashboard {
         return card;
     }
 
+    getNegativeClasses(modelName) {
+        const norm = (modelName || "").toLowerCase().replace(/\.pt$/i, "");
+        const map = {
+            "hansung_ppe_violations": ["NO-Hardhat", "NO-Mask", "NO-Safety Vest"],
+            "ppe_new": ["NO-Mask", "No-Cap-Lamp", "No-Gloves", "No-Gum-Boots", "No-Hard-Hat", "No-Saftey-Belt", "No-Saftey-Vest"],
+            "nik_ppe_best": ["Fall-Detected", "NO-Mask", "No_Gloves", "No_Goggles", "No_Harness", "No_boots", "No_helmet", "No_safety_vest"],
+            "construction": ["no_helmet", "no_goggle", "no_gloves", "no_boots", "none"],
+            "hf_ppe_detection": ["no-helmet"],
+            "keremberke_ppe_gear": ["no_glove", "no_goggles", "no_helmet", "no_mask", "no_shoes"],
+            "final_fire_smoke": ["fire", "smoke", "Gas"],
+            "120_spillage_best": ["spillage"],
+            "tyre_final": ["Defective"],
+            "valve_box_best": ["Valve_Box_Open"],
+            "dome_open_closed_best": ["Dome_Opened"],
+            "150_firehose_best": ["fire_hose", "firehose_box"],
+            "sand_ext_chocks": ["Fire_Extinguisher", "Sand-Bucket", "wheel-choke"],
+            "best_tape": ["reflective_tape_floor", "reflective_tape_person", "reflective_tape_vehicles", "traffic_tape_bollards", "traffic_tape_cone"],
+            "yolov8n": ["person", "truck"]
+        };
+        if (map[norm]) return map[norm];
+        const loaded = this.modelClasses[modelName] || this.modelClasses[norm] || [];
+        return loaded.filter(c => {
+            const lc = String(c).toLowerCase();
+            return lc.startsWith("no-") || lc.startsWith("no_") || lc.includes("fall") || lc.includes("fire") || lc.includes("smoke") || lc.includes("spill") || lc.includes("open") || lc.includes("defective");
+        });
+    }
+
     cameraEditorRow(stream) {
         const row = document.createElement("div");
         row.className = "camera-edit-block";
-        row.style.cssText = "display: flex; flex-direction: column; gap: 12px; align-items: stretch; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); border-radius: 8px; padding: 14px; font-size: 0.72rem; box-sizing: border-box;";
+        row.style.cssText = "display: flex; flex-direction: column; gap: 14px; align-items: stretch; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); border-radius: 10px; padding: 16px; font-size: 0.72rem; box-sizing: border-box;";
         row.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                <span style="font-weight: 700; color: #FFFFFF; font-size: 0.80rem;">${this.escapeHtml(stream.location || stream.label || `Camera ${Number(stream.id) + 1}`)}</span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-weight: 800; color: #FFFFFF; font-size: 0.88rem;">${this.escapeHtml(stream.location || stream.label || `Camera ${Number(stream.id) + 1}`)}</span>
+                    <span style="font-size: 0.62rem; color: var(--accent); background: rgba(10, 116, 218, 0.15); border: 1px solid var(--accent); padding: 2px 6px; border-radius: 4px; font-family: var(--mono); font-weight: 600;">CAM ${Number(stream.id) + 1}</span>
+                </div>
                 <button class="btn-remove" style="background: transparent; color: var(--danger); border: 1px solid rgba(237, 28, 36, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 0.68rem; cursor: pointer; transition: all 0.2s;">Remove</button>
-            </div>
-            <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(10, 116, 218, 0.08); border: 1px solid rgba(10, 116, 218, 0.25); border-left: 3px solid var(--accent); padding: 6px 10px; border-radius: 5px;">
-                <span style="font-size: 0.65rem; color: #FFFFFF; font-weight: 600;">ACTIVE AI ENFORCEMENT</span>
-                <span style="font-size: 0.60rem; color: var(--danger); background: var(--danger-dim); border: 1px solid var(--danger); padding: 2px 6px; border-radius: 3px; font-weight: 700;">NEGATIVE ALERTS ONLY</span>
             </div>
             <div style="display: flex; flex-direction: column; gap: 4px; width: 100%;">
                 <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700;">RTSP Stream URL</span>
-                <input class="camera-rtsp-input" value="${this.escapeHtml(stream.rtsp || "")}" placeholder="rtsp://admin:password@ip:port/stream" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: #FFFFFF; font-family: var(--mono); font-size: 0.72rem; padding: 8px; border-radius: 6px; box-sizing: border-box; outline: none;">
+                <input class="camera-rtsp-input" value="${this.escapeHtml(stream.rtsp || "")}" placeholder="rtsp://admin:password@ip:port/stream" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: #FFFFFF; font-family: var(--mono); font-size: 0.72rem; padding: 8px 10px; border-radius: 6px; box-sizing: border-box; outline: none;">
             </div>
-            <div style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
-                <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; font-weight: 700;">Select Detection Models (Negative Alerts Auto-Configured)</span>
-                <div class="model-assign-row" style="margin: 0; display: flex; flex-wrap: wrap; gap: 8px; width: 100%;">${this.modelChips(stream.id, stream)}</div>
+            <div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
+                <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700;">Select Detection Models &amp; Negative Classes</span>
+                <div class="model-assign-row" style="margin: 0; display: flex; flex-direction: column; gap: 8px; width: 100%;">${this.modelChips(stream.id, stream)}</div>
+            </div>
+            <div class="camera-live-player-container" style="width: 100%; margin-top: 6px; border-top: 1px solid var(--border); padding-top: 12px;">
+                <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; display: block; margin-bottom: 8px;">Live Camera Stream &amp; Inference Control</span>
+                ${LocationDashboardTemplates.cameraBox(stream)}
             </div>`;
         row.querySelector(".camera-rtsp-input").addEventListener("input", e => { stream.rtsp = e.target.value; });
-        row.querySelectorAll('input[type="checkbox"]').forEach(cb => this.bindModelCheckbox(cb, stream));
+        row.querySelectorAll('.parent-model-checkbox').forEach(cb => this.bindModelCheckbox(cb, stream));
+        row.querySelectorAll('.class-checkbox').forEach(cb => this.bindClassCheckbox(cb, stream));
         row.querySelector(".btn-remove").addEventListener("click", () => this.removeCamera(stream));
         return row;
     }
@@ -653,27 +683,40 @@ class LocationDashboard {
         if (!this.allModels.length) return '<span style="color:var(--muted);font-size:.68rem;">No models available</span>';
 
         let html = "";
+        const modelsToRender = this.allModels.filter(m => !m.toLowerCase().includes("leakage") && !m.toLowerCase().startsWith("fire_smoke"));
+        const modelConfigs = (stream && stream.model_configs) || {};
 
-        const palette = [
-            "#0A74DA", "#0088FF", "#00B4D8", "#00C853", "#FFB300",
-            "#7B2CBF", "#FF6B6B", "#4361EE", "#06D6A0"
-        ];
-
-        // Filter out leakage model as requested
-        const modelsToRender = this.allModels.filter(m => !m.toLowerCase().includes("leakage"));
-
-        modelsToRender.forEach((model, idx) => {
+        modelsToRender.forEach(model => {
             const cleanM = model.replace(/\.pt$/i, "");
-            const color = palette[idx % palette.length];
             const isAssigned = assigned.some(a => {
                 const aNorm = String(a).toLowerCase().replace(/\.pt$/i, "");
                 return aNorm === cleanM.toLowerCase();
             });
 
-            html += `<label class="${isAssigned ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; align-items: center; cursor: pointer; gap: 6px; padding: 6px 12px; background: ${isAssigned ? 'rgba(10, 116, 218, 0.18)' : 'rgba(255, 255, 255, 0.03)'}; border: 1px solid ${isAssigned ? '#0A74DA' : 'var(--border)'}; border-radius: 6px; transition: all 0.2s;">
-                <input type="checkbox" class="parent-model-checkbox" value="${this.escapeHtml(model)}" ${isAssigned ? "checked" : ""} data-camera="${cameraIndex}" data-color="${color}" style="cursor: pointer; accent-color: var(--accent); width: 14px; height: 14px; margin: 0;">
-                <span style="font-size: 0.72rem; font-weight: 600; color: ${isAssigned ? '#FFFFFF' : 'var(--text)'};">${this.escapeHtml(cleanM)}</span>
-            </label>`;
+            const mCfg = modelConfigs[model] || modelConfigs[cleanM] || {};
+            const savedEnabledClasses = mCfg.enabled_classes || [];
+            const negClasses = this.getNegativeClasses(model);
+
+            html += `
+            <div class="model-accordion-card" style="width: 100%; background: rgba(14, 26, 51, 0.55); border: 1px solid ${isAssigned ? '#0A74DA' : 'var(--border)'}; border-radius: 8px; padding: 10px 12px; box-sizing: border-box; transition: all 0.2s;">
+                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                    <label class="model-header-label" style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; margin: 0;">
+                        <input type="checkbox" class="parent-model-checkbox" value="${this.escapeHtml(model)}" ${isAssigned ? "checked" : ""} data-camera="${cameraIndex}" style="accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; margin: 0;">
+                        <span style="font-weight: 700; font-size: 0.78rem; color: ${isAssigned ? '#FFFFFF' : 'var(--text)'};">${this.escapeHtml(cleanM)}</span>
+                    </label>
+                    <span style="font-size: 0.60rem; color: var(--danger); background: rgba(237, 28, 36, 0.12); border: 1px solid rgba(237, 28, 36, 0.35); padding: 2px 7px; border-radius: 4px; font-weight: 700; letter-spacing: 0.5px;">VIOLATION CLASSES</span>
+                </div>
+                <div class="model-classes-wrap" id="classes-wrap-${cameraIndex}-${this.escapeHtml(cleanM)}" style="display: ${isAssigned ? 'flex' : 'none'}; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+                    ${negClasses.length > 0 ? negClasses.map(cls => {
+                        const isChecked = isAssigned && (savedEnabledClasses.length === 0 || savedEnabledClasses.includes(cls));
+                        return `
+                        <label class="class-chip ${isChecked ? 'checked' : ''}" style="margin: 0; display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; background: ${isChecked ? 'rgba(237, 28, 36, 0.16)' : 'rgba(255, 255, 255, 0.03)'}; border: 1px solid ${isChecked ? 'var(--danger)' : 'rgba(255,255,255,0.1)'}; border-radius: 5px; font-size: 0.68rem; cursor: pointer; transition: all 0.2s;">
+                            <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" data-model="${this.escapeHtml(model)}" data-camera="${cameraIndex}" ${isChecked ? "checked" : ""} style="accent-color: var(--danger); width: 13px; height: 13px; margin: 0; cursor: pointer;">
+                            <span style="color: ${isChecked ? '#FFFFFF' : 'var(--muted)'}; font-weight: 600;">${this.escapeHtml(cls)}</span>
+                        </label>`;
+                    }).join("") : '<span style="font-size:0.62rem; color:var(--muted); font-style:italic;">All detections for this model monitored</span>'}
+                </div>
+            </div>`;
         });
 
         return html;
@@ -681,15 +724,60 @@ class LocationDashboard {
 
     bindModelCheckbox(cb, stream) {
         cb.addEventListener("change", () => {
-            const chip = cb.closest(".model-chip");
+            const card = cb.closest(".model-accordion-card");
             const labelSpan = cb.nextElementSibling;
-            if (chip) {
-                chip.classList.toggle("checked", cb.checked);
-                chip.style.borderColor = cb.checked ? "var(--accent)" : "var(--border)";
-                chip.style.background = cb.checked ? "rgba(10, 116, 218, 0.18)" : "rgba(255, 255, 255, 0.03)";
+            const model = cb.value;
+            const cleanM = model.replace(/\.pt$/i, "");
+            const camIdx = cb.getAttribute("data-camera");
+            const wrap = document.getElementById(`classes-wrap-${camIdx}-${cleanM}`);
+
+            if (card) {
+                card.style.borderColor = cb.checked ? "#0A74DA" : "var(--border)";
             }
             if (labelSpan) {
                 labelSpan.style.color = cb.checked ? "#FFFFFF" : "var(--text)";
+            }
+            if (wrap) {
+                wrap.style.display = cb.checked ? "flex" : "none";
+                const classCbs = wrap.querySelectorAll(".class-checkbox");
+                classCbs.forEach(classCb => {
+                    classCb.checked = cb.checked;
+                    const chip = classCb.closest(".class-chip");
+                    if (chip) {
+                        chip.classList.toggle("checked", cb.checked);
+                        chip.style.borderColor = cb.checked ? "var(--danger)" : "rgba(255,255,255,0.1)";
+                        chip.style.background = cb.checked ? "rgba(237, 28, 36, 0.16)" : "rgba(255, 255, 255, 0.03)";
+                        const sp = chip.querySelector("span");
+                        if (sp) sp.style.color = cb.checked ? "#FFFFFF" : "var(--muted)";
+                    }
+                });
+            }
+        });
+    }
+
+    bindClassCheckbox(cb, stream) {
+        cb.addEventListener("change", () => {
+            const chip = cb.closest(".class-chip");
+            const sp = chip ? chip.querySelector("span") : null;
+            if (chip) {
+                chip.classList.toggle("checked", cb.checked);
+                chip.style.borderColor = cb.checked ? "var(--danger)" : "rgba(255,255,255,0.1)";
+                chip.style.background = cb.checked ? "rgba(237, 28, 36, 0.16)" : "rgba(255, 255, 255, 0.03)";
+            }
+            if (sp) {
+                sp.style.color = cb.checked ? "#FFFFFF" : "var(--muted)";
+            }
+            const model = cb.getAttribute("data-model");
+            const camIdx = cb.getAttribute("data-camera");
+            if (cb.checked && model) {
+                const parentCb = document.querySelector(`.parent-model-checkbox[value="${model}"][data-camera="${camIdx}"]`);
+                if (parentCb && !parentCb.checked) {
+                    parentCb.checked = true;
+                    const card = parentCb.closest(".model-accordion-card");
+                    if (card) card.style.borderColor = "#0A74DA";
+                    const pSpan = parentCb.nextElementSibling;
+                    if (pSpan) pSpan.style.color = "#FFFFFF";
+                }
             }
         });
     }

@@ -328,7 +328,7 @@ Returns list of available YOLO model filenames on the server.
   "hf_ppe_detection.pt",
   "keremberke_ppe_gear.pt",
   "hansung_ppe_violations.pt",
-  "fire_smoke.pt"
+  "Final_Fire_smoke.pt"
 ]
 ```
 

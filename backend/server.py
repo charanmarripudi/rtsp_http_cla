@@ -1245,9 +1245,6 @@ MODEL_CLASSES_CACHE = {
     "construction.pt": [
         "helmet", "gloves", "vest", "boots", "goggles", "none", "Person", "no_helmet", "no_goggle", "no_gloves", "no_boots"
     ],
-    "fire_smoke.pt": [
-        "Fire", "Smoke"
-    ],
     "Final_Fire_smoke.pt": [
         "fire", "smoke", "Gas"
     ],
