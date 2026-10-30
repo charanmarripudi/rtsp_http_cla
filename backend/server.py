@@ -4440,10 +4440,21 @@ _HTML_FILES = ["index.html", "stream.html", "location_dashboard.html", "alerts.h
 
 @app.get("/")
 @app.head("/")
+@app.get("/index.html")
+@app.head("/index.html")
 async def serve_root():
-    p = os.path.join(FRONTEND_DIR, "index.html")
-    if not os.path.exists(p):
-        p = os.path.join(BASE_DIR, "index.html")
+    search_paths = [
+        os.path.join(FRONTEND_DIR, "index.html"),
+        os.path.join(BASE_DIR, "index.html"),
+        os.path.join(BASE_DIR, "frontend", "index.html"),
+        os.path.join(THIS_DIR, "index.html"),
+        os.path.join(THIS_DIR, "frontend", "index.html"),
+        "/home/algo/Documents/rtsp_http_cla/frontend/index.html",
+        "/home/algo/Documents/rtsp_http_cla/index.html"
+    ]
+    p = next((cand for cand in search_paths if os.path.exists(cand)), None)
+    if not p:
+        raise HTTPException(status_code=404, detail="index.html not found")
     with open(p, "rb") as f:
         content = f.read()
     return Response(
@@ -4453,10 +4464,17 @@ async def serve_root():
     )
 
 for _html in _HTML_FILES:
-    _html_path = os.path.join(FRONTEND_DIR, _html)
-    if not os.path.exists(_html_path):
-        _html_path = os.path.join(BASE_DIR, _html)
-    if os.path.exists(_html_path):
+    _html_candidates = [
+        os.path.join(FRONTEND_DIR, _html),
+        os.path.join(BASE_DIR, _html),
+        os.path.join(BASE_DIR, "frontend", _html),
+        os.path.join(THIS_DIR, _html),
+        os.path.join(THIS_DIR, "frontend", _html),
+        f"/home/algo/Documents/rtsp_http_cla/frontend/{_html}",
+        f"/home/algo/Documents/rtsp_http_cla/{_html}"
+    ]
+    _html_path = next((c for c in _html_candidates if os.path.exists(c)), None)
+    if _html_path:
         def _make_route(p):
             async def _serve():
                 with open(p, "rb") as f:
