@@ -1344,9 +1344,9 @@ def get_model_classes(model_name: str):
     return []
 
 @app.get("/api/model-classes")
-def get_model_classes_endpoint(model: Optional[str] = Query(default=None), model_name: Optional[str] = Query(default=None)):
+def get_model_classes_endpoint(model: Optional[str] = None, model_name: Optional[str] = None):
     target_model = model or model_name
-    if not target_model:
+    if not target_model or not isinstance(target_model, str):
         models_res = get_models()
         all_models = models_res.get("models", [])
         result = {}
