@@ -607,6 +607,7 @@ def normalize_device_fields(item):
 
 def normalize_stream_entry(item, idx):
     if isinstance(item, dict):
+        item_id = item.get("id")
         rtsp = str(item.get("rtsp", "")).strip()
         location = str(item.get("location", "")).strip()
         location_id = str(item.get("location_id", "")).strip()
@@ -617,6 +618,7 @@ def normalize_stream_entry(item, idx):
         try: iou = float(item.get("iou", 0.45))
         except: iou = 0.45
     else:
+        item_id = idx
         rtsp = str(item).strip()
         location = f"Location {idx + 1}"
         location_id = f"loc-{idx + 1}"
@@ -625,6 +627,7 @@ def normalize_stream_entry(item, idx):
         conf = 0.40
         iou = 0.45
     data = {
+        "id": int(item_id) if (item_id is not None and str(item_id).isdigit()) else idx,
         "rtsp": rtsp,
         "location": location,
         "location_id": location_id,
@@ -895,10 +898,13 @@ def start_raw_stream(i, u):
     proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh)
     raw_streams_procs[cid] = {"proc": proc, "rtsp": normalized_rtsp, "sd": sd, "start_time": int(time.time()), "symlink": False}
 
+_stream_fail_tracker = {}
+
 def monitor_raw_streams_loop():
     time.sleep(10)
     while True:
         try:
+            now = time.time()
             conf_urls = read_streams_conf()
             for i, u in enumerate(conf_urls):
                 cid = str(i)
@@ -916,8 +922,19 @@ def monitor_raw_streams_loop():
                         is_running = True
                 
                 if not is_running:
-                    print(f"[MONITOR] Raw stream {cid} ({normalized_rtsp}) is not running! Restarting...")
+                    # Cooldown for failing streams (don't retry more than once every 30s)
+                    fail_info = _stream_fail_tracker.get(cid, {"last_attempt": 0, "failures": 0})
+                    if now - fail_info["last_attempt"] < 30:
+                        continue
+                    fail_info["last_attempt"] = now
+                    fail_info["failures"] += 1
+                    _stream_fail_tracker[cid] = fail_info
+
+                    print(f"[MONITOR] Raw stream {cid} ({normalized_rtsp}) is not running! Restarting (attempt {fail_info['failures']})...")
                     start_raw_stream(i, u)
+                else:
+                    if cid in _stream_fail_tracker:
+                        _stream_fail_tracker[cid]["failures"] = 0
             
             # Also monitor PTZ camera streams to ensure continuous smooth playback
             try:
@@ -933,13 +950,22 @@ def monitor_raw_streams_loop():
                             if cached["proc"].poll() is None:
                                 is_ptz_running = True
                         if not is_ptz_running:
-                            print(f"[MONITOR] PTZ Raw stream {ptz_cid} ({ptz_rtsp}) is not running! Starting...")
+                            ptz_fail_info = _stream_fail_tracker.get(ptz_cid, {"last_attempt": 0, "failures": 0})
+                            if now - ptz_fail_info["last_attempt"] < 30:
+                                continue
+                            ptz_fail_info["last_attempt"] = now
+                            ptz_fail_info["failures"] += 1
+                            _stream_fail_tracker[ptz_cid] = ptz_fail_info
+                            print(f"[MONITOR] PTZ Raw stream {ptz_cid} ({ptz_rtsp}) is not running! Starting (attempt {ptz_fail_info['failures']})...")
                             start_raw_stream(ptz_cid, ptz_rtsp)
+                        else:
+                            if ptz_cid in _stream_fail_tracker:
+                                _stream_fail_tracker[ptz_cid]["failures"] = 0
             except Exception as _pe:
                 pass
         except Exception as e:
             print(f"[MONITOR] Error: {e}")
-        time.sleep(5)
+        time.sleep(10)
 
 def stop_raw_stream(i, **kwargs):
     cid = str(i)
