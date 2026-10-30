@@ -1292,7 +1292,7 @@ MODEL_CLASSES_CACHE = {
         "helmet", "gloves", "vest", "boots", "goggles", "none", "Person", "no_helmet", "no_goggle", "no_gloves", "no_boots"
     ],
     "Final_Fire_smoke.pt": [
-        "fire", "smoke", "Gas"
+        "fire", "smoke"
     ],
     "150_firehose_best.pt": [
         "fire_hose", "firehose_box"
@@ -1304,7 +1304,8 @@ MODEL_CLASSES_CACHE = {
         "reflective_tape_floor", "reflective_tape_person", "reflective_tape_vehicles", "traffic_tape_bollards", "traffic_tape_cone"
     ],
     "sand_ext_chocks.pt": [
-        "Fire_Extinguisher", "Sand-Bucket", "wheel-choke"
+        "Fire_Extinguisher", "Sand-Bucket", "wheel-choke",
+        "no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"
     ],
     "tyre_final.pt": [
         "Defective", "Good_tyre"
@@ -3921,7 +3922,7 @@ def is_negative_alert_string(evt: str) -> bool:
         return False
     violation_indicators = [
         "no-", "no_", "non-", "without-", "fall", "violation", "over-speed", "overspeed",
-        "fire", "smoke", "gas", "spillage", "dome-opened", "valve-box-open",
+        "fire", "smoke", "spillage", "dome-opened", "valve-box-open",
         "defective", "crowd-alert"
     ]
     return any(vi in e for vi in violation_indicators)

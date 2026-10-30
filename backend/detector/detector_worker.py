@@ -218,7 +218,8 @@ def is_negative_violation_class(cls_name: str, model_name: str = "") -> bool:
         "harness", "saftey-belt", "safety-belt", "cap-lamp",
         "dome-closed", "domeclosed",
         "valve-box-close", "valveboxclose", "valve-box-closed",
-        "good-tyre", "goodtyre"
+        "good-tyre", "goodtyre",
+        "fire-extinguisher", "sand-bucket", "wheel-choke"
     }
     if c in positive_compliant:
         return False
@@ -231,7 +232,7 @@ def is_negative_violation_class(cls_name: str, model_name: str = "") -> bool:
     # 4. Critical safety hazards and violations
     hazards_and_violations = {
         "fall-detected", "violation", "none",
-        "fire", "smoke", "gas",
+        "fire", "smoke",
         "spillage",
         "dome-opened", "dome-open", "domeopened", "domeopen",
         "valve-box-open", "valveboxopen", "valve-box-opened",
@@ -602,6 +603,20 @@ class DetectorWorker:
                     if os.path.exists(cp) and cp not in self.model_paths:
                         self.model_paths.append(cp)
                         break
+
+        # Companion model expansion for sand_ext_chocks (detect vehicles/trucks to check wheel chock compliance)
+        has_sand_ext = any("sand_ext_chocks" in str(p).lower() for p in self.model_paths)
+        if has_sand_ext:
+            companion_dirs = [
+                os.path.join(str(BASE_DIR), "models"),
+                "/home/algo/Documents/rtsp_http_cla/models",
+                os.path.join(str(BASE_DIR), "backend", "companion_models")
+            ]
+            for cd in companion_dirs:
+                cp = os.path.join(cd, "yolov8n.pt")
+                if os.path.exists(cp) and cp not in self.model_paths:
+                    self.model_paths.append(cp)
+                    break
         self.models = None
         self._db_conn = None
         self._start_time = time.time()
@@ -1327,6 +1342,141 @@ class DetectorWorker:
                 'conf':  trk['conf'],
             })
 
+        # -- Absence Detection for Safety Equipment and Wheel Chocks (sand_ext_chocks) --
+        has_sand_ext = any("sand_ext_chocks" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
+        absence_alerts_to_trigger = []
+        if has_sand_ext and not is_speed_model:
+            cfg = get_config_for_model(self.model_configs, "sand_ext_chocks.pt")
+            sand_enabled = cfg.get("enabled_classes") if (cfg and isinstance(cfg, dict)) else None
+
+            def is_sand_cls_enabled(target_name):
+                if not sand_enabled:
+                    return True
+                t_clean = target_name.lower().replace("-", "").replace("_", "")
+                return any(t_clean in str(e).lower().replace("-", "").replace("_", "") for e in sand_enabled)
+
+            # 1. Collect positive detections in this cycle
+            has_pos_extinguisher = any("extinguisher" in str(b[3]).lower() for b in kept_items)
+            has_pos_sand_bucket = any("sand-bucket" in str(b[3]).lower() or "sand_bucket" in str(b[3]).lower() or "bucket" in str(b[3]).lower() for b in kept_items)
+            pos_wheel_chocks = [b[0] for b in kept_items if "choke" in str(b[3]).lower() or "chock" in str(b[3]).lower()]
+
+            if not hasattr(self, '_absence_trackers'):
+                self._absence_trackers = {
+                    "fire_extinguisher_seen": now_t,
+                    "sand_bucket_seen": now_t,
+                }
+
+            stream_uptime = now_t - getattr(self, '_start_time', now_t)
+
+            # Absence check: Fire Extinguisher
+            if is_sand_cls_enabled("no-Fire_Extinguisher"):
+                if has_pos_extinguisher:
+                    self._absence_trackers["fire_extinguisher_seen"] = now_t
+                else:
+                    time_missing = now_t - self._absence_trackers.get("fire_extinguisher_seen", now_t)
+                    if stream_uptime >= 8.0 and time_missing >= 8.0:
+                        if self.roi_polygon and len(self.roi_polygon) == 2:
+                            rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            abox = [rx1, ry1, rx2, ry2]
+                        else:
+                            abox = [int(f_w * 0.72), int(f_h * 0.65), int(f_w * 0.95), int(f_h * 0.92)]
+                        
+                        display_boxes.append({
+                            'box':   abox,
+                            'label': 'VIOLATION: no-Fire_Extinguisher 0.90',
+                            'sub':   'MISSING FIRE EXTINGUISHER',
+                            'is_veh': False,
+                            'color': (20, 20, 237),
+                            'cls':   'no-Fire_Extinguisher',
+                            'conf':  0.90,
+                        })
+                        cur_cls.add('no-Fire_Extinguisher')
+                        
+                        if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
+                        if (now_t - self.alert_cooldowns.get('no-Fire_Extinguisher', 0.0)) >= 30.0:
+                            absence_alerts_to_trigger.append('no-Fire_Extinguisher')
+
+            # Absence check: Sand Bucket
+            if is_sand_cls_enabled("no-Sand-Bucket"):
+                if has_pos_sand_bucket:
+                    self._absence_trackers["sand_bucket_seen"] = now_t
+                else:
+                    time_missing = now_t - self._absence_trackers.get("sand_bucket_seen", now_t)
+                    if stream_uptime >= 8.0 and time_missing >= 8.0:
+                        if self.roi_polygon and len(self.roi_polygon) == 2:
+                            rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            abox = [rx1, ry1, rx2, ry2]
+                        else:
+                            abox = [int(f_w * 0.72), int(f_h * 0.38), int(f_w * 0.95), int(f_h * 0.62)]
+
+                        display_boxes.append({
+                            'box':   abox,
+                            'label': 'VIOLATION: no-Sand-Bucket 0.90',
+                            'sub':   'MISSING SAND BUCKET',
+                            'is_veh': False,
+                            'color': (20, 20, 237),
+                            'cls':   'no-Sand-Bucket',
+                            'conf':  0.90,
+                        })
+                        cur_cls.add('no-Sand-Bucket')
+                        
+                        if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
+                        if (now_t - self.alert_cooldowns.get('no-Sand-Bucket', 0.0)) >= 30.0:
+                            absence_alerts_to_trigger.append('no-Sand-Bucket')
+
+            # Absence check: Wheel Choke on stationary vehicles / trucks
+            if is_sand_cls_enabled("no-wheel-choke"):
+                for tid, trk in list(self._ema_tracks.items()):
+                    trk_cls = str(trk.get('cls', '')).lower()
+                    if not any(vk in trk_cls for vk in vehicle_keywords):
+                        continue
+                    v_first_seen = trk.get('first_seen', now_t)
+                    stationary_dur = now_t - v_first_seen
+                    
+                    vx1, vy1, vx2, vy2 = trk['box']
+                    vw = max(1.0, vx2 - vx1)
+                    vh = max(1.0, vy2 - vy1)
+                    wheel_zone = [vx1 - vw*0.10, vy2 - vh*0.35, vx2 + vw*0.10, vy2 + vh*0.15]
+                    
+                    has_choke = False
+                    for cbox in pos_wheel_chocks:
+                        cx1, cy1, cx2, cy2 = cbox
+                        ix1, iy1 = max(cx1, wheel_zone[0]), max(cy1, wheel_zone[1])
+                        ix2, iy2 = min(cx2, wheel_zone[2]), min(cy2, wheel_zone[3])
+                        if ix2 > ix1 and iy2 > iy1:
+                            has_choke = True
+                            break
+                    
+                    if not has_choke and stationary_dur >= 8.0:
+                        choke_box = [
+                            int(vx1 + vw * 0.15),
+                            int(vy2 - max(16.0, vh * 0.26)),
+                            int(vx2 - vw * 0.15),
+                            int(vy2)
+                        ]
+                        display_boxes.append({
+                            'box':   choke_box,
+                            'label': 'VIOLATION: no-wheel-choke 0.88',
+                            'sub':   f'VEHICLE #{tid} UNCHOCKED',
+                            'is_veh': False,
+                            'color': (20, 20, 237),
+                            'cls':   'no-wheel-choke',
+                            'conf':  0.88,
+                        })
+                        cur_cls.add('no-wheel-choke')
+
+                        if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
+                        cd_key = f'no-wheel-choke-{tid}'
+                        if (now_t - self.alert_cooldowns.get(cd_key, 0.0)) >= 30.0 and (now_t - self.alert_cooldowns.get('no-wheel-choke', 0.0)) >= 30.0:
+                            self.alert_cooldowns[cd_key] = now_t
+                            absence_alerts_to_trigger.append('no-wheel-choke')
+
         with self._box_lock:
             self._tracked_boxes = display_boxes
 
@@ -1390,6 +1540,12 @@ class DetectorWorker:
 
         # -- Negative Safety Alert Processing (Exclusively alerts on violations) --
         if not is_speed_model:
+            # Absence alerts for safety equipment & wheel chocks
+            for a_cls in absence_alerts_to_trigger:
+                self.alert_cooldowns[a_cls] = now_t
+                print(f"[ALERT-TRIGGER-VIOLATION] Absence alert generated: cam={self.cam_id}, class={a_cls}", flush=True)
+                self._save_alert(a_cls, frame_snapshot)
+
             for tid, trk in list(self._ema_tracks.items()):
                 c = trk.get('cls', '')
                 if not c:
