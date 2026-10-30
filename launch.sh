@@ -240,7 +240,7 @@ start() {
         done
     }
 
-    server_supervisor "$PYTHON_BIN" &
+    server_supervisor "$PYTHON_BIN" >/dev/null 2>&1 < /dev/null &
     echo $! > "$SCRIPT_DIR/server.pid"
 
     sleep 2
@@ -256,7 +256,7 @@ start() {
     # START CLEANUP LOOP (disk safety net)
     #######################################################
 
-    cleanup_segments &
+    cleanup_segments >/dev/null 2>&1 < /dev/null &
     echo $! > "$SCRIPT_DIR/cleanup.pid"
 
     #######################################################
