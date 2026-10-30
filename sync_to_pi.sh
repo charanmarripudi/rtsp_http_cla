@@ -68,11 +68,20 @@ RSYNC_EXCLUDES=(
     --exclude ".DS_Store"
     --exclude "__pycache__"
     --exclude "*.pyc"
+    --exclude "hpcl_env"
+    --exclude "rpi_env"
+    --exclude "venv"
+    --exclude "env"
     --exclude "hls/*.ts"
     --exclude "hls/*.m3u8"
     --exclude "logs/*"
     --exclude "f4d3e73"
     --exclude ".git"
+    --exclude "alerts"
+    --exclude "vehicle_speed_tracker/alerts"
+    --exclude "uploads"
+    --exclude "test_videos"
+    --exclude "scratch"
 )
 
 if [ -n "$SSHPASS_CMD" ]; then
