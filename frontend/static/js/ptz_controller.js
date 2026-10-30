@@ -151,7 +151,7 @@
     select.innerHTML = ptzCameras
       .map(
         (cam, idx) => `
-      <option value="${idx}">📹 ${escapeHtml(cam.label || "PTZ Camera " + (idx + 1))} (${cam.ip || "192.168.96.30"})</option>
+      <option value="${idx}">${escapeHtml(cam.label || "PTZ Camera " + (idx + 1))} (${cam.ip || "192.168.96.30"})</option>
     `
       )
       .join("");
@@ -313,7 +313,7 @@
       document.body.appendChild(toast);
     }
     toast.style.borderColor = isError ? "var(--danger)" : "var(--accent)";
-    toast.innerHTML = (isError ? "⚠️ " : "⚡ ") + msg;
+    toast.innerHTML = (isError ? "Error: " : "") + msg;
     toast.style.opacity = "1";
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => {
@@ -797,10 +797,10 @@
         .map(
           (p) => `
         <div class="preset-item" style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.3); border:1px solid var(--border); padding:5px 10px; border-radius:6px; font-size:0.75rem;">
-          <span style="font-weight:500;">📍 ${escapeHtml(p.name || "Preset " + p.token)}</span>
+          <span style="font-weight:500;">${escapeHtml(p.name || "Preset " + p.token)}</span>
           <div style="display:flex; gap:6px;">
             <button class="btn-secondary" style="padding:2px 8px; font-size:0.68rem; color:var(--accent);" onclick="window.ptzGotoPreset('${p.token}')">Goto</button>
-            <button class="btn-danger" style="padding:2px 6px; font-size:0.68rem;" onclick="window.ptzDeletePreset('${p.token}')">✕</button>
+            <button class="btn-danger" style="padding:2px 6px; font-size:0.68rem;" onclick="window.ptzDeletePreset('${p.token}')">Delete</button>
           </div>
         </div>
       `

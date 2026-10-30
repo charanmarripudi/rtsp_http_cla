@@ -60,7 +60,7 @@ class LocationDashboardTemplates {
                         <button class="draw-roi-btn" id="roi-btn-${id}" onclick="handleRoiButtonClick(${id})" style="flex:1;background:rgba(0,240,255,0.1);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:6px 10px;font-size:0.72rem;cursor:pointer;font-family:var(--mono);font-weight:600;">Draw ROI</button>
                     </div>
                     <button class="btn-remove-camera-card" data-stream-id="${id}" style="width:100%;margin-top:8px;background:rgba(255,65,85,0.12);color:var(--danger);border:1px solid rgba(255,65,85,0.4);border-radius:6px;padding:8px;font-size:0.74rem;font-family:var(--mono);font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s ease;">
-                        ✕ Remove Camera
+                        Remove Camera
                     </button>
                 </div>
             </div>`;

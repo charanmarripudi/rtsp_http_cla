@@ -119,7 +119,7 @@ class SpeedDashboard {
             const hint = document.getElementById("speed-draw-hint");
             const modeName = this.drawingMode === "line_a" ? "Line A (Gate)" : "Line B (Gantry)";
             if (hint) {
-                hint.textContent = `✓ ${modeName} Set!`;
+                hint.textContent = `${modeName} Set!`;
                 hint.style.color = "#00ffaa";
             }
             this.setDrawingMode(null);
@@ -154,13 +154,13 @@ class SpeedDashboard {
 
         if (mode === "line_a") {
             if (hint) {
-                hint.textContent = "✏️ Click & drag across the stream to draw Line A (Gate Entry)";
+                hint.textContent = "Click & drag across the stream to draw Line A (Gate Entry)";
                 hint.style.color = "#ffdc00";
             }
             if (canvas) canvas.style.cursor = "crosshair";
         } else if (mode === "line_b") {
             if (hint) {
-                hint.textContent = "✏️ Click & drag across the stream to draw Line B (Gantry Road)";
+                hint.textContent = "Click & drag across the stream to draw Line B (Gantry Road)";
                 hint.style.color = "#00ffaa";
             }
             if (canvas) canvas.style.cursor = "crosshair";
@@ -332,7 +332,7 @@ class SpeedDashboard {
                     video.poster = data.thumbnail_url;
                 }
                 if (nameSpan) {
-                    nameSpan.textContent = `✓ ${file.name} (Ready)`;
+                    nameSpan.textContent = `${file.name} (Ready)`;
                     nameSpan.style.color = "#00ffaa";
                 }
                 const serverInput = document.getElementById("speed-server-video-input");
@@ -632,7 +632,7 @@ class SpeedDashboard {
                     setTimeout(() => { statusSpan.textContent = ""; }, 3000);
                 }
                 if (hintSpan) {
-                    hintSpan.textContent = "✓ Calibration lines saved!";
+                    hintSpan.textContent = "Calibration lines saved!";
                     hintSpan.style.color = "#00ffaa";
                 }
 
@@ -703,11 +703,11 @@ class SpeedDashboard {
             if (loader) {
                 loader.style.display = "flex";
                 const loaderTxt = loader.querySelector("span");
-                if (loaderTxt) loaderTxt.textContent = "⚡ Connecting to RTSP Stream (Buffering)...";
+                if (loaderTxt) loaderTxt.textContent = "Connecting to RTSP Stream (Buffering)...";
             }
 
             if (statusSpan) {
-                statusSpan.textContent = "💾 Saving & Connecting stream...";
+                statusSpan.textContent = "Saving & Connecting stream...";
                 statusSpan.style.color = "#38bdf8";
             }
             const res = await fetch("/api/speed/preview", {
@@ -797,7 +797,7 @@ class SpeedDashboard {
 
         try {
             if (statusSpan) {
-                statusSpan.textContent = "⚡ Launching AI Speed Monitor...";
+                statusSpan.textContent = "Launching AI Speed Monitor...";
                 statusSpan.style.color = "#38bdf8";
             }
             const res = await fetch("/api/speed/start", {
@@ -1067,8 +1067,8 @@ class SpeedDashboard {
                     rev.forEach(s => {
                         const isOver = s.is_over_speed;
                         const statusBadge = isOver
-                            ? `<span style="background:rgba(255,0,0,0.18);color:#ff4444;border:1px solid rgba(255,0,0,0.3);padding:2px 8px;border-radius:10px;font-weight:700;font-size:0.72rem;">🚨 OVER SPEED</span>`
-                            : `<span style="background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);padding:2px 8px;border-radius:10px;font-weight:600;font-size:0.72rem;">✓ COMPLIANT</span>`;
+                            ? `<span style="background:rgba(255,0,0,0.18);color:#ff4444;border:1px solid rgba(255,0,0,0.3);padding:2px 8px;border-radius:10px;font-weight:700;font-size:0.72rem;">OVER SPEED</span>`
+                            : `<span style="background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);padding:2px 8px;border-radius:10px;font-weight:600;font-size:0.72rem;">COMPLIANT</span>`;
 
                         html += `<tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
                             <td style="padding: 8px 10px; font-family: var(--mono); font-size: 0.75rem; color: var(--muted);">${s.timestamp || "Live"}</td>

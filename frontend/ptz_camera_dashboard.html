@@ -288,10 +288,10 @@
             <!-- Step Zoom Buttons -->
             <div class="zoom-controls">
                 <button class="btn-zoom" onclick="triggerZoom('ZoomIn')">
-                    <span>🔍+</span> Zoom In
+                    Zoom In
                 </button>
                 <button class="btn-zoom out" onclick="triggerZoom('ZoomOut')">
-                    <span>🔍-</span> Zoom Out
+                    Zoom Out
                 </button>
             </div>
 
@@ -392,7 +392,7 @@
                 });
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
                     video.play().catch(() => {});
-                    logStatus("✅ Connected to Live RTSP Video Feed!");
+                    logStatus("Connected to Live RTSP Video Feed!");
                 });
                 hls.on(Hls.Events.ERROR, (_, data) => {
                     if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
@@ -402,7 +402,7 @@
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = streamUrl;
                 video.play();
-                logStatus("✅ Connected to Live RTSP Video Feed!");
+                logStatus("Connected to Live RTSP Video Feed!");
             }
         });
     </script>
