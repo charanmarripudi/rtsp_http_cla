@@ -1240,7 +1240,8 @@ MODEL_CLASSES_CACHE = {
         "glove", "goggles", "helmet", "mask", "no_glove", "no_goggles", "no_helmet", "no_mask", "no_shoes", "shoes"
     ],
     "hansung_ppe_violations.pt": [
-        "Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle"
+        "Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle",
+        "No-Gloves", "No-Shoes", "No-Goggles", "No-Safety-Belt"
     ],
     "construction.pt": [
         "helmet", "gloves", "vest", "boots", "goggles", "none", "Person", "no_helmet", "no_goggle", "no_gloves", "no_boots"

@@ -167,6 +167,13 @@ def extract_negation_and_core(s):
         "boots": "footshoes",
         "safetyshoe": "footshoes",
         "safetyshoes": "footshoes",
+        "gumboots": "footshoes",
+        "gum_boots": "footshoes",
+        "saftey-belt": "safetybelt",
+        "saftey_belt": "safetybelt",
+        "safetybelt": "safetybelt",
+        "safteyvest": "bodyvest",
+        "harness": "safetybelt",
         "person": "person",
         "worker": "person",
         "human": "person",
@@ -575,7 +582,18 @@ class DetectorWorker:
                 if p not in seen: seen.append(p)
             self.model_paths = seen
         else:
-            self.model_paths = model_paths
+            self.model_paths = [model_paths] if model_paths else []
+
+        # If hansung_ppe_violations is assigned, auto-include companion PPE models
+        # (nik_ppe_best.pt / ppe_new.pt) to detect additional PPE violations:
+        # No-Gloves, No-Shoes, No-Goggles, No-Safety-Belt
+        has_hansung = any("hansung_ppe_violations" in str(p).lower() for p in self.model_paths)
+        if has_hansung:
+            m_dir = os.path.dirname(self.model_paths[0]) if (self.model_paths and os.path.dirname(self.model_paths[0])) else os.path.join(str(BASE_DIR), "models")
+            for comp in ["nik_ppe_best.pt", "ppe_new.pt"]:
+                comp_path = os.path.join(m_dir, comp) if not os.path.isabs(comp) else comp
+                if os.path.exists(comp_path) and comp_path not in self.model_paths:
+                    self.model_paths.append(comp_path)
         self.models = None
         self._db_conn = None
         self._start_time = time.time()

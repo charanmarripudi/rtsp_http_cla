@@ -623,7 +623,7 @@ class LocationDashboard {
     getNegativeClasses(modelName) {
         const norm = (modelName || "").toLowerCase().replace(/\.pt$/i, "");
         const map = {
-            "hansung_ppe_violations": ["NO-Hardhat", "NO-Mask", "NO-Safety Vest"],
+            "hansung_ppe_violations": ["NO-Hardhat", "NO-Mask", "NO-Safety Vest", "No-Gloves", "No-Shoes", "No-Goggles", "No-Safety-Belt"],
             "ppe_new": ["NO-Mask", "No-Cap-Lamp", "No-Gloves", "No-Gum-Boots", "No-Hard-Hat", "No-Saftey-Belt", "No-Saftey-Vest"],
             "nik_ppe_best": ["Fall-Detected", "NO-Mask", "No_Gloves", "No_Goggles", "No_Harness", "No_boots", "No_helmet", "No_safety_vest"],
             "construction": ["no_helmet", "no_goggle", "no_gloves", "no_boots", "none"],
