@@ -179,6 +179,66 @@ def extract_negation_and_core(s):
     mapped_core = synonym_map.get(core, core)
     return is_neg, mapped_core, cleaned
 
+def is_negative_violation_class(cls_name: str, model_name: str = "") -> bool:
+    """
+    Returns True ONLY if the class represents a negative safety alert / violation.
+    Normal compliant objects (Hardhat, Mask, Vest, Person, Dome_Closed, Valve_Box_Close, Good_tyre)
+    return False and NEVER trigger violation alerts.
+    """
+    if not cls_name:
+        return False
+
+    raw = str(cls_name).strip()
+    c = raw.lower().replace("_", "-").replace(" ", "-")
+
+    # 1. Baseline objects & people are NEVER violation alerts
+    baseline = (
+        "person", "worker", "human", "man", "woman", "people",
+        "machinery", "vehicle", "car", "truck", "bus", "van", "bike",
+        "pickup-truck", "tank-truck", "safety-cone"
+    )
+    if c in baseline:
+        return False
+
+    # 2. Compliant PPE / equipment states are POSITIVE compliance -> NEVER violation alerts
+    positive_compliant = {
+        "hardhat", "helmet", "safety-helmet", "headgear", "headprotection",
+        "vest", "safety-vest", "saftey-vest", "reflective-vest", "bodyvest", "jacket",
+        "mask", "facemask", "facecover",
+        "gloves", "glove", "handgloves",
+        "boots", "shoes", "gum-boots", "footshoes",
+        "goggles", "glasses", "safetyglasses", "eyewear", "eyegoggles",
+        "harness", "saftey-belt", "safety-belt", "cap-lamp",
+        "dome-closed", "domeclosed",
+        "valve-box-close", "valveboxclose", "valve-box-closed",
+        "good-tyre", "goodtyre"
+    }
+    if c in positive_compliant:
+        return False
+
+    # 3. Explicit negative prefixes (NO-Hardhat, No_Mask, No-Safety-Vest, no-helmet, etc.)
+    neg_prefixes = ("no-", "no_", "non-", "without-", "without_")
+    if any(c.startswith(p) for p in neg_prefixes) or "no-ppe" in c or "noppe" in c:
+        return True
+
+    # 4. Critical safety hazards and violations
+    hazards_and_violations = {
+        "fall-detected", "violation", "none",
+        "fire", "smoke", "gas",
+        "spillage",
+        "dome-opened", "dome-open", "domeopened", "domeopen",
+        "valve-box-open", "valveboxopen", "valve-box-opened",
+        "defective"
+    }
+    if any(hv in c for hv in hazards_and_violations):
+        return True
+
+    # 5. Over speed / crowd alerts
+    if "over-speed" in c or "overspeed" in c or "crowd-alert" in c or "crowd alert" in c.replace("-", " "):
+        return True
+
+    return False
+
 def match_class(box_cls, enabled_cls):
     """
     Robust negation and synonym-aware class matcher.
@@ -1223,8 +1283,13 @@ class DetectorWorker:
                     sub_lbl = "APPROACHING LINE A"
                     box_col = (0, 220, 255)
             else:
-                box_header = f"{trk_cls} {conf_pct:.2f}"
-                box_col = trk.get('color', (0, 255, 0))
+                is_neg = is_negative_violation_class(trk_cls)
+                if is_neg:
+                    box_header = f"VIOLATION: {trk_cls} {conf_pct:.2f}"
+                    box_col = (20, 20, 237)  # Reliance Bold Alert Red (BGR)
+                else:
+                    box_header = f"{trk_cls} {conf_pct:.2f}"
+                    box_col = trk.get('color', (0, 255, 0))
 
             display_boxes.append({
                 'box':   trk['box'],
@@ -1297,16 +1362,15 @@ class DetectorWorker:
         # Draw all bounding boxes with vehicle IDs, types, and speed banners onto snapshot
         DetectorWorker._draw_boxes(frame_snapshot, display_boxes)
 
-        # -- PPE Alert Processing (Excluded for speed monitor cameras and vehicle models) --
+        # -- Negative Safety Alert Processing (Exclusively alerts on violations) --
         if not is_speed_model:
             for tid, trk in list(self._ema_tracks.items()):
                 c = trk.get('cls', '')
                 if not c:
                     continue
 
-                # Non-alert baseline classes (persons/machinery/vehicles) are not violation alerts
-                is_neg, core_type, cleaned_cls = extract_negation_and_core(c)
-                if cleaned_cls in ("person", "worker", "human", "man", "woman", "machinery", "vehicle", "car", "truck", "bike", "pickup truck", "bus", "van"):
+                # STRICT FILTER: ONLY NEGATIVE / VIOLATION CLASSES GENERATE ALERTS
+                if not is_negative_violation_class(c):
                     continue
 
                 # 1. Strict 30-Second Cooldown per class per camera
@@ -1319,7 +1383,7 @@ class DetectorWorker:
                 if total_hits >= 1:
                     self.alert_cooldowns[c] = now_t
                     trk['last_alert_time'] = now_t
-                    print(f"[ALERT-TRIGGER] Instant alert generated: cam={self.cam_id}, class={c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
+                    print(f"[ALERT-TRIGGER-VIOLATION] Negative alert generated: cam={self.cam_id}, class={c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
                     self._save_alert(c, frame_snapshot)
 
         # -- Over Speed Alert Trigger (ONLY triggers when measured speed > limit) --
@@ -1352,22 +1416,27 @@ class DetectorWorker:
             else:
                 image_path = f"/hls/alerts/{filename}"
 
-            if "OVER SPEED" in str(class_name).upper():
+            if "OVER SPEED" in str(class_name).upper() or "CROWD" in str(class_name).upper():
                 type_of_alert_str = str(class_name)
             elif vehicle_label:
-                type_of_alert_str = f"{vehicle_label} Detected"
+                type_of_alert_str = f"VIOLATION: {vehicle_label} Detected"
             else:
-                type_of_alert_str = f"{class_name} Detected"
+                type_of_alert_str = f"VIOLATION: {class_name} Detected"
 
             # 1. Append to alerts.json for immediate UI dashboard update
             alerts_json_file = os.path.join(adir, "alerts.json")
             alert_entry = {
                 "id":           int(time.time() * 1000),
                 "camera_id":    str(self.cam_id),
+                "camera":       str(self.cam_id),
                 "location":     str(self.location),
                 "type_of_alert": type_of_alert_str,
+                "event":        type_of_alert_str,
                 "image":        image_path,
-                "created_at":   now_dt.strftime("%Y-%m-%d %H:%M:%S")
+                "image_path":   image_path,
+                "created_at":   now_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "time":         now_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "is_negative":  True
             }
             try:
                 data = []

@@ -3864,6 +3864,24 @@ def store_alert_in_db(d: dict = Body(...)):
         conn.rollback(); print(f"[DB] alert insert error: {e}"); return {"error": "failed to store alert"}
     finally: release_db_conn(conn)
 
+def is_negative_alert_string(evt: str) -> bool:
+    """Filter to ensure only genuine safety violations / negative alerts are returned."""
+    if not evt: return False
+    e = str(evt).lower().replace("_", "-").replace(" ", "-")
+    positive_words = [
+        "hardhat-detected", "helmet-detected", "safety-vest-detected", "vest-detected",
+        "mask-detected", "gloves-detected", "boots-detected", "shoes-detected",
+        "dome-closed", "valve-box-close", "good-tyre", "person-detected", "worker-detected", "safety-cone"
+    ]
+    if any(pw in e for pw in positive_words):
+        return False
+    violation_indicators = [
+        "no-", "no_", "non-", "without-", "fall", "violation", "over-speed", "overspeed",
+        "fire", "smoke", "gas", "spillage", "dome-opened", "valve-box-open",
+        "defective", "crowd-alert"
+    ]
+    return any(vi in e for vi in violation_indicators)
+
 @app.get("/api/alerts")
 def get_alerts_json():
     try:
@@ -3875,7 +3893,10 @@ def get_alerts_json():
         results = []
         for a in data:
             if not isinstance(a, dict): continue
-            img_path = a.get("image") or ""
+            evt = a.get("type_of_alert") or a.get("event") or ""
+            if not is_negative_alert_string(evt):
+                continue
+            img_path = a.get("image") or a.get("image_path") or ""
             filename = img_path.split("/")[-1] if img_path else ""
             if filename:
                 base_url = get_alerts_base_url()
@@ -3883,7 +3904,14 @@ def get_alerts_json():
                     a["image"] = f"{base_url.rstrip('/')}/hls/alerts/{filename}"
                 else:
                     a["image"] = f"/hls/alerts/{filename}"
-                results.append(a)
+                a["image_path"] = a["image"]
+            a["camera"] = a.get("camera") or a.get("camera_id") or "0"
+            a["camera_id"] = a["camera"]
+            a["event"] = evt
+            a["type_of_alert"] = evt
+            a["time"] = a.get("time") or a.get("created_at") or ""
+            a["created_at"] = a["time"]
+            results.append(a)
         # Show alerts newest first
         return results
     except Exception as e:
@@ -3900,18 +3928,26 @@ def get_alerts_db():
         cur.execute("SELECT alert_id, camera_id, location, type_of_alert, image_path, created_at FROM alerts ORDER BY created_at DESC, alert_id DESC LIMIT 50")
         rows = [dict(r) for r in cur.fetchall()]
         base_url = get_alerts_base_url()
+        results = []
         for r in rows:
+            evt = r.get("type_of_alert") or ""
+            if not is_negative_alert_string(evt):
+                continue
             r["created_at"] = r["created_at"].strftime("%Y-%m-%d %H:%M:%S") if r["created_at"] else ""
+            r["time"] = r["created_at"]
+            r["event"] = evt
+            r["camera"] = r.get("camera_id") or "0"
             img_path = r.get("image_path") or ""
-            # Always extract just the filename (strips any old/stale domain)
             filename = img_path.split("/")[-1] if img_path else ""
             if filename:
                 if base_url:
                     r["image_path"] = f"{base_url.rstrip('/')}/hls/alerts/{filename}"
                 else:
                     r["image_path"] = f"/hls/alerts/{filename}"
+                r["image"] = r["image_path"]
+            results.append(r)
         cur.close()
-        return rows
+        return results
     except: return []
     finally: release_db_conn(conn)
 

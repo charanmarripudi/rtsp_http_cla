@@ -22,23 +22,28 @@
     }
 
     :root {
-      --bg: #0a0c0e;
-      --surface: #111417;
-      --border: #1e2228;
-      --accent: #00e5a0;
-      --accent-dim: rgba(0, 229, 160, .12);
-      --danger: #ff4155;
-      --text: #e8eaed;
-      --muted: #5c6370;
-      --radius: 12px;
-      --mono: 'JetBrains Mono', monospace;
-      --display: 'Syne', sans-serif;
+      --bg: #070D18;
+      --surface: #0E1A33;
+      --surface-alt: #132247;
+      --border: #1D3567;
+      --accent: #0A74DA; /* Reliance Jio Corporate Blue */
+      --accent-dim: rgba(10, 116, 218, 0.16);
+      --accent-hover: #0056B3;
+      --danger: #ED1C24; /* Reliance Red */
+      --danger-dim: rgba(237, 28, 36, 0.16);
+      --success: #00C853;
+      --warning: #FFB300;
+      --text: #F1F5F9;
+      --muted: #8FA0BC;
+      --radius: 10px;
+      --mono: 'JetBrains Mono', 'Roboto Mono', monospace;
+      --display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
 
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: var(--mono);
+      font-family: var(--display);
       min-height: 100vh;
     }
 
@@ -46,7 +51,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 18px 28px;
+      padding: 14px 28px;
       border-bottom: 1px solid var(--border);
       background: var(--surface);
       position: sticky;
@@ -59,8 +64,88 @@
       font-size: 1.15rem;
       font-weight: 800;
       letter-spacing: .04em;
-      color: var(--accent);
+      color: #FFFFFF;
       text-transform: uppercase;
+    }
+
+    .ai-kpi-ribbon {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      padding: 12px 28px;
+      background: #091326;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      transition: border-color 0.2s;
+    }
+
+    .kpi-card:hover {
+      border-color: var(--accent);
+    }
+
+    .kpi-card.violation-kpi {
+      border-left: 3px solid var(--danger);
+    }
+
+    .kpi-label {
+      font-size: 0.62rem;
+      color: var(--muted);
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .kpi-val {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text);
+      font-family: var(--mono);
+    }
+
+    .kpi-val.accent { color: var(--accent); }
+    .kpi-val.danger { color: var(--danger); }
+    .kpi-val.success { color: var(--success); }
+
+    .nav-tabs {
+      display: flex;
+      gap: 6px;
+      background: rgba(0, 0, 0, 0.35);
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .tab-btn {
+      background: transparent;
+      color: var(--muted);
+      border: none;
+      padding: 7px 16px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: var(--display);
+    }
+
+    .tab-btn:hover {
+      color: #FFFFFF;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-btn.active {
+      background: linear-gradient(135deg, #0A74DA 0%, #0056B3 100%);
+      color: #FFFFFF;
+      box-shadow: 0 2px 8px rgba(10, 116, 218, 0.4);
     }
 
     #system-status {
@@ -332,8 +417,14 @@
     }
 
     .start {
-      background: var(--accent);
-      color: #000;
+      background: linear-gradient(135deg, #0A74DA 0%, #0056B3 100%);
+      color: #FFFFFF;
+      box-shadow: 0 2px 8px rgba(10, 116, 218, 0.35);
+    }
+
+    .start:hover:not(:disabled) {
+      background: linear-gradient(135deg, #0088FF 0%, #0A74DA 100%);
+      box-shadow: 0 4px 12px rgba(10, 116, 218, 0.5);
     }
 
     .stop {
@@ -343,7 +434,41 @@
     }
 
     .stop:hover:not(:disabled) {
-      background: rgba(255, 65, 85, .1);
+      background: rgba(237, 28, 36, 0.12);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #0A74DA 0%, #0056B3 100%);
+      color: #FFFFFF;
+      border: 1px solid rgba(10, 116, 218, 0.5);
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(10, 116, 218, 0.3);
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: linear-gradient(135deg, #0088FF 0%, #0A74DA 100%);
+      box-shadow: 0 4px 14px rgba(10, 116, 218, 0.45);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: rgba(10, 116, 218, 0.15);
+      border-color: var(--accent);
+      color: #FFFFFF;
     }
 
     #loading {
@@ -396,25 +521,80 @@
     }
 
     .alert-sidebar {
-      width: 300px;
+      width: 330px;
       background: var(--surface);
       border-left: 1px solid var(--border);
       display: flex;
       flex-direction: column;
-      height: calc(100vh - 65px);
+      height: calc(100vh - 120px);
       position: sticky;
-      top: 65px;
+      top: 120px;
     }
 
     .alert-header {
-      padding: 18px;
+      padding: 14px 18px;
       border-bottom: 1px solid var(--border);
+      background: var(--surface-alt);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .alert-header-title {
       font-family: var(--display);
-      font-size: .8rem;
+      font-size: .78rem;
       font-weight: 800;
-      color: var(--accent);
+      color: #FFFFFF;
       letter-spacing: .05em;
       text-transform: uppercase;
+    }
+
+    .alert-badge-negative {
+      font-size: 0.60rem;
+      padding: 2px 8px;
+      background: var(--danger-dim);
+      color: var(--danger);
+      border: 1px solid var(--danger);
+      border-radius: 4px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+    }
+
+    .alert-card.violation-card {
+      border-left: 3px solid var(--danger) !important;
+      background: #0B1426;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      transition: all 0.2s ease;
+    }
+
+    .alert-card.violation-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--danger) !important;
+      box-shadow: 0 4px 14px rgba(237, 28, 36, 0.3) !important;
+    }
+
+    .badge-violation {
+      background: var(--danger);
+      color: #FFFFFF;
+      font-size: 0.58rem;
+      font-weight: 800;
+      padding: 1px 6px;
+      border-radius: 3px;
+      letter-spacing: 0.05em;
+    }
+
+    .alert-event-title {
+      color: #FFFFFF;
+      font-size: 0.76rem;
+      font-weight: 700;
+      margin: 4px 0 2px;
+    }
+
+    .alert-loc-label {
+      color: var(--muted);
+      font-size: 0.64rem;
     }
 
     #alert-list {
@@ -1031,7 +1211,13 @@
   </div>
 
   <header>
-    <h1>RTSP Dashboard</h1>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <div style="background:var(--danger); width:4px; height:24px; border-radius:2px;"></div>
+      <div>
+        <h1 style="font-size:1.05rem; font-weight:800; letter-spacing:0.04em; color:#FFFFFF; margin:0; line-height:1.2;">RELIANCE AI VISION</h1>
+        <span style="font-size:0.60rem; color:var(--accent); font-weight:700; letter-spacing:0.06em; text-transform:uppercase;">Industrial Edge Inference Platform</span>
+      </div>
+    </div>
     <div class="nav-tabs">
       <button class="tab-btn active" data-tab="manage">Locations</button>
       <button class="tab-btn" data-tab="dashboard">Location Cameras</button>
@@ -1040,10 +1226,34 @@
       <button class="tab-btn" data-tab="videolab">AI Video Lab</button>
     </div>
     <div id="system-status">
-      <div id="status-dot"></div>
-      <span id="status-label">connecting…</span>
+      <div id="status-dot" class="ok"></div>
+      <span id="status-label" style="font-weight:700; color:var(--text); font-size:0.72rem;">SYSTEM OPERATIONAL</span>
     </div>
   </header>
+
+  <!-- Real-time Enterprise AI KPI Summary Ribbon -->
+  <div class="ai-kpi-ribbon">
+    <div class="kpi-card">
+      <span class="kpi-label">CONNECTED CAMERAS</span>
+      <span class="kpi-val" id="kpi-cam-count">3 Connected</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">AI INFERENCE ENGINES</span>
+      <span class="kpi-val" id="kpi-model-count">YOLOv8 Dynamic</span>
+    </div>
+    <div class="kpi-card violation-kpi">
+      <span class="kpi-label">SAFETY VIOLATIONS (LIVE)</span>
+      <span class="kpi-val danger" id="kpi-violation-count">0 Detected</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">DETECTION ENFORCEMENT</span>
+      <span class="kpi-val accent" style="font-size:0.80rem;">Negative Alerts Only</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">EDGE SCHEDULER</span>
+      <span class="kpi-val success" style="font-size:0.80rem;">100% Operational</span>
+    </div>
+  </div>
 
   <div class="config-layout tab-content" id="tab-manage" style="padding: 22px;">
     <div class="widget-card"
@@ -1111,9 +1321,12 @@
 
     <!-- Right Side: Alerts Sidebar -->
     <aside class="alert-sidebar">
-      <div class="alert-header">Detection Alerts</div>
+      <div class="alert-header">
+        <span class="alert-header-title">SAFETY VIOLATIONS</span>
+        <span class="alert-badge-negative">NEGATIVE ALERTS</span>
+      </div>
       <div id="alert-list">
-        <div style="color:var(--muted); font-size:.7rem; text-align:center; padding-top:20px;">Watching for alerts…
+        <div style="color:var(--muted); font-size:.7rem; text-align:center; padding:30px 10px;">Watching for safety violations...
         </div>
       </div>
     </aside>
@@ -1761,10 +1974,10 @@
     </div>
   </div>
 
-  <script src="/static/js/detection.js?v=9.1"></script>
-  <script src="/static/js/location_dashboard.js?v=9.1"></script>
-  <script src="/static/js/ptz_controller.js?v=9.1"></script>
-  <script src="/static/js/speed_dashboard.js?v=9.1"></script>
+  <script src="/static/js/detection.js?v=10.0"></script>
+  <script src="/static/js/location_dashboard.js?v=10.0"></script>
+  <script src="/static/js/ptz_controller.js?v=10.0"></script>
+  <script src="/static/js/speed_dashboard.js?v=10.0"></script>
 
   <script>
     var streamsArray = [];
@@ -2003,15 +2216,26 @@
         try {
           const r = await fetch("/api/alerts");
           const alerts = await r.json();
+
+          const vioKpi = document.getElementById("kpi-violation-count");
+          if (vioKpi && Array.isArray(alerts)) {
+            vioKpi.textContent = `${alerts.length} Detected`;
+          }
+          const camKpi = document.getElementById("kpi-cam-count");
+          if (camKpi && Array.isArray(streamsArray)) {
+            camKpi.textContent = `${streamsArray.length} Connected`;
+          }
+
           if (!alerts || !alerts.length) {
-            alertList.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding-top:20px;">Watching for alerts…</div>';
+            alertList.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding:30px 10px;">No safety violations detected.<br><span style="font-size:0.64rem; color:var(--success);">Operations compliant</span></div>';
             return;
           }
 
           // 1. Only refresh if the newest alert is different from what we have
           const latest = alerts[0]; // Backend returns newest first
-          if (latest.time === lastAlertTime) return;
-          lastAlertTime = latest.time;
+          const latestId = latest.id || latest.time || latest.created_at;
+          if (latestId === lastAlertTime) return;
+          lastAlertTime = latestId;
 
           // 2. Clear and rebuild only when a new alert actually arrives
           alertList.innerHTML = "";
@@ -2019,27 +2243,37 @@
           // 3. Show all alerts in the order provided (newest first)
           alerts.forEach((a, idx) => {
             const card = document.createElement("div");
-            card.className = "alert-card";
+            card.className = "alert-card violation-card";
 
-            // Highlight the newest one
             if (idx === 0) {
-              card.style.border = "1px solid var(--accent)";
-              card.style.boxShadow = "0 0 10px var(--accent-dim)";
+              card.style.boxShadow = "0 0 12px rgba(237, 28, 36, 0.45)";
             }
 
-            const imgUrl = `${BASE}/hls/alerts/${a.image}`;
-            card.onclick = () => window.open(imgUrl);
+            const camId = a.camera_id !== undefined ? a.camera_id : (a.camera !== undefined ? a.camera : "1");
+            const eventStr = a.type_of_alert || a.event || "Violation Detected";
+            const rawTime = a.created_at || a.time || "";
+            const timeStr = rawTime.includes(" ") ? rawTime.split(" ")[1] : rawTime;
+            const locStr = a.location || `Camera ${camId}`;
+
+            let imgUrl = a.image || a.image_path || "";
+            if (imgUrl && !imgUrl.startsWith("http://") && !imgUrl.startsWith("https://")) {
+              imgUrl = `${BASE}${imgUrl.startsWith("/") ? "" : "/"}${imgUrl}`;
+            }
+
+            card.onclick = () => { if (imgUrl) window.open(imgUrl); };
 
             card.innerHTML = `
-          <div class="alert-info">
-            <div class="alert-meta">
-              <span>CAM ${a.camera}</span>
-              <span>${a.time.split(' ')[1]}</span>
-            </div>
-            <div class="alert-event">${a.event}</div>
-          </div>
-          <img src="${imgUrl}" class="alert-thumb" loading="lazy">
-        `;
+              <div class="alert-info">
+                <div class="alert-meta">
+                  <span class="badge-violation">VIOLATION</span>
+                  <span style="font-weight:700; color:#FFFFFF;">CAM ${camId}</span>
+                  <span style="font-size:0.62rem; color:var(--muted);">${timeStr}</span>
+                </div>
+                <div class="alert-event-title">${eventStr}</div>
+                <div class="alert-loc-label">${locStr}</div>
+              </div>
+              ${imgUrl ? `<img src="${imgUrl}" class="alert-thumb" loading="lazy">` : ""}
+            `;
             alertList.appendChild(card);
           });
         } catch (e) { console.error("Alert poll failed", e); }

@@ -627,15 +627,19 @@ class LocationDashboard {
         row.style.cssText = "display: flex; flex-direction: column; gap: 12px; align-items: stretch; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); border-radius: 8px; padding: 14px; font-size: 0.72rem; box-sizing: border-box;";
         row.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                <span style="font-weight: 600; color: var(--text); font-size: 0.78rem;">${this.escapeHtml(stream.location || stream.label || `Camera ${Number(stream.id) + 1}`)}</span>
-                <button class="btn-remove" style="background: transparent; color: var(--danger); border: 1px solid rgba(255, 65, 85, 0.3); padding: 4px 10px; border-radius: 6px; font-size: 0.68rem; cursor: pointer; transition: all 0.2s;">Remove</button>
+                <span style="font-weight: 700; color: #FFFFFF; font-size: 0.80rem;">${this.escapeHtml(stream.location || stream.label || `Camera ${Number(stream.id) + 1}`)}</span>
+                <button class="btn-remove" style="background: transparent; color: var(--danger); border: 1px solid rgba(237, 28, 36, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 0.68rem; cursor: pointer; transition: all 0.2s;">Remove</button>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(10, 116, 218, 0.08); border: 1px solid rgba(10, 116, 218, 0.25); border-left: 3px solid var(--accent); padding: 6px 10px; border-radius: 5px;">
+                <span style="font-size: 0.65rem; color: #FFFFFF; font-weight: 600;">ACTIVE AI ENFORCEMENT</span>
+                <span style="font-size: 0.60rem; color: var(--danger); background: var(--danger-dim); border: 1px solid var(--danger); padding: 2px 6px; border-radius: 3px; font-weight: 700;">NEGATIVE ALERTS ONLY</span>
             </div>
             <div style="display: flex; flex-direction: column; gap: 4px; width: 100%;">
-                <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">RTSP Stream URL</span>
-                <input class="camera-rtsp-input" value="${this.escapeHtml(stream.rtsp || "")}" placeholder="rtsp://camera-url" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 0.72rem; padding: 8px; border-radius: 6px; box-sizing: border-box; outline: none;">
+                <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700;">RTSP Stream URL</span>
+                <input class="camera-rtsp-input" value="${this.escapeHtml(stream.rtsp || "")}" placeholder="rtsp://admin:password@ip:port/stream" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: #FFFFFF; font-family: var(--mono); font-size: 0.72rem; padding: 8px; border-radius: 6px; box-sizing: border-box; outline: none;">
             </div>
             <div style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
-                <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; font-weight: 600;">Select Models & Classes</span>
+                <span style="font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; font-weight: 700;">Select Detection Models (Negative Alerts Auto-Configured)</span>
                 <div class="model-assign-row" style="margin: 0; display: flex; flex-wrap: wrap; gap: 8px; width: 100%;">${this.modelChips(stream.id, stream)}</div>
             </div>`;
         row.querySelector(".camera-rtsp-input").addEventListener("input", e => { stream.rtsp = e.target.value; });
@@ -651,9 +655,8 @@ class LocationDashboard {
         let html = "";
 
         const palette = [
-            "#00ffaa", "#f5a623", "#fb7185", "#eab308", "#a78bfa",
-            "#f97316", "#ef4444", "#ec4899", "#06b6d4", "#10b981",
-            "#84cc16", "#6366f1", "#38bdf8", "#14b8a6", "#d946ef"
+            "#0A74DA", "#0088FF", "#00B4D8", "#00C853", "#FFB300",
+            "#7B2CBF", "#FF6B6B", "#4361EE", "#06D6A0"
         ];
 
         // Filter out leakage model as requested
@@ -667,9 +670,9 @@ class LocationDashboard {
                 return aNorm === cleanM.toLowerCase();
             });
 
-            html += `<label class="${isAssigned ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; align-items: center; cursor: pointer; gap: 6px; padding: 6px 12px; background: ${isAssigned ? 'rgba(0,255,170,0.1)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${isAssigned ? color : 'var(--border)'}; border-radius: 6px; transition: all 0.2s;">
-                <input type="checkbox" class="parent-model-checkbox" value="${this.escapeHtml(model)}" ${isAssigned ? "checked" : ""} data-camera="${cameraIndex}" data-color="${color}" style="cursor: pointer; accent-color: ${color}; width: 14px; height: 14px; margin: 0;">
-                <span style="font-size: 0.72rem; font-weight: 600; color: ${isAssigned ? color : 'var(--text)'};">${this.escapeHtml(cleanM)}</span>
+            html += `<label class="${isAssigned ? "model-chip checked" : "model-chip"}" style="margin: 0; display: inline-flex; align-items: center; cursor: pointer; gap: 6px; padding: 6px 12px; background: ${isAssigned ? 'rgba(10, 116, 218, 0.18)' : 'rgba(255, 255, 255, 0.03)'}; border: 1px solid ${isAssigned ? '#0A74DA' : 'var(--border)'}; border-radius: 6px; transition: all 0.2s;">
+                <input type="checkbox" class="parent-model-checkbox" value="${this.escapeHtml(model)}" ${isAssigned ? "checked" : ""} data-camera="${cameraIndex}" data-color="${color}" style="cursor: pointer; accent-color: var(--accent); width: 14px; height: 14px; margin: 0;">
+                <span style="font-size: 0.72rem; font-weight: 600; color: ${isAssigned ? '#FFFFFF' : 'var(--text)'};">${this.escapeHtml(cleanM)}</span>
             </label>`;
         });
 
@@ -680,14 +683,13 @@ class LocationDashboard {
         cb.addEventListener("change", () => {
             const chip = cb.closest(".model-chip");
             const labelSpan = cb.nextElementSibling;
-            const accentColor = cb.getAttribute("data-color") || "#00ffaa";
             if (chip) {
                 chip.classList.toggle("checked", cb.checked);
-                chip.style.borderColor = cb.checked ? accentColor : "var(--border)";
-                chip.style.background = cb.checked ? "rgba(0,255,170,0.1)" : "rgba(255,255,255,0.03)";
+                chip.style.borderColor = cb.checked ? "var(--accent)" : "var(--border)";
+                chip.style.background = cb.checked ? "rgba(10, 116, 218, 0.18)" : "rgba(255, 255, 255, 0.03)";
             }
             if (labelSpan) {
-                labelSpan.style.color = cb.checked ? accentColor : "var(--text)";
+                labelSpan.style.color = cb.checked ? "#FFFFFF" : "var(--text)";
             }
         });
     }
