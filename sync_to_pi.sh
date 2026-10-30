@@ -7,19 +7,30 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PI_LOCAL_IP="10.246.47.179"
 PI_TAILSCALE_HOST="raspberrypi.tail43e835.ts.net"
-PI_TAILSCALE_IP="100.75.167.102"
+PI_TAILSCALE_IP="100.117.223.114"
 PI_USER="algo"
-PI_PASS="\${PI_PASS:-}"
+PI_PASS="${PI_PASS:-QuantyxEdgeBSK@70}"
 PI_DIR="/home/algo/Documents/rtsp_http_cla"
 BRANCH="rpi"
 
-# Test which host is reachable (Local LAN -> Tailscale Hostname -> Tailscale IP)
-if nc -z -w 2 "$PI_LOCAL_IP" 22 2>/dev/null; then
-    PI_HOST="$PI_LOCAL_IP"
-elif nc -z -w 2 "$PI_TAILSCALE_HOST" 22 2>/dev/null; then
+# Configure password helper for macOS/Linux ssh/scp
+PW_SCRIPT="/tmp/pi_ssh_pass.sh"
+cat << EOF_PW > "$PW_SCRIPT"
+#!/bin/sh
+printf "%s" "$PI_PASS"
+EOF_PW
+chmod +x "$PW_SCRIPT"
+export SSH_ASKPASS="$PW_SCRIPT"
+export SSH_ASKPASS_REQUIRE="force"
+export DISPLAY=":0"
+
+# Test which host is reachable (Tailscale Hostname -> Tailscale IP -> Local LAN)
+if nc -z -w 2 "$PI_TAILSCALE_HOST" 22 2>/dev/null; then
     PI_HOST="$PI_TAILSCALE_HOST"
-else
+elif nc -z -w 2 "$PI_TAILSCALE_IP" 22 2>/dev/null; then
     PI_HOST="$PI_TAILSCALE_IP"
+else
+    PI_HOST="$PI_LOCAL_IP"
 fi
 
 echo "========================================="
