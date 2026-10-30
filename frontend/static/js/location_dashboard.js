@@ -179,7 +179,11 @@ class LocationDashboardStore {
     load(data) {
         this.locations = Array.isArray(data.locations) ? data.locations : [];
         this.streams = Array.isArray(data.streams) ? data.streams : [];
-        this.allModels = Array.isArray(data.models) ? data.models : [];
+        const rawModels = Array.isArray(data.models) ? data.models : [];
+        this.allModels = rawModels.filter(m => {
+            const lc = String(m).toLowerCase();
+            return !lc.includes("leakage") && !lc.includes("nik_ppe") && !lc.includes("ppe_new") && !lc.startsWith("fire_smoke");
+        });
         this.cameraModels = (data.cameraModels && typeof data.cameraModels === "object") ? data.cameraModels : {};
         this.modelClasses = (data.modelClasses && typeof data.modelClasses === "object") ? data.modelClasses : {};
     }
@@ -188,7 +192,7 @@ class LocationDashboardStore {
         this.locations = JSON.parse(localStorage.getItem("offline_locations") || "[]");
         this.streams = JSON.parse(localStorage.getItem("offline_streams") || "[]").map((item, idx) => this.streamView(item, idx));
         this.cameraModels = JSON.parse(localStorage.getItem("offline_camera_models") || "{}");
-        this.allModels = ["ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "Final_Fire_smoke.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt"];
+        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt"];
     }
 
     seedLocationsFromStreams() {
@@ -552,8 +556,14 @@ class LocationDashboard {
         }
         this.locationWidgets.innerHTML = "";
         if (!this.locations.length) {
+            this.seedLocationsFromStreams();
+        }
+        if (!this.locations.length) {
             this.locationWidgets.innerHTML = '<div style="grid-column:1/-1;color:var(--muted);font-size:.75rem;">Add locations on the first tab to create widgets here.</div>';
             return;
+        }
+        if (this.expandedLocs.size === 0 && this.locations.length > 0) {
+            this.expandedLocs.add(this.locationId(0, this.locations[0]));
         }
         this.locations.forEach((loc, locIdx) => this.locationWidgets.appendChild(this.locationCard(loc, locIdx)));
         window.dispatchEvent(new CustomEvent("rtsp-dashboard-ready"));

@@ -366,8 +366,14 @@ def _attach_last_communicated_time(updated_loc: dict, loc: dict) -> None:
 mimetypes.add_type("application/vnd.apple.mpegurl", ".m3u8")
 mimetypes.add_type("video/mp2t", ".ts")
 
-BACKEND_DIR  = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR     = os.path.dirname(BACKEND_DIR)
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+if os.path.basename(_this_dir) == "backend":
+    BACKEND_DIR = _this_dir
+    BASE_DIR = os.path.dirname(BACKEND_DIR)
+else:
+    BASE_DIR = _this_dir
+    BACKEND_DIR = os.path.join(BASE_DIR, "backend")
+
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 STREAMS_CONF = os.path.join(BASE_DIR, "streams.conf")
 STREAMS_JSON = os.path.join(BASE_DIR, "streams.json")
@@ -1217,7 +1223,20 @@ async def update_thresholds(req: Request):
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/models")
-def get_models(): return {"models": [f for f in os.listdir(MODEL_DIR) if f.endswith(".pt")]} if os.path.exists(MODEL_DIR) else {"models": []}
+def get_models():
+    hidden = {"nik_ppe_best.pt", "ppe_new.pt", "fire_smoke.pt", "leakage.pt"}
+    candidates = [
+        MODEL_DIR,
+        os.path.join(BASE_DIR, "models"),
+        os.path.join(BACKEND_DIR, "models"),
+        "/home/algo/Documents/rtsp_http_cla/models",
+    ]
+    for d in candidates:
+        if d and os.path.isdir(d):
+            models = [f for f in sorted(os.listdir(d)) if f.endswith(".pt") and f not in hidden and not f.startswith(".")]
+            if models:
+                return {"models": models}
+    return {"models": []}
 
 MODEL_CLASSES_CACHE = {
     "yolov8n.pt": [
@@ -1301,7 +1320,8 @@ def get_model_classes(model_name: str):
 def get_model_classes_endpoint(model: Optional[str] = Query(default=None), model_name: Optional[str] = Query(default=None)):
     target_model = model or model_name
     if not target_model:
-        all_models = [f for f in os.listdir(MODEL_DIR) if f.endswith(".pt")] if os.path.exists(MODEL_DIR) else []
+        models_res = get_models()
+        all_models = models_res.get("models", [])
         result = {}
         for m in all_models:
             result[m] = get_model_classes(m)

@@ -589,11 +589,19 @@ class DetectorWorker:
         # No-Gloves, No-Shoes, No-Goggles, No-Safety-Belt
         has_hansung = any("hansung_ppe_violations" in str(p).lower() for p in self.model_paths)
         if has_hansung:
-            m_dir = os.path.dirname(self.model_paths[0]) if (self.model_paths and os.path.dirname(self.model_paths[0])) else os.path.join(str(BASE_DIR), "models")
+            companion_dirs = [
+                os.path.join(str(BASE_DIR), "backend", "companion_models"),
+                os.path.join(str(BASE_DIR), "companion_models"),
+                "/home/algo/Documents/rtsp_http_cla/backend/companion_models",
+                "/home/algo/Documents/rtsp_http_cla/companion_models",
+                os.path.join(str(BASE_DIR), "models")
+            ]
             for comp in ["nik_ppe_best.pt", "ppe_new.pt"]:
-                comp_path = os.path.join(m_dir, comp) if not os.path.isabs(comp) else comp
-                if os.path.exists(comp_path) and comp_path not in self.model_paths:
-                    self.model_paths.append(comp_path)
+                for cd in companion_dirs:
+                    cp = os.path.join(cd, comp)
+                    if os.path.exists(cp) and cp not in self.model_paths:
+                        self.model_paths.append(cp)
+                        break
         self.models = None
         self._db_conn = None
         self._start_time = time.time()

@@ -2274,10 +2274,6 @@
       } catch (e) {
         console.error("Failed to load models from API, using default list:", e);
         allModels = [
-          "ppe_new.pt",
-          "nik_ppe_best.pt",
-          "hf_ppe_detection.pt",
-          "keremberke_ppe_gear.pt",
           "hansung_ppe_violations.pt",
           "150_firehose_best.pt",
           "sand_ext_chocks.pt",
@@ -2678,8 +2674,6 @@
 
             // ── 1. Specialized models with class-level checkboxes ──
             const specializedModels = [
-              { file: "ppe_new.pt", label: "PPE-NEW CLASSES", color: "#00ffaa", classes: ["Cap-Lamp","Gloves","Gum-Boots","Hard-Hat","Mask","NO-Mask","No-Cap-Lamp","No-Gloves","No-Gum-Boots","No-Hard-Hat","No-Saftey-Belt","No-Saftey-Vest","Saftey-Belt","Saftey-Vest"] },
-              { file: "nik_ppe_best.pt", label: "NIK-PPE CLASSES", color: "#f5a623", classes: ["Fall-Detected","Gloves","Goggles","Helmet","Mask","NO-Mask","No_Gloves","No_Goggles","No_Harness","No_boots","No_helmet","No_safety_vest","Safety Vest","boots","harness"] },
               { file: "hansung_ppe_violations.pt", label: "HANSUNG VIOLATIONS CLASSES", color: "#fb7185", classes: ["Hardhat","Mask","NO-Hardhat","NO-Mask","NO-Safety Vest","Person","Safety Cone","Safety Vest","machinery","vehicle","No-Gloves","No-Shoes","No-Goggles","No-Safety-Belt"] },
               { file: "construction.pt", label: "CONSTRUCTION PPE CLASSES", color: "#eab308", classes: ["helmet","gloves","vest","boots","goggles","none","Person","no_helmet","no_goggle","no_gloves","no_boots"] },
               { file: "hf_ppe_detection.pt", label: "HF PPE DETECTION CLASSES", color: "#a78bfa", classes: ["helmet","human","no-helmet","vest"] },
