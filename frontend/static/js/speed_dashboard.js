@@ -358,23 +358,8 @@ class SpeedDashboard {
         if (!container) return;
 
         try {
-            const res = await fetch("/api/models");
-            let models = [];
-            if (res.ok) {
-                const data = await res.json();
-                models = data.models || [];
-            }
-
-            // Dynamically select models present in models folder without yolov8n
-            let speedModels = models.filter(m => (m.toLowerCase().includes("vehicle") || m.toLowerCase().includes("speed") || m.toLowerCase().includes("car") || m.toLowerCase().includes("truck")) && m !== "yolov8n.pt");
-            
-            if (speedModels.length === 0) {
-                speedModels = models.filter(m => m !== "yolov8n.pt");
-            }
-            if (speedModels.length === 0 && models.length > 0) {
-                speedModels = [models[0]];
-            }
-
+            // Vehicle Speed Tracking uses yolov8n with vehicle classes (truck, etc.)
+            const speedModels = ["yolov8n.pt"];
             this.availableModels = speedModels;
 
             // Fetch classes directly from the model metadata
@@ -386,13 +371,13 @@ class SpeedDashboard {
                         this.modelClassesCache[m] = d.classes || [];
                     }
                 } catch (e) {
-                    this.modelClassesCache[m] = [];
+                    this.modelClassesCache[m] = ["truck"];
                 }
             }));
 
             this.renderModelCards(speedModels);
 
-            if (countSpan) countSpan.textContent = `${speedModels.length} vehicle model(s) ready`;
+            if (countSpan) countSpan.textContent = "1 vehicle model ready (yolov8n.pt)";
         } catch (e) {
             console.error("[SPEED-DASH] Error loading models:", e);
             if (countSpan) countSpan.textContent = "Ready";
@@ -506,13 +491,17 @@ class SpeedDashboard {
                 classContainer.appendChild(emptySpan);
             } else {
                 classes.forEach(c => {
+                    // In Vehicle Speed tab, only enable vehicle classes (e.g. truck) by default
+                    const isVehicle = ["truck", "vehicle", "car", "bus"].includes(c.toLowerCase());
+                    const isChecked = isVehicle;
+
                     const cLabel = document.createElement("label");
                     cLabel.style.cssText = `
                         display: inline-flex;
                         align-items: center;
                         gap: 5px;
-                        background: rgba(0,255,170,0.12);
-                        border: 1px solid #00ffaa;
+                        background: ${isChecked ? "rgba(0,255,170,0.12)" : "rgba(0,0,0,0.3)"};
+                        border: 1px solid ${isChecked ? "#00ffaa" : "var(--border)"};
                         padding: 3px 8px;
                         border-radius: 4px;
                         cursor: pointer;
@@ -526,7 +515,7 @@ class SpeedDashboard {
                     cChk.type = "checkbox";
                     cChk.className = `speed-class-checkbox class-chk-${normName}`;
                     cChk.value = c;
-                    cChk.checked = true;
+                    cChk.checked = isChecked;
                     cChk.style.cursor = "pointer";
 
                     cChk.addEventListener("change", () => {
