@@ -33,6 +33,8 @@ __pycache__/
 .Python
 
 # Virtual environments
+hpcl_env/
+hpcl_env
 rpi_env/
 venv/
 env/
