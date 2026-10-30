@@ -12,25 +12,25 @@
 # ─────────────────────────────────────────────────────────────
 
 [Unit]
-Description=RTSP to HLS Live Stream
+Description=Reliance AI Vision - Industrial Edge Inference Platform
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-# ── Change this to your actual username and project path ──
-User=algofusion
-WorkingDirectory=/home/algofusion/rtsp_http
-ExecStartPre=/bin/bash -c 'mkdir -p hls && rm -f hls/*.ts hls/*.m3u8'
-ExecStart=/bin/bash /home/algofusion/rtsp_http/start_stream.sh
+User=algo
+WorkingDirectory=/home/algo/Documents/rtsp_http_cla
+ExecStartPre=/bin/bash -c 'mkdir -p /tmp/hls && ln -sfn /tmp/hls /home/algo/Documents/rtsp_http_cla/hls'
+ExecStart=/bin/bash /home/algo/Documents/rtsp_http_cla/cleanstart.sh
+ExecStop=/bin/bash /home/algo/Documents/rtsp_http_cla/launch.sh stop
 
-Restart=on-failure
+Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Nice to prevent zombie processes
-KillMode=process
+# Process cleanup
+KillMode=mixed
 KillSignal=SIGTERM
 TimeoutStopSec=10
 
