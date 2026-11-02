@@ -26,6 +26,25 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 import uuid
 
+# Auto-resolve FFmpeg binary from virtualenv or imageio_ffmpeg if not in system PATH
+if not shutil.which("ffmpeg"):
+    venv_bin = os.path.join(sys.prefix, "bin", "ffmpeg")
+    if os.path.exists(venv_bin):
+        os.environ["PATH"] = os.path.dirname(venv_bin) + os.pathsep + os.environ.get("PATH", "")
+    else:
+        try:
+            import imageio_ffmpeg
+            ff_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            if ff_exe and os.path.exists(ff_exe):
+                ff_dir = os.path.dirname(ff_exe)
+                target_symlink = os.path.join(ff_dir, "ffmpeg")
+                if not os.path.exists(target_symlink):
+                    try: os.symlink(ff_exe, target_symlink)
+                    except: pass
+                os.environ["PATH"] = ff_dir + os.pathsep + os.environ.get("PATH", "")
+        except Exception:
+            pass
+
 try:
     import cv2
     cv2.setNumThreads(1)
