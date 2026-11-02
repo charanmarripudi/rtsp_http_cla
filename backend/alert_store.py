@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 
-DB_DSN = os.getenv("DATABASE_URL", "postgresql://algofusion:Algofusion@localhost:5432/streaming")
+DB_DSN = os.getenv("DATABASE_URL", "postgresql://postgres:Algofusion@localhost:5432/streaming")
 
 
 def ensure_alerts_schema(cursor):

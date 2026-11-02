@@ -267,6 +267,7 @@ class CrowdMonitoring:
 
         boxes = []
         ids = []
+        confs = []
         try:
             results = self.model.track(
                 frame,
@@ -277,6 +278,11 @@ class CrowdMonitoring:
             )[0]
             if results.boxes is not None and len(results.boxes) > 0:
                 boxes = results.boxes.xyxy.cpu().numpy()
+                confs = (
+                    results.boxes.conf.cpu().numpy()
+                    if results.boxes.conf is not None
+                    else [0.85] * len(boxes)
+                )
                 ids = (
                     results.boxes.id.cpu().numpy().astype(int)
                     if results.boxes.id is not None
@@ -292,14 +298,18 @@ class CrowdMonitoring:
             )[0]
             if results.boxes is not None and len(results.boxes) > 0:
                 boxes = results.boxes.xyxy.cpu().numpy()
+                confs = (
+                    results.boxes.conf.cpu().numpy()
+                    if results.boxes.conf is not None
+                    else [0.85] * len(boxes)
+                )
                 ids = self._update_fallback_tracker(boxes, current_time)
 
         in_roi_people = []
         out_roi_people = []
 
         if len(boxes) > 0:
-
-            for box, track_id in zip(boxes, ids):
+            for box, track_id, conf_score in zip(boxes, ids, confs):
                 x1, y1, x2, y2 = map(int, box)
                 cx = int((x1 + x2) / 2)
                 cy = int((y1 + y2) / 2)
@@ -312,7 +322,8 @@ class CrowdMonitoring:
                     "id": track_id,
                     "bbox": (x1, y1, x2, y2),
                     "center": (cx, cy),
-                    "ground": (gx, gy)
+                    "ground": (gx, gy),
+                    "conf": float(conf_score)
                 }
 
                 # Person is in ROI if center or foot ground point is within ROI
@@ -333,105 +344,39 @@ class CrowdMonitoring:
                 should_save_alert = True
                 self.last_alert_time = current_time
 
-        # Render Trajectory Trails
-        if self.enable_trails:
-            for p in in_roi_people:
-                pts = self.track_history[p["id"]]
-                trail_color = (0, 0, 255) if has_crowd else (0, 220, 255)
-                for i in range(1, len(pts)):
-                    cv2.line(frame, pts[i - 1], pts[i], trail_color, 2)
-
-        # Draw ROI Boundary Zone
+        # Draw ROI Boundary Zone (clean outline without cluttered text)
         if self.roi_coords is not None:
             x1_roi, y1_roi, x2_roi, y2_roi = self.roi_coords
-            roi_border_color = (0, 0, 255) if has_crowd else (255, 120, 0)
-            roi_thickness = 3 if has_crowd else 2
+            roi_border_color = (0, 0, 255) if has_crowd else (0, 255, 0)
+            cv2.rectangle(frame, (x1_roi, y1_roi), (x2_roi, y2_roi), roi_border_color, 2)
 
-            cv2.rectangle(frame, (x1_roi, y1_roi), (x2_roi, y2_roi), roi_border_color, roi_thickness)
-
-            roi_label = (
-                f"ROI CROWD ALERT: {in_roi_count}/{self.crowd_threshold} Persons"
-                if has_crowd
-                else f"ROI Zone: {in_roi_count}/{self.crowd_threshold} Persons"
-            )
-            cv2.putText(
-                frame,
-                roi_label,
-                (x1_roi + 8, max(20, y1_roi - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                roi_border_color,
-                2,
-                cv2.LINE_AA
-            )
-
-        # Cluster people inside the ROI for proximity visualization
-        groups = self.cluster_people_in_proximity(in_roi_people)
-
-        # Draw persons OUTSIDE ROI in dim gray (excluded from alert)
+        # Draw persons OUTSIDE ROI (clean detection box with class name and conf only)
         for p in out_roi_people:
             x1, y1, x2, y2 = p["bbox"]
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (90, 90, 90), 1)
-            cv2.putText(
-                frame,
-                f"ID:{p['id']}",
-                (x1, max(15, y1 - 4)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (120, 120, 120),
-                1,
-                cv2.LINE_AA
-            )
+            conf_val = p.get("conf", 0.85)
+            label = f"person {conf_val:.2f}"
+            box_color = (0, 230, 0)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            cv2.rectangle(frame, (x1, max(0, y1 - th - 6)), (x1 + tw + 6, y1), box_color, -1)
+            cv2.putText(frame, label, (x1 + 3, max(th, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
 
-        # Draw persons INSIDE ROI
+        # Draw persons INSIDE ROI (clean detection box with class name and conf only)
         for p in in_roi_people:
             x1, y1, x2, y2 = p["bbox"]
-            tid = p["id"]
-
-            if has_crowd:
-                box_color = (0, 0, 255)  # Red for crowd
-                label = f"ID:{tid} [CROWD]"
-            else:
-                box_color = (0, 230, 0)  # Green for normal
-                label = f"ID:{tid}"
-
+            conf_val = p.get("conf", 0.85)
+            label = f"person {conf_val:.2f}"
+            box_color = (0, 0, 255) if has_crowd else (0, 230, 0)
             cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
-            cv2.circle(frame, p["ground"], 4, box_color, -1)
-
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
             cv2.rectangle(frame, (x1, max(0, y1 - th - 6)), (x1 + tw + 6, y1), box_color, -1)
-            cv2.putText(
-                frame,
-                label,
-                (x1 + 3, max(th, y1 - 4)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA
-            )
+            text_color = (255, 255, 255) if has_crowd else (0, 0, 0)
+            cv2.putText(frame, label, (x1 + 3, max(th, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, text_color, 1, cv2.LINE_AA)
 
-        # Draw connecting lines between clustered members in ROI
-        for g in groups:
-            if len(g) > 1:
-                line_color = (0, 0, 255) if has_crowd else (0, 200, 255)
-                for i in range(len(g)):
-                    for j in range(i + 1, len(g)):
-                        pt1 = g[i]["ground"]
-                        pt2 = g[j]["ground"]
-                        if math.hypot(pt1[0] - pt2[0], pt1[1] - pt2[1]) <= self.group_distance_px:
-                            cv2.line(frame, pt1, pt2, line_color, 2, cv2.LINE_AA)
-
-                if has_crowd and len(g) >= 3:
-                    pts = np.array([p["ground"] for p in g], dtype=np.int32)
-                    hull = cv2.convexHull(pts)
-                    cv2.polylines(frame, [hull], True, (0, 0, 255), 2, cv2.LINE_AA)
-
-        # Draw top HUD dashboard
         total_tracked = len(in_roi_people) + len(out_roi_people)
-        self.draw_hud(frame, total_tracked, in_roi_count, groups, is_active_alert)
+        groups = self.cluster_people_in_proximity(in_roi_people)
 
-        # Save annotated snapshot (showing ROI, bounding boxes, and tracking IDs)
+        # Save annotated snapshot (showing ROI, bounding boxes)
         if should_save_alert:
             self.trigger_alert(frame, in_roi_people)
 

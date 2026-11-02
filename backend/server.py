@@ -1251,18 +1251,22 @@ async def update_thresholds(req: Request):
             global _streams_metadata_cache
             _streams_metadata_cache = [dict(e) for e in entries]
         if cid in running:
+            worker = running[cid].get("worker")
+            if not worker:
+                proc = running[cid].get("proc")
+                if proc and hasattr(proc, "worker"):
+                    worker = proc.worker
+
             if model_configs:
                 running[cid]["model_configs"] = model_configs
-                proc = running[cid].get("proc")
-                if proc and hasattr(proc, "worker") and proc.worker:
-                    proc.worker.model_configs = model_configs
+                if worker:
+                    worker.model_configs = model_configs
             else:
                 if conf is not None: running[cid]["conf"] = conf
                 if iou is not None: running[cid]["iou"] = iou
-                proc = running[cid].get("proc")
-                if proc and hasattr(proc, "worker") and proc.worker:
-                    if conf is not None: proc.worker.conf = conf
-                    if iou is not None: proc.worker.iou = iou
+                if worker:
+                    if conf is not None: worker.conf = conf
+                    if iou is not None: worker.iou = iou
         return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -3963,11 +3967,8 @@ def get_alerts_json():
             img_path = a.get("image") or a.get("image_path") or ""
             filename = img_path.split("/")[-1] if img_path else ""
             if filename:
-                base_url = get_alerts_base_url()
-                if base_url:
-                    a["image"] = f"{base_url.rstrip('/')}/hls/alerts/{filename}"
-                else:
-                    a["image"] = f"/hls/alerts/{filename}"
+                base_url = os.getenv("LOCAL_BASE_URL", "http://localhost:8080").rstrip("/")
+                a["image"] = f"{base_url}/hls/alerts/{filename}"
                 a["image_path"] = a["image"]
             a["camera"] = a.get("camera") or a.get("camera_id") or "0"
             a["camera_id"] = a["camera"]
@@ -4004,10 +4005,8 @@ def get_alerts_db():
             img_path = r.get("image_path") or ""
             filename = img_path.split("/")[-1] if img_path else ""
             if filename:
-                if base_url:
-                    r["image_path"] = f"{base_url.rstrip('/')}/hls/alerts/{filename}"
-                else:
-                    r["image_path"] = f"/hls/alerts/{filename}"
+                base_url = os.getenv("LOCAL_BASE_URL", "http://localhost:8080").rstrip("/")
+                r["image_path"] = f"{base_url}/hls/alerts/{filename}"
                 r["image"] = r["image_path"]
             results.append(r)
         cur.close()
@@ -4019,13 +4018,10 @@ def get_alerts_db():
 def get_alert_images():
     if not os.path.exists(ALERTS_DIR): return {"images": [], "total": 0}
     imgs = []
+    base_url = os.getenv("LOCAL_BASE_URL", "http://localhost:8080").rstrip("/")
     for f in sorted(os.listdir(ALERTS_DIR), reverse=True):
         if f.lower().endswith((".jpg", ".jpeg", ".png")):
-            base_url = get_alerts_base_url()
-            if base_url:
-                img_url = f"{base_url.rstrip('/')}/hls/alerts/{f}"
-            else:
-                img_url = f"/hls/alerts/{f}"
+            img_url = f"{base_url}/hls/alerts/{f}"
             imgs.append({"filename": f, "url": img_url, "size_kb": round(os.path.getsize(os.path.join(ALERTS_DIR, f))/1024, 1)})
     data = get_alerts_json(); amap = {a.get("image").split("/")[-1] if a.get("image") else "": a for a in data}
     for img in imgs:

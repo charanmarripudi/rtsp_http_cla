@@ -556,6 +556,24 @@ class DetectorWorker:
             if hasattr(self, "_box_lock"):
                 with self._box_lock:
                     self._tracked_boxes = []
+            if getattr(self, "crowd_engine", None) and new_roi and len(new_roi) == 2:
+                try:
+                    min_x = min(new_roi[0][0], new_roi[1][0])
+                    max_x = max(new_roi[0][0], new_roi[1][0])
+                    min_y = min(new_roi[0][1], new_roi[1][1])
+                    max_y = max(new_roi[0][1], new_roi[1][1])
+                    self.crowd_engine.roi_coords = (int(min_x * self.width), int(min_y * self.height), int(max_x * self.width), int(max_y * self.height))
+                except Exception:
+                    pass
+        if getattr(self, "crowd_engine", None):
+            cfg = get_config_for_model(self._model_configs, "yolov8n.pt") if self._model_configs else {}
+            class_cfg = cfg.get("class_configs", {}).get("person", {}) if isinstance(cfg, dict) else {}
+            new_thresh = class_cfg.get("crowd_threshold") or cfg.get("crowd_threshold")
+            if new_thresh is not None:
+                try:
+                    self.crowd_engine.crowd_threshold = int(new_thresh)
+                except Exception:
+                    pass
         print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, roi_polygon={self.roi_polygon}", flush=True)
 
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.20, iou=0.45, location="Camera", model_configs=None):
@@ -606,24 +624,7 @@ class DetectorWorker:
         else:
             self.model_paths = [model_paths] if model_paths else []
 
-        # If hansung_ppe_violations is assigned, auto-include companion PPE models
-        # (nik_ppe_best.pt / ppe_new.pt) to detect additional PPE violations:
-        # No-Gloves, No-Shoes, No-Goggles, No-Safety-Belt
-        has_hansung = any("hansung_ppe_violations" in str(p).lower() for p in self.model_paths)
-        if has_hansung:
-            companion_dirs = [
-                os.path.join(str(BASE_DIR), "backend", "companion_models"),
-                os.path.join(str(BASE_DIR), "companion_models"),
-                "/home/algo/Documents/rtsp_http_cla/backend/companion_models",
-                "/home/algo/Documents/rtsp_http_cla/companion_models",
-                os.path.join(str(BASE_DIR), "models")
-            ]
-            for comp in ["nik_ppe_best.pt", "ppe_new.pt"]:
-                for cd in companion_dirs:
-                    cp = os.path.join(cd, comp)
-                    if os.path.exists(cp) and cp not in self.model_paths:
-                        self.model_paths.append(cp)
-                        break
+        # Strictly use ONLY the models explicitly assigned to this camera
 
         # Companion model expansion for sand_ext_chocks (detect vehicles/trucks to check wheel chock compliance)
         has_sand_ext = any("sand_ext_chocks" in str(p).lower() for p in self.model_paths)
@@ -829,7 +830,7 @@ class DetectorWorker:
             "-r", str(int(self.fps)), "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", 
             "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "1",
             "-profile:v", "baseline", "-level:v", "3.1",
-            "-b:v", "800k", "-maxrate", "1200k", "-bufsize", "2000k",
+            "-b:v", "1500k", "-maxrate", "2200k", "-bufsize", "3000k",
             "-g", str(int(self.fps)), 
             "-keyint_min", str(int(self.fps)), "-sc_threshold", "0",
             "-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
@@ -922,6 +923,15 @@ class DetectorWorker:
         cur_cls, now = set(), time.time()
         raw_boxes = []   # list of (xyxy_in_output_res, color, conf, cls_name)
 
+        # Collect all classes the user explicitly enabled for this camera
+        camera_selected_classes = []
+        if isinstance(self.model_configs, dict):
+            for mk, mv in self.model_configs.items():
+                if isinstance(mv, dict) and mv.get("enabled_classes"):
+                    for ec in mv["enabled_classes"]:
+                        if ec not in camera_selected_classes:
+                            camera_selected_classes.append(ec)
+
         if not self.models:
             paths = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
             self.models = [get_yolo_model(mp) for mp in paths]
@@ -951,8 +961,8 @@ class DetectorWorker:
                 m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
 
             filter_classes = enabled_classes if (enabled_classes is not None) else []
-            if not filter_classes and class_configs:
-                filter_classes = list(class_configs.keys())
+            if not filter_classes and camera_selected_classes:
+                filter_classes = camera_selected_classes
 
             effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
             min_class_conf = effective_conf
@@ -1004,6 +1014,10 @@ class DetectorWorker:
 
                         if filter_classes:
                             if not any(match_class(cls, e) for e in filter_classes):
+                                continue
+
+                        if camera_selected_classes:
+                            if not any(match_class(cls, sc) for sc in camera_selected_classes):
                                 continue
 
                         # Per-class confidence gate (hard reject)
@@ -1316,6 +1330,8 @@ class DetectorWorker:
         display_boxes = []
         for tid, trk in self._ema_tracks.items():
             trk_cls = trk.get('cls', '')
+            if camera_selected_classes and not any(match_class(trk_cls, sc) for sc in camera_selected_classes):
+                continue
             is_veh = any(vk in trk_cls.lower() for vk in vehicle_keywords)
             max_age = 1.2 if is_veh else TRACK_MAX_AGE_S
             age = now_t - trk.get('last_seen', 0.0)
@@ -1351,7 +1367,10 @@ class DetectorWorker:
                     box_col = (20, 20, 237)  # Reliance Bold Alert Red (BGR)
                 else:
                     box_header = f"{trk_cls} {conf_pct:.2f}"
-                    box_col = trk.get('color', (0, 255, 0))
+                    if str(trk_cls).lower() == 'person':
+                        box_col = (0, 255, 0)  # Compliant Green by default for normal person
+                    else:
+                        box_col = trk.get('color', (0, 255, 0))
 
             display_boxes.append({
                 'box':   trk['box'],
@@ -1576,6 +1595,9 @@ class DetectorWorker:
                 if not is_negative_violation_class(c):
                     continue
 
+                if camera_selected_classes and not any(match_class(c, sc) for sc in camera_selected_classes):
+                    continue
+
                 # 1. Strict 30-Second Cooldown per class per camera
                 if not hasattr(self, 'alert_cooldowns'):
                     self.alert_cooldowns = {}
@@ -1588,6 +1610,55 @@ class DetectorWorker:
                     trk['last_alert_time'] = now_t
                     print(f"[ALERT-TRIGGER-VIOLATION] Negative alert generated: cam={self.cam_id}, class={c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
                     self._save_alert(c, frame_snapshot)
+
+            # Check Crowd Gathering Alert in ROI if person class monitored
+            cfg = get_config_for_model(self.model_configs, "yolov8n.pt") if self.model_configs else {}
+            class_cfg = cfg.get("class_configs", {}).get("person", {}) if isinstance(cfg, dict) else {}
+            crowd_thresh = class_cfg.get("crowd_threshold") or cfg.get("crowd_threshold")
+            if crowd_thresh is not None:
+                try: crowd_thresh = int(crowd_thresh)
+                except: crowd_thresh = None
+
+            # Crowd limit: Must be at least 2 people to be a crowd
+            if crowd_thresh is not None and crowd_thresh < 2:
+                crowd_thresh = 2
+
+            if crowd_thresh and crowd_thresh >= 2:
+                person_boxes_in_roi = 0
+                for b in display_boxes:
+                    if b.get('cls', '').lower() == 'person':
+                        bx = b.get('box', [])
+                        if len(bx) == 4:
+                            if not self.roi_polygon or len(self.roi_polygon) != 2:
+                                person_boxes_in_roi += 1
+                            else:
+                                min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
+                                max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
+                                min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
+                                max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
+                                cx = (bx[0] + bx[2]) / 2.0
+                                cy = (bx[1] + bx[3]) / 2.0
+                                gx = cx
+                                gy = bx[3]
+                                if (min_x <= cx <= max_x and min_y <= cy <= max_y) or (min_x <= gx <= max_x and min_y <= gy <= max_y):
+                                    person_boxes_in_roi += 1
+
+                if person_boxes_in_roi >= crowd_thresh:
+                    for b in display_boxes:
+                        if b.get('cls', '').lower() == 'person':
+                            b['color'] = (20, 20, 237)
+                            b['label'] = f"VIOLATION: person {b.get('conf', 0.8):.2f}"
+                    cd_key = f"crowd_alert_cam{self.cam_id}"
+                    if not hasattr(self, 'alert_cooldowns'):
+                        self.alert_cooldowns = {}
+                    if (now_t - self.alert_cooldowns.get(cd_key, 0.0)) >= 30.0:
+                        self.alert_cooldowns[cd_key] = now_t
+                        crowd_event_name = f"CROWD ALERT: {person_boxes_in_roi} Persons in ROI"
+                        print(f"[ALERT-TRIGGER-CROWD] Crowd Gathering alert triggered: cam={self.cam_id}, count={person_boxes_in_roi} (threshold={crowd_thresh})", flush=True)
+                        self._save_alert(crowd_event_name, frame_snapshot)
+
+            with self._box_lock:
+                self._tracked_boxes = display_boxes
 
         # -- Over Speed Alert Trigger (ONLY triggers when measured speed > limit) --
         for tid, trk in list(self._ema_tracks.items()):
@@ -1613,11 +1684,9 @@ class DetectorWorker:
             img_saved = cv2.imwrite(os.path.join(adir, filename), frame)
             print(f"[ALERT-IMG] Saved snapshot {filename}, ok={img_saved}", flush=True)
 
-            base_url = get_alerts_base_url()
-            if base_url:
-                image_path = f"{base_url.rstrip('/')}/hls/alerts/{filename}"
-            else:
-                image_path = f"/hls/alerts/{filename}"
+            # Full local HTTP URL (Option 2)
+            base_url = os.getenv("LOCAL_BASE_URL", "http://localhost:8080").rstrip("/")
+            image_path = f"{base_url}/hls/alerts/{filename}"
 
             if "OVER SPEED" in str(class_name).upper() or "CROWD" in str(class_name).upper():
                 type_of_alert_str = str(class_name)
@@ -1990,44 +2059,40 @@ class DetectorWorker:
                         # ----------------------------------------------------------
                         # DEDICATED CROWD MONITORING PIPELINE
                         # ----------------------------------------------------------
-                        src_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-                        if src_fps <= 0 or src_fps > 120:
-                            src_fps = 25.0
+                        cap_t = threading.Thread(target=self._capture_thread, args=(cap, cap_stop_evt), daemon=True)
+                        cap_t.start()
 
                         target_interval = 1.0 / self.fps
                         next_frame_time = time.time()
                         frame_idx = 0
 
                         while not self._stop_event.is_set():
-                            if is_local_file:
-                                now = time.time()
-                                if now < next_frame_time:
-                                    time.sleep(max(0.001, next_frame_time - now))
-                                next_frame_time += target_interval
-                                if now - next_frame_time > 0.5:
-                                    next_frame_time = now + target_interval
+                            now = time.time()
+                            if now < next_frame_time:
+                                time.sleep(max(0.001, next_frame_time - now))
+                                continue
+                            next_frame_time += target_interval
+                            if now - next_frame_time > 0.5:
+                                next_frame_time = now + target_interval
 
-                            ret, raw_frame = cap.read()
-                            if not ret or raw_frame is None:
-                                if is_local_file:
-                                    cap.release()
-                                    cap = cv2.VideoCapture(str(self.rtsp_url))
-                                    frame_idx = 0
-                                    continue
-                                else:
-                                    print(f"[CROWD-WORKER] Camera {self.cam_id} RTSP stream finished or disconnected.", flush=True)
-                                    break
+                            if time.time() - getattr(self, '_last_frame_time', now) > 15.0 and self._latest_raw_frame is not None:
+                                print(f"[WARN] Camera {self.cam_id} crowd worker frame timeout (>15s), reconnecting...", flush=True)
+                                break
+
+                            with self._frame_lock:
+                                raw_frame = self._latest_raw_frame
+
+                            if raw_frame is None:
+                                time.sleep(0.02)
+                                continue
 
                             frame_idx += 1
-                            with self._frame_lock:
-                                self._latest_raw_frame = raw_frame
-                                self._last_frame_time = time.time()
 
                             # Downscale frame to worker dimensions if needed
                             if (raw_frame.shape[1], raw_frame.shape[0]) != (self.width, self.height):
                                 proc_frame = cv2.resize(raw_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
                             else:
-                                proc_frame = raw_frame
+                                proc_frame = raw_frame.copy()
 
                             pf, metrics = self.crowd_engine.process_frame(proc_frame, return_metrics=True)
                             if (self.width, self.height) != (pf.shape[1], pf.shape[0]):
@@ -2036,16 +2101,22 @@ class DetectorWorker:
                             self.crowd_stats = metrics
 
                             # Immediately encode and cache latest annotated JPEG frame in memory
-                            ret_j, j_bytes = cv2.imencode('.jpg', pf, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                            ret_j, j_bytes = cv2.imencode('.jpg', pf, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                             if ret_j:
                                 with self._frame_lock:
                                     self._latest_jpeg_frame = j_bytes.tobytes()
 
-                            # Trigger alert if crowd threshold reached
+                            # Trigger alert if crowd threshold reached (with 30-second cooldown)
                             if metrics.get("is_alert"):
-                                cnt = metrics.get("in_roi_count", 0)
-                                print(f"[ALERT] [ALERT-TRIGGER-CROWD] Crowd Gathering alert: cam={self.cam_id}, count={cnt} (threshold={self.crowd_engine.crowd_threshold})", flush=True)
-                                self._save_alert(f"CROWD ALERT: {cnt} Persons in ROI", pf)
+                                now_c_t = time.time()
+                                cd_key = f"crowd_alert_cam{self.cam_id}"
+                                if not hasattr(self, 'alert_cooldowns'):
+                                    self.alert_cooldowns = {}
+                                if (now_c_t - self.alert_cooldowns.get(cd_key, 0.0)) >= 30.0:
+                                    self.alert_cooldowns[cd_key] = now_c_t
+                                    cnt = metrics.get("in_roi_count", 0)
+                                    print(f"[ALERT] [ALERT-TRIGGER-CROWD] Crowd Gathering alert: cam={self.cam_id}, count={cnt} (threshold={self.crowd_engine.crowd_threshold})", flush=True)
+                                    self._save_alert(f"CROWD ALERT: {cnt} Persons in ROI", pf)
 
                             if ffmpeg.poll() is not None:
                                 break

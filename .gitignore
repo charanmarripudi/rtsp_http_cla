@@ -68,3 +68,7 @@ models_backup/
 server.py.backup
 ptz_cameras_user.json
 f4d3e73/
+
+# Binaries & archives
+mediamtx
+*.tar.gz

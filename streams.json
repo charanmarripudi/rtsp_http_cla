@@ -1,32 +1,73 @@
 [
   {
-    "rtsp": "rtsp://admin:Alg0M0nit%4070%23@192.168.96.41:554/stream1",
+    "id": 0,
+    "rtsp": "rtsp://localhost:8554/webcam",
     "location": "Location 20",
     "location_id": "loc-1780038850556",
+    "conf": 0.4,
+    "iou": 0.45,
+    "model_configs": {
+      "hansung_ppe_violations.pt": {
+        "enabled_classes": [
+          "NO-Hardhat",
+          "No-Safety-Belt"
+        ],
+        "class_configs": {
+          "NO-Hardhat": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "NO-Mask": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "NO-Safety Vest": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "No-Gloves": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "No-Shoes": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "No-Goggles": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "No-Safety-Belt": {
+            "conf": 0.4,
+            "iou": 0.45
+          }
+        }
+      },
+      "hansung_ppe_violations": {
+        "enabled_classes": [
+          "NO-Hardhat",
+          "No-Safety-Belt"
+        ],
+        "class_configs": {
+          "NO-Hardhat": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "No-Safety-Belt": {
+            "conf": 0.4,
+            "iou": 0.45
+          }
+        }
+      }
+    },
     "device_id": "RPI-001",
     "serial_number": "",
     "device_ip": "192.168.96.26",
     "device_type": "",
-    "device_status": "offline"
-  },
-  {
-    "rtsp": "rtsp://admin:Alg0M0nit%4070%23@192.168.96.65:554/stream1",
-    "location": "Location 20",
-    "location_id": "loc-1780038850556",
-    "device_id": "RPI-001",
-    "serial_number": "",
-    "device_ip": "192.168.96.26",
-    "device_type": "",
-    "device_status": "offline"
-  },
-  {
-    "rtsp": "rtsp://admin:Alg0M0nit%4070%23@192.168.96.41:554/stream1",
-    "location": "Location 20",
-    "location_id": "loc-1780038850556",
-    "device_id": "RPI-001",
-    "serial_number": "",
-    "device_ip": "192.168.96.26",
-    "device_type": "",
-    "device_status": "offline"
+    "device_status": "offline",
+    "hls": "/hls/stream0_raw/playlist.m3u8",
+    "hls_live": "/hls/camera/0/playlist.m3u8",
+    "hls_raw": "/hls/stream0_raw/playlist.m3u8",
+    "hls_detected": "/hls/stream0_detected/playlist.m3u8"
   }
 ]

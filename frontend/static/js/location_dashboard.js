@@ -37,9 +37,9 @@ class LocationDashboardTemplates {
         const id = Number(stream.id);
         return `
             <div class="box" id="cam-box-${id}" data-camera-id="${id}">
-                <div class="video-wrap" style="position: relative;">
+                <div class="video-wrap" style="position: relative; width: 100%; aspect-ratio: 16/9; overflow: hidden; background: #000; border-radius: 6px;">
                     <div class="mode-badge raw" id="badge-${id}">RAW</div>
-                    <video id="v${id}" controls autoplay muted playsinline data-src="${this.text(stream.hls_live)}" ondblclick="toggleCardMaximize(${id})"></video>
+                    <video id="v${id}" autoplay muted playsinline data-src="${this.text(stream.hls_live)}" ondblclick="toggleCardMaximize(${id})"></video>
                     <svg class="roi-draw-canvas" id="roi-canvas-${id}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; user-select: none; z-index: 15; pointer-events: none; background: transparent;">
                         <rect id="roi-rect-${id}" x="0" y="0" width="0" height="0" style="fill: none; stroke: #00ffaa; stroke-width: 2.5;"></rect>
                         <g id="roi-badge-${id}" style="display: none;">
@@ -298,6 +298,81 @@ class LocationDashboard {
         this.renderLocationForm();
         this.renderLocationWidgets();
         this.renderDevices();
+        this.startAlertPolling();
+    }
+
+    startAlertPolling() {
+        if (this._alertInterval) clearInterval(this._alertInterval);
+        this.pollAlerts();
+        this._alertInterval = setInterval(() => this.pollAlerts(), 3000);
+    }
+
+    async pollAlerts() {
+        const alertList = this.alertList || document.getElementById("alert-list");
+        if (!alertList) return;
+
+        try {
+            const r = await fetch(`/api/alerts?t=${Date.now()}`);
+            if (!r.ok) return;
+            const alerts = await r.json();
+
+            const vioKpi = document.getElementById("kpi-violation-count");
+            if (vioKpi && Array.isArray(alerts)) {
+                vioKpi.textContent = `${alerts.length} Detected`;
+            }
+
+            if (!alerts || !alerts.length) {
+                alertList.innerHTML = '<div style="color:var(--muted); font-size:.7rem; text-align:center; padding:30px 10px;">Watching for safety violations...</div>';
+                return;
+            }
+
+            const latest = alerts[0];
+            const latestId = latest.id || latest.time || latest.created_at;
+            if (latestId === this._lastAlertTime) return;
+            this._lastAlertTime = latestId;
+
+            alertList.innerHTML = "";
+            const BASE = window.location.origin;
+
+            alerts.slice(0, 50).forEach((a, idx) => {
+                const card = document.createElement("div");
+                card.className = "alert-card violation-card";
+                card.style.cssText = "display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.03);border:1px solid rgba(237,28,36,0.3);border-radius:6px;padding:8px 10px;margin-bottom:8px;cursor:pointer;transition:all 0.2s;";
+                if (idx === 0) {
+                    card.style.boxShadow = "0 0 12px rgba(237, 28, 36, 0.45)";
+                    card.style.borderColor = "rgba(237, 28, 36, 0.7)";
+                }
+
+                const camId = a.camera_id !== undefined ? a.camera_id : (a.camera !== undefined ? a.camera : "0");
+                const eventStr = a.type_of_alert || a.event || "Violation Detected";
+                const rawTime = a.created_at || a.time || "";
+                const timeStr = rawTime.includes(" ") ? rawTime.split(" ")[1] : rawTime;
+                const locStr = a.location || `Camera ${camId}`;
+
+                let imgUrl = a.image || a.image_path || "";
+                if (imgUrl && !imgUrl.startsWith("http://") && !imgUrl.startsWith("https://")) {
+                    imgUrl = `${BASE}${imgUrl.startsWith("/") ? "" : "/"}${imgUrl}`;
+                }
+
+                card.onclick = () => { if (imgUrl) window.open(imgUrl, "_blank"); };
+
+                card.innerHTML = `
+                    <div class="alert-info" style="flex:1;min-width:0;padding-right:8px;">
+                        <div class="alert-meta" style="display:flex;align-items:center;gap:6px;font-size:0.68rem;margin-bottom:4px;">
+                            <span class="badge-violation" style="background:#ed1c24;color:#fff;font-weight:700;font-size:0.6rem;padding:2px 6px;border-radius:3px;">VIOLATION</span>
+                            <span style="font-weight:700;color:#FFFFFF;font-family:var(--mono);">CAM ${camId}</span>
+                            <span style="font-size:0.62rem;color:var(--muted);margin-left:auto;">${timeStr}</span>
+                        </div>
+                        <div class="alert-event-title" style="font-size:0.75rem;font-weight:600;color:#f87171;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${this.escapeHtml(eventStr)}</div>
+                        <div class="alert-loc-label" style="font-size:0.65rem;color:var(--muted);">${this.escapeHtml(locStr)}</div>
+                    </div>
+                    ${imgUrl ? `<img src="${imgUrl}" class="alert-thumb" style="width:72px;height:45px;object-fit:cover;border-radius:4px;border:1px solid rgba(255,255,255,0.15);" loading="lazy">` : ""}
+                `;
+                alertList.appendChild(card);
+            });
+        } catch (e) {
+            console.error("Alert poll error:", e);
+        }
     }
 
     escapeHtml(value) {

@@ -283,7 +283,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                 <div class="thresholds compact" style="display:flex;gap:12px;flex-wrap:wrap;">
                                     <div class="thresh-row" style="flex:1;min-width:110px;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
                                     <div class="thresh-row" style="flex:1;min-width:110px;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
-                                    ${isPerson ? `<div class="thresh-row" style="flex:1;min-width:130px;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Crowd ROI Limit <span class="model-crowd-thresh-val" style="color:#38bdf8;font-weight:700;">${crowdThreshVal} people</span></label><input class="model-crowd-thresh-slider" type="range" min="2" max="20" step="1" value="${crowdThreshVal}" style="accent-color:#38bdf8;width:100%;"></div>` : ''}
+                                    ${isPerson ? `<div class="thresh-row" style="flex:1;min-width:130px;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Crowd ROI Limit <span class="model-crowd-thresh-val" style="color:#38bdf8;font-weight:700;">${crowdThreshVal} ${crowdThreshVal === 1 ? 'person' : 'people'}</span></label><input class="model-crowd-thresh-slider" type="range" min="1" max="20" step="1" value="${crowdThreshVal}" style="accent-color:#38bdf8;width:100%;"></div>` : ''}
                                 </div>`;
                             chipsList.appendChild(card);
 
@@ -336,7 +336,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             }
                             if (crSlider) {
                                 crSlider.oninput = () => {
-                                    if (crSpan) crSpan.textContent = `${crSlider.value} people`;
+                                    const val = parseInt(crSlider.value, 10);
+                                    if (crSpan) crSpan.textContent = `${val} ${val === 1 ? 'person' : 'people'}`;
                                     syncClassThreshold();
                                 };
                             }

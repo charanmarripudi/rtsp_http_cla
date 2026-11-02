@@ -147,12 +147,9 @@ class DetectorWorker:
             os.makedirs(adir, exist_ok=True)
             cv2.imwrite(os.path.join(adir, filename), frame)
 
-            # Create full image path
-            base_url = get_alerts_base_url()
-            if base_url:
-                image_path = f"{base_url.rstrip('/')}/hls/alerts/{filename}"
-            else:
-                image_path = f"/hls/alerts/{filename}"
+            # Create full local image path (Option 2)
+            base_url = os.getenv("LOCAL_BASE_URL", "http://localhost:8080").rstrip("/")
+            image_path = f"{base_url}/hls/alerts/{filename}"
 
             # Direct DB Store using provided logic and custom location
             conn = self._get_db_conn()
