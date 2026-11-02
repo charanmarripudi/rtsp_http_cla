@@ -624,7 +624,20 @@ class DetectorWorker:
         else:
             self.model_paths = [model_paths] if model_paths else []
 
-        # Strictly use ONLY the models explicitly assigned to this camera
+        # Companion model expansion for hansung_ppe_violations (to detect belts/gloves if selected)
+        has_hansung = any("hansung_ppe_violations" in str(p).lower() for p in self.model_paths)
+        if has_hansung:
+            companion_dirs = [
+                os.path.join(str(BASE_DIR), "backend", "companion_models"),
+                os.path.join(str(BASE_DIR), "companion_models"),
+                os.path.join(str(BASE_DIR), "models")
+            ]
+            for comp in ["ppe_new.pt"]:
+                for cd in companion_dirs:
+                    cp = os.path.join(cd, comp)
+                    if os.path.exists(cp) and cp not in self.model_paths:
+                        self.model_paths.append(cp)
+                        break
 
         # Companion model expansion for sand_ext_chocks (detect vehicles/trucks to check wheel chock compliance)
         has_sand_ext = any("sand_ext_chocks" in str(p).lower() for p in self.model_paths)
@@ -735,6 +748,19 @@ class DetectorWorker:
             seen = []
             for p in paths:
                 if p not in seen: seen.append(p)
+            has_hansung = any("hansung_ppe_violations" in str(p).lower() for p in seen)
+            if has_hansung:
+                companion_dirs = [
+                    os.path.join(str(BASE_DIR), "backend", "companion_models"),
+                    os.path.join(str(BASE_DIR), "companion_models"),
+                    os.path.join(str(BASE_DIR), "models")
+                ]
+                for comp in ["ppe_new.pt"]:
+                    for cd in companion_dirs:
+                        cp = os.path.join(cd, comp)
+                        if os.path.exists(cp) and cp not in seen:
+                            seen.append(cp)
+                            break
             self.model_paths = seen
             self.models = [get_yolo_model(mp) for mp in seen]
             self._models_active_time = time.time()
