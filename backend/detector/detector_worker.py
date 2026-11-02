@@ -478,6 +478,16 @@ def get_config_for_model(model_configs, m_name):
             k_norm = k_clean.lower().replace("_", "-").replace(" ", "-")
             if k_norm == m_norm or k_clean == m_clean:
                 return v
+    # Inherit configuration for companion PPE models
+    if m_norm in ("ppe-new", "nik-ppe-best", "keremberke-ppe-gear", "hf-ppe-detection"):
+        for k, v in model_configs.items():
+            if "hansung" in str(k).lower() and isinstance(v, dict):
+                return v
+    # Inherit configuration for companion vehicle models
+    if m_norm == "yolov8n":
+        for k, v in model_configs.items():
+            if "sand" in str(k).lower() and isinstance(v, dict):
+                return v
     if "enabled_classes" in model_configs or "class_configs" in model_configs or "conf" in model_configs:
         return model_configs
     return {}
@@ -576,10 +586,49 @@ class DetectorWorker:
                     pass
         print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, roi_polygon={self.roi_polygon}", flush=True)
 
+    @staticmethod
+    def _resolve_companion_models(model_paths):
+        paths = list(model_paths) if isinstance(model_paths, list) else ([model_paths] if model_paths else [])
+        seen = []
+        for p in paths:
+            if p and p not in seen:
+                seen.append(p)
+
+        companion_dirs = [
+            os.path.join(str(BASE_DIR), "backend", "companion_models"),
+            os.path.join(str(BASE_DIR), "companion_models"),
+            "/home/algo/Documents/rtsp_http_cla/backend/companion_models",
+            "/home/algo/Documents/rtsp_http_cla/companion_models",
+            os.path.join(str(BASE_DIR), "models")
+        ]
+
+        # Hansung PPE requires ppe_new.pt and nik_ppe_best.pt to dynamically cover all 7 PPE violation classes:
+        # NO-Hardhat, NO-Mask, NO-Safety Vest, No-Gloves, No-Shoes, No-Goggles, No-Safety-Belt
+        has_hansung = any("hansung_ppe_violations" in str(p).lower() for p in seen)
+        if has_hansung:
+            for comp in ["ppe_new.pt", "nik_ppe_best.pt"]:
+                for cd in companion_dirs:
+                    cp = os.path.join(cd, comp)
+                    if os.path.exists(cp) and cp not in seen:
+                        seen.append(cp)
+                        break
+
+        # Companion model expansion for sand_ext_chocks (detect vehicles/trucks to check wheel chock compliance)
+        has_sand_ext = any("sand_ext_chocks" in str(p).lower() for p in seen)
+        if has_sand_ext:
+            for cd in companion_dirs:
+                cp = os.path.join(cd, "yolov8n.pt")
+                if os.path.exists(cp) and cp not in seen:
+                    seen.append(cp)
+                    break
+
+        return seen
+
     def __init__(self, rtsp_url, output_dir, model_paths, conf=0.20, iou=0.45, location="Camera", model_configs=None):
         self._model_configs = model_configs or {}
         self.roi_polygon = self._model_configs.get("roi_polygon") if isinstance(self._model_configs, dict) else None
-        self.rtsp_url, self.output_dir, self.model_paths, self.conf, self.iou, self.location = rtsp_url, output_dir, model_paths, conf, iou, location
+        self.rtsp_url, self.output_dir, self.conf, self.iou, self.location = rtsp_url, output_dir, conf, iou, location
+        self.model_paths = DetectorWorker._resolve_companion_models(model_paths)
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         self.is_speed_worker = (str(self.cam_id) == "speed")
         _check_models = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
@@ -616,42 +665,6 @@ class DetectorWorker:
         self.vehicle_counts = Counter()
         self.overspeed_count = 0
         self.speed_records = []
-        if isinstance(model_paths, list):
-            seen = []
-            for p in model_paths:
-                if p not in seen: seen.append(p)
-            self.model_paths = seen
-        else:
-            self.model_paths = [model_paths] if model_paths else []
-
-        # Companion model expansion for hansung_ppe_violations (to detect belts/gloves if selected)
-        has_hansung = any("hansung_ppe_violations" in str(p).lower() for p in self.model_paths)
-        if has_hansung:
-            companion_dirs = [
-                os.path.join(str(BASE_DIR), "backend", "companion_models"),
-                os.path.join(str(BASE_DIR), "companion_models"),
-                os.path.join(str(BASE_DIR), "models")
-            ]
-            for comp in ["ppe_new.pt"]:
-                for cd in companion_dirs:
-                    cp = os.path.join(cd, comp)
-                    if os.path.exists(cp) and cp not in self.model_paths:
-                        self.model_paths.append(cp)
-                        break
-
-        # Companion model expansion for sand_ext_chocks (detect vehicles/trucks to check wheel chock compliance)
-        has_sand_ext = any("sand_ext_chocks" in str(p).lower() for p in self.model_paths)
-        if has_sand_ext:
-            companion_dirs = [
-                os.path.join(str(BASE_DIR), "models"),
-                "/home/algo/Documents/rtsp_http_cla/models",
-                os.path.join(str(BASE_DIR), "backend", "companion_models")
-            ]
-            for cd in companion_dirs:
-                cp = os.path.join(cd, "yolov8n.pt")
-                if os.path.exists(cp) and cp not in self.model_paths:
-                    self.model_paths.append(cp)
-                    break
         self.models = None
         self._db_conn = None
         self._start_time = time.time()
@@ -744,25 +757,8 @@ class DetectorWorker:
 
     def update_models(self, model_paths, model_configs=None, conf=None, iou=None, location=None):
         if model_paths is not None:
-            paths = model_paths if isinstance(model_paths, list) else [model_paths]
-            seen = []
-            for p in paths:
-                if p not in seen: seen.append(p)
-            has_hansung = any("hansung_ppe_violations" in str(p).lower() for p in seen)
-            if has_hansung:
-                companion_dirs = [
-                    os.path.join(str(BASE_DIR), "backend", "companion_models"),
-                    os.path.join(str(BASE_DIR), "companion_models"),
-                    os.path.join(str(BASE_DIR), "models")
-                ]
-                for comp in ["ppe_new.pt"]:
-                    for cd in companion_dirs:
-                        cp = os.path.join(cd, comp)
-                        if os.path.exists(cp) and cp not in seen:
-                            seen.append(cp)
-                            break
-            self.model_paths = seen
-            self.models = [get_yolo_model(mp) for mp in seen]
+            self.model_paths = DetectorWorker._resolve_companion_models(model_paths)
+            self.models = [get_yolo_model(mp) for mp in self.model_paths]
             self._models_active_time = time.time()
         if model_configs is not None:
             self.model_configs = model_configs
@@ -1358,17 +1354,25 @@ class DetectorWorker:
             trk_cls = trk.get('cls', '')
             if camera_selected_classes and not any(match_class(trk_cls, sc) for sc in camera_selected_classes):
                 continue
+
+            disp_cls = trk_cls
+            if camera_selected_classes:
+                for sc in camera_selected_classes:
+                    if match_class(trk_cls, sc):
+                        disp_cls = sc
+                        break
+
             is_veh = any(vk in trk_cls.lower() for vk in vehicle_keywords)
             max_age = 1.2 if is_veh else TRACK_MAX_AGE_S
             age = now_t - trk.get('last_seen', 0.0)
             if age > max_age:
                 continue
-            cur_cls.add(trk_cls)
+            cur_cls.add(disp_cls)
             
             # Format speed label
             speed_val = trk.get('speed_kmh') or trk.get('disp_speed')
             conf_pct = trk.get('conf', 0.8)
-            box_header = f"{trk_cls.upper()} #{tid} ({conf_pct:.0%})"
+            box_header = f"{disp_cls.upper()} #{tid} ({conf_pct:.0%})"
             sub_lbl = None
             bx = trk.get('box', [0, 0, 0, 0])
             by2 = bx[3]
@@ -1387,13 +1391,13 @@ class DetectorWorker:
                     sub_lbl = "APPROACHING LINE A"
                     box_col = (0, 220, 255)
             else:
-                is_neg = is_negative_violation_class(trk_cls)
+                is_neg = is_negative_violation_class(disp_cls)
                 if is_neg:
-                    box_header = f"VIOLATION: {trk_cls} {conf_pct:.2f}"
+                    box_header = f"VIOLATION: {disp_cls} {conf_pct:.2f}"
                     box_col = (20, 20, 237)  # Reliance Bold Alert Red (BGR)
                 else:
-                    box_header = f"{trk_cls} {conf_pct:.2f}"
-                    if str(trk_cls).lower() == 'person':
+                    box_header = f"{disp_cls} {conf_pct:.2f}"
+                    if str(disp_cls).lower() == 'person':
                         box_col = (0, 255, 0)  # Compliant Green by default for normal person
                     else:
                         box_col = trk.get('color', (0, 255, 0))
@@ -1404,8 +1408,8 @@ class DetectorWorker:
                 'sub':   sub_lbl,
                 'is_veh': is_veh,
                 'color': box_col,
-                'cls':   trk['cls'],
-                'conf':  trk['conf'],
+                'cls':   disp_cls,
+                'conf':  trk.get('conf', conf_pct),
             })
 
         # -- Absence Detection for Safety Equipment and Wheel Chocks (sand_ext_chocks) --
@@ -1617,25 +1621,32 @@ class DetectorWorker:
                 if not c:
                     continue
 
+                disp_c = c
+                if camera_selected_classes:
+                    for sc in camera_selected_classes:
+                        if match_class(c, sc):
+                            disp_c = sc
+                            break
+
                 # STRICT FILTER: ONLY NEGATIVE / VIOLATION CLASSES GENERATE ALERTS
-                if not is_negative_violation_class(c):
+                if not is_negative_violation_class(disp_c):
                     continue
 
-                if camera_selected_classes and not any(match_class(c, sc) for sc in camera_selected_classes):
+                if camera_selected_classes and not any(match_class(disp_c, sc) for sc in camera_selected_classes):
                     continue
 
                 # 1. Strict 30-Second Cooldown per class per camera
                 if not hasattr(self, 'alert_cooldowns'):
                     self.alert_cooldowns = {}
-                if (now_t - self.alert_cooldowns.get(c, 0.0)) < 30.0:
+                if (now_t - self.alert_cooldowns.get(disp_c, 0.0)) < 30.0:
                     continue
 
                 total_hits = trk.get('hit_count', 0)
                 if total_hits >= 1:
-                    self.alert_cooldowns[c] = now_t
+                    self.alert_cooldowns[disp_c] = now_t
                     trk['last_alert_time'] = now_t
-                    print(f"[ALERT-TRIGGER-VIOLATION] Negative alert generated: cam={self.cam_id}, class={c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
-                    self._save_alert(c, frame_snapshot)
+                    print(f"[ALERT-TRIGGER-VIOLATION] Negative alert generated: cam={self.cam_id}, class={disp_c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
+                    self._save_alert(disp_c, frame_snapshot)
 
             # Check Crowd Gathering Alert in ROI if person class monitored
             cfg = get_config_for_model(self.model_configs, "yolov8n.pt") if self.model_configs else {}
