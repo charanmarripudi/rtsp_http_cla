@@ -1276,7 +1276,7 @@
               <button class="ptz-stream-btn" data-stream="sub" style="background: transparent; color: var(--muted); border: none; padding: 3px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; cursor: pointer;">SD Fast</button>
             </div>
           </div>
-          <span id="ptzCameraIpLabel" style="font-family: var(--mono); font-size: 0.72rem; color: var(--muted);">192.168.96.30:80 (ONVIF)</span>
+          <span id="ptzCameraIpLabel" style="font-family: var(--mono); font-size: 0.72rem; color: var(--muted);">Camera IP (ONVIF)</span>
         </div>
         <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 8px;">
           <video id="ptzLiveVideo" autoplay muted playsinline style="width: 100%; height: 100%; object-fit: fill; background: #000; transform-origin: center center; transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);"></video>
@@ -1884,21 +1884,21 @@
       <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0 8px; overflow-x:auto;">fetch("/api/ptz/move", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ direction: "left", speed: 0.5, ip: "192.168.96.30", port: 8888 })
+  body: JSON.stringify({ direction: "left", speed: 0.5, ip: "<camera-ip>", port: 80 })
 });</pre>
 
       <div style="font-size:0.75rem; font-weight:600;">2. Stop Move (On Button Up):</div>
       <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0 8px;">fetch("/api/ptz/stop", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ ip: "192.168.96.30", port: 80 })
+  body: JSON.stringify({ ip: "<camera-ip>", port: 80 })
 });</pre>
 
       <div style="font-size:0.75rem; font-weight:600;">3. Step Nudge (On Single Click):</div>
       <pre style="background:#000; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:0.72rem; color:var(--accent); margin:4px 0;">fetch("/api/ptz/step", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ direction: "up", speed: 0.5, duration: 0.35, ip: "192.168.96.30", port: 80 })
+  body: JSON.stringify({ direction: "up", speed: 0.5, duration: 0.35, ip: "<camera-ip>", port: 80 })
 });</pre>
     </div>
   </div>
@@ -2883,9 +2883,9 @@
 
         if (window.isOfflineMode) {
           const devices = streamsArray.map((s, idx) => {
-            let ip = "192.168.96.65";
+            let ip = s.device_ip || "";
             try {
-              const match = s.rtsp.match(/@([^:/]+)(?::(\d+))?/);
+              const match = (s.rtsp || "").match(/@([^:/]+)(?::(\d+))?/);
               if (match) {
                 ip = match[1];
               }

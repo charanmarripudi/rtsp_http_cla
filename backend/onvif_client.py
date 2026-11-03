@@ -9,7 +9,9 @@ import threading
 from datetime import datetime, timezone
 
 class OnvifPtzClient:
-    def __init__(self, ip="192.168.96.30", port=80, username="admin", password=""):
+    def __init__(self, ip=None, port=80, username="admin", password=""):
+        if not ip:
+            ip = os.environ.get("DEFAULT_CAMERA_IP", os.environ.get("DEFAULT_PTZ_IP", "127.0.0.1"))
         self.ip = ip
         port_val = int(port) if port else 80
         if port_val == 8888:

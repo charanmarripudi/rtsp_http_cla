@@ -4185,7 +4185,93 @@ try:
             write_json_atomic(PTZ_CAMERAS_FILE, cams)
         except: pass
 
-    def get_ptz_client_for_camera(ip="192.168.96.30", port=80, user="admin", password=""):
+    def resolve_camera_ip(ip_hint: Optional[str] = None, cam_id: Optional[Union[str, int]] = None, rtsp_hint: Optional[str] = None) -> str:
+        """
+        Dynamically resolves the target camera IP from:
+        1. Explicit valid ip_hint passed in request.
+        2. RTSP URL parsing from rtsp_hint.
+        3. Configured PTZ camera matched by cam_id (or index).
+        4. Configured stream metadata matched by cam_id (or index).
+        5. First configured camera in read_ptz_cameras() or read_streams_metadata().
+        6. Environment variable DEFAULT_CAMERA_IP or DEFAULT_PTZ_IP.
+        7. System local network IP / 127.0.0.1.
+        """
+        if ip_hint and isinstance(ip_hint, str) and ip_hint.strip() and ip_hint.strip() not in ["null", "undefined"]:
+            return ip_hint.strip()
+
+        if rtsp_hint and isinstance(rtsp_hint, str) and rtsp_hint.strip():
+            m = re.search(r'rtsp://(?:[^@]+@)?([^:/]+)', rtsp_hint.strip())
+            if m and m.group(1):
+                return m.group(1).strip()
+
+        ptz_cams = read_ptz_cameras()
+        if cam_id is not None:
+            c_str = str(cam_id).strip()
+            if c_str.startswith("ptz"):
+                for idx, c in enumerate(ptz_cams):
+                    if str(c.get("id")) == c_str or c_str == f"ptz{idx}":
+                        if c.get("ip") and str(c.get("ip")).strip():
+                            return str(c.get("ip")).strip()
+                        m = re.search(r'rtsp://(?:[^@]+@)?([^:/]+)', c.get("rtsp", ""))
+                        if m and m.group(1):
+                            return m.group(1).strip()
+            else:
+                try:
+                    streams = read_streams_metadata()
+                    for s in streams:
+                        if str(s.get("id")) == c_str:
+                            if s.get("device_ip") and str(s.get("device_ip")).strip():
+                                return str(s.get("device_ip")).strip()
+                            m = re.search(r'rtsp://(?:[^@]+@)?([^:/]+)', s.get("rtsp", ""))
+                            if m and m.group(1) and m.group(1) not in ["localhost", "127.0.0.1"]:
+                                return m.group(1).strip()
+                except Exception:
+                    pass
+
+            for idx, c in enumerate(ptz_cams):
+                if str(c.get("id")) == c_str or c_str in [f"ptz{idx}", str(idx)]:
+                    if c.get("ip") and str(c.get("ip")).strip():
+                        return str(c.get("ip")).strip()
+                    m = re.search(r'rtsp://(?:[^@]+@)?([^:/]+)', c.get("rtsp", ""))
+                    if m and m.group(1):
+                        return m.group(1).strip()
+
+        # Pick first configured PTZ camera
+        for c in ptz_cams:
+            if c.get("ip") and str(c.get("ip")).strip():
+                return str(c.get("ip")).strip()
+            m = re.search(r'rtsp://(?:[^@]+@)?([^:/]+)', c.get("rtsp", ""))
+            if m and m.group(1):
+                return m.group(1).strip()
+
+        # Pick first configured stream
+        try:
+            streams = read_streams_metadata()
+            for s in streams:
+                if s.get("device_ip") and str(s.get("device_ip")).strip():
+                    return str(s.get("device_ip")).strip()
+                m = re.search(r'rtsp://(?:[^@]+@)?([^:/]+)', s.get("rtsp", ""))
+                if m and m.group(1) and m.group(1) not in ["localhost", "127.0.0.1"]:
+                    return m.group(1).strip()
+        except Exception:
+            pass
+
+        env_ip = os.environ.get("DEFAULT_CAMERA_IP", os.environ.get("DEFAULT_PTZ_IP", "")).strip()
+        if env_ip:
+            return env_ip
+
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            return local_ip
+        except Exception:
+            return "127.0.0.1"
+
+    def get_ptz_client_for_camera(ip=None, port=80, user="admin", password=""):
+        if not ip:
+            ip = resolve_camera_ip()
         port_val = int(port) if port else 80
         if port_val == 8888:
             port_val = 80
@@ -4206,9 +4292,13 @@ try:
         if match:
             user = match.group(1) or "admin"
             pwd = match.group(2) or ""
-            ip = match.group(3) or "192.168.96.30"
-            return {"ip": ip, "username": user, "password": pwd, "port": 80, "rtsp": rtsp_url}
-        return {"ip": "192.168.96.30", "username": "admin", "password": "", "port": 80, "rtsp": rtsp_url}
+            ip = match.group(3) or ""
+            port = int(match.group(4)) if match.group(4) else 80
+            if not ip:
+                ip = resolve_camera_ip(rtsp_hint=rtsp_url)
+            return {"ip": ip, "username": user, "password": pwd, "port": port, "rtsp": rtsp_url}
+        resolved = resolve_camera_ip(rtsp_hint=rtsp_url)
+        return {"ip": resolved, "username": "admin", "password": "", "port": 80, "rtsp": rtsp_url}
 
     @app.get("/api/ptz/cameras")
     def get_ptz_cameras_api():
@@ -4300,17 +4390,26 @@ try:
     @app.post("/api/ptz/cameras/start-stream")
     def start_ptz_stream_api(d: dict = Body(default={})):
         cid = d.get("cid", "ptz0")
-        rtsp = normalize_ptz_rtsp(d.get("rtsp", "rtsp://admin:@192.168.96.30:554/ch0_0.264"))
+        rtsp = (d.get("rtsp") or "").strip()
+        if not rtsp:
+            ptz_cams = read_ptz_cameras()
+            for idx, c in enumerate(ptz_cams):
+                if str(c.get("id")) == str(cid) or str(idx) == str(cid) or f"ptz{idx}" == str(cid):
+                    rtsp = (c.get("rtsp") or "").strip()
+                    break
+            if not rtsp and ptz_cams:
+                rtsp = (ptz_cams[0].get("rtsp") or "").strip()
+        rtsp = normalize_ptz_rtsp(rtsp)
         if rtsp:
             start_raw_stream(cid, rtsp)
             return {"status": "started", "hls_raw": f"/hls/stream{cid}_raw/playlist.m3u8"}
-        raise HTTPException(status_code=400, detail="Missing RTSP URL")
+        raise HTTPException(status_code=400, detail="Missing RTSP URL and no configured camera found")
 
     @app.post("/api/ptz/move")
     def api_ptz_move(d: dict = Body(default={})):
         direction = d.get("direction", "up")
         speed = float(d.get("speed", 0.5))
-        ip = d.get("ip", "192.168.96.30")
+        ip = resolve_camera_ip(d.get("ip"), d.get("cid") or d.get("cam_id"))
         port = int(d.get("port", 80))
         if port == 8888: port = 80
         user = d.get("username", "admin")
@@ -4335,7 +4434,7 @@ try:
         direction = d.get("direction", "up")
         speed = float(d.get("speed", 0.5))
         duration = float(d.get("duration", 0.35))
-        ip = d.get("ip", "192.168.96.30")
+        ip = resolve_camera_ip(d.get("ip"), d.get("cid") or d.get("cam_id"))
         port = int(d.get("port", 80))
         if port == 8888: port = 80
         user = d.get("username", "admin")
@@ -4357,7 +4456,7 @@ try:
 
     @app.post("/api/ptz/stop")
     def api_ptz_stop(d: dict = Body(default={})):
-        ip = d.get("ip", "192.168.96.30")
+        ip = resolve_camera_ip(d.get("ip"), d.get("cid") or d.get("cam_id"))
         port = int(d.get("port", 80))
         if port == 8888: port = 80
         user = d.get("username", "admin")
@@ -4381,7 +4480,7 @@ try:
     async def api_ptz_zoom(d: dict = Body(default={})):
         direction = str(d.get("direction", d.get("position", "in"))).lower()
         pos = "ZoomIn" if direction in ["in", "zoomin", "zoom_in", "+"] else "ZoomOut"
-        ip = d.get("ip", d.get("device_ip", "192.168.96.30"))
+        ip = resolve_camera_ip(d.get("ip") or d.get("device_ip"), d.get("cid") or d.get("cam_id"))
         port = int(d.get("port", d.get("onvif_port", 80)))
         if port == 8888: port = 80
         user = d.get("username", d.get("onvif_username", "admin"))
@@ -4403,7 +4502,7 @@ try:
         direction = str(d.get("direction", "in")).lower()
         speed = float(d.get("speed", 0.5))
         duration = float(d.get("duration", 0.35))
-        ip = d.get("ip", "192.168.96.30")
+        ip = resolve_camera_ip(d.get("ip"), d.get("cid") or d.get("cam_id"))
         port = int(d.get("port", 80))
         if port == 8888: port = 80
         user = d.get("username", "admin")
@@ -4419,13 +4518,15 @@ try:
             return client.zoom_step(direction, speed, duration)
 
     @app.get("/api/ptz/status")
-    def api_ptz_status(ip: str = "192.168.96.30", port: int = 80, username: str = "admin", password: str = ""):
+    def api_ptz_status(ip: Optional[str] = None, port: int = 80, username: str = "admin", password: str = "", cid: Optional[str] = None):
+        ip = resolve_camera_ip(ip, cid)
         if port == 8888: port = 80
         client = get_ptz_client_for_camera(ip, port, username, password)
         return client.get_status()
 
     @app.get("/api/ptz/presets")
-    def api_ptz_presets(ip: str = "192.168.96.30", port: int = 80, username: str = "admin", password: str = ""):
+    def api_ptz_presets(ip: Optional[str] = None, port: int = 80, username: str = "admin", password: str = "", cid: Optional[str] = None):
+        ip = resolve_camera_ip(ip, cid)
         if port == 8888: port = 80
         client = get_ptz_client_for_camera(ip, port, username, password)
         return client.get_presets()
@@ -4434,7 +4535,7 @@ try:
     def api_ptz_goto_preset(d: dict = Body(default={})):
         preset_token = d.get("preset_token", "1")
         speed = float(d.get("speed", 1.0))
-        ip = d.get("ip", "192.168.96.30")
+        ip = resolve_camera_ip(d.get("ip"), d.get("cid") or d.get("cam_id"))
         port = int(d.get("port", 80))
         if port == 8888: port = 80
         user = d.get("username", "admin")
@@ -4445,7 +4546,7 @@ try:
     @app.post("/api/ptz/presets/set")
     def api_ptz_set_preset(d: dict = Body(default={})):
         name = d.get("preset_name", "Preset")
-        ip = d.get("ip", "192.168.96.30")
+        ip = resolve_camera_ip(d.get("ip"), d.get("cid") or d.get("cam_id"))
         port = int(d.get("port", 80))
         if port == 8888: port = 80
         user = d.get("username", "admin")
@@ -4454,20 +4555,23 @@ try:
         return client.set_preset(name)
 
     @app.delete("/api/ptz/presets/{token}")
-    def api_ptz_delete_preset(token: str, ip: str = "192.168.96.30", port: int = 80, username: str = "admin", password: str = ""):
+    def api_ptz_delete_preset(token: str, ip: Optional[str] = None, port: int = 80, username: str = "admin", password: str = "", cid: Optional[str] = None):
+        ip = resolve_camera_ip(ip, cid)
         if port == 8888: port = 80
         client = get_ptz_client_for_camera(ip, port, username, password)
         return client.remove_preset(token)
 
     @app.get("/api/ptz/streams")
-    def api_ptz_streams(ip: str = "192.168.96.30", port: int = 80, username: str = "admin", password: str = ""):
+    def api_ptz_streams(ip: Optional[str] = None, port: int = 80, username: str = "admin", password: str = "", cid: Optional[str] = None):
         """Dynamically retrieves Main Stream and Sub Stream RTSP URLs via ONVIF."""
+        ip = resolve_camera_ip(ip, cid)
         if port == 8888: port = 80
         client = get_ptz_client_for_camera(ip, port, username, password)
         return client.get_stream_uris()
 
     @app.get("/api/ptz/info")
-    def api_ptz_info(ip: str = "192.168.96.30", port: int = 80, username: str = "admin", password: str = ""):
+    def api_ptz_info(ip: Optional[str] = None, port: int = 80, username: str = "admin", password: str = "", cid: Optional[str] = None):
+        ip = resolve_camera_ip(ip, cid)
         if port == 8888: port = 80
         client = get_ptz_client_for_camera(ip, port, username, password)
         return {

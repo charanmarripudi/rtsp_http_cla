@@ -251,14 +251,14 @@
 
     <header>
         <h1>Real-Time RTSP Camera Dashboard (Full 8-Way PTZ)</h1>
-        <p class="subtitle">Streaming Live: rtsp://admin:@192.168.96.30:554/ch0_0.264</p>
+        <p class="subtitle" id="streamSubtitle">Streaming Live Camera</p>
     </header>
 
     <div class="dashboard-grid">
         <!-- Live Video Stream Viewport -->
         <div class="video-card">
             <div class="video-viewport" id="videoViewport">
-                <div class="osd-badge">● REAL-TIME LIVE RTSP | 192.168.96.30</div>
+                <div class="osd-badge" id="osdBadge">● REAL-TIME LIVE RTSP</div>
                 <video id="streamFrame" autoplay muted playsinline></video>
                 <div class="zoom-badge" id="zoomBadge">1.00X</div>
             </div>
@@ -309,7 +309,15 @@
         const MIN_ZOOM = 1.0;
 
         const API_BASE = "/devices";
-        const CAMERA_IP = "192.168.96.30";
+        const urlParams = new URLSearchParams(window.location.search);
+        const CAMERA_IP = urlParams.get("ip") || window.location.hostname || "127.0.0.1";
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const subtitleEl = document.getElementById("streamSubtitle");
+            if (subtitleEl) subtitleEl.textContent = `Streaming Live: ${CAMERA_IP}`;
+            const badgeEl = document.getElementById("osdBadge");
+            if (badgeEl) badgeEl.textContent = `● REAL-TIME LIVE RTSP | ${CAMERA_IP}`;
+        });
 
         function logStatus(msg) {
             const logEl = document.getElementById("statusLog");

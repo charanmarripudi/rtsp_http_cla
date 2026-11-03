@@ -9,8 +9,9 @@
     "model_configs": {
       "hansung_ppe_violations.pt": {
         "enabled_classes": [
-          "NO-Safety Vest",
-          "No-Gloves"
+          "NO-Hardhat",
+          "NO-Mask",
+          "NO-Safety Vest"
         ],
         "class_configs": {
           "NO-Mask": {
@@ -24,21 +25,56 @@
           "NO-Safety Vest": {
             "conf": 0.4,
             "iou": 0.45
+          },
+          "NO-Hardhat": {
+            "conf": 0.4,
+            "iou": 0.45
           }
         }
       },
-      "hansung_ppe_violations": {
+      "yolov8n.pt": {
         "enabled_classes": [
-          "NO-Safety Vest",
-          "No-Gloves"
+          "person"
         ],
         "class_configs": {
-          "NO-Safety Vest": {
+          "person": {
+            "conf": 0.4,
+            "iou": 0.45,
+            "crowd_threshold": 2
+          }
+        },
+        "crowd_threshold": 2
+      },
+      "yolov8n": {
+        "class_configs": {
+          "person": {
+            "conf": 0.4,
+            "iou": 0.45,
+            "crowd_threshold": 2
+          }
+        },
+        "crowd_threshold": 2,
+        "enabled_classes": [
+          "person"
+        ]
+      },
+      "hansung_ppe_violations": {
+        "enabled_classes": [
+          "NO-Hardhat",
+          "NO-Mask",
+          "NO-Safety Vest"
+        ],
+        "class_configs": {
+          "NO-Hardhat": {
             "conf": 0.4,
             "iou": 0.45
           },
-          "No-Gloves": {
-            "conf": 0.18,
+          "NO-Mask": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "NO-Safety Vest": {
+            "conf": 0.4,
             "iou": 0.45
           }
         }

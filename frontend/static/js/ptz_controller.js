@@ -73,7 +73,7 @@
       div.innerHTML = `
         <div style="flex:2; display:flex; flex-direction:column; gap:2px;">
           <label style="font-size:0.68rem; color:var(--muted);">RTSP Stream URL</label>
-          <input type="text" class="ptz-rtsp-input" data-index="${idx}" value="${escapeHtml(cam.rtsp || '')}" placeholder="rtsp://admin:@192.168.96.30:554/ch0_0.264" style="background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; font-size:0.78rem; font-family:var(--mono);" />
+          <input type="text" class="ptz-rtsp-input" data-index="${idx}" value="${escapeHtml(cam.rtsp || '')}" placeholder="rtsp://admin:password@camera-ip:554/stream1" style="background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; font-size:0.78rem; font-family:var(--mono);" />
         </div>
         <div style="flex:1; display:flex; flex-direction:column; gap:2px;">
           <label style="font-size:0.68rem; color:var(--muted);">Label</label>
@@ -151,7 +151,7 @@
     select.innerHTML = ptzCameras
       .map(
         (cam, idx) => `
-      <option value="${idx}">${escapeHtml(cam.label || "PTZ Camera " + (idx + 1))} (${cam.ip || "192.168.96.30"})</option>
+      <option value="${idx}">${escapeHtml(cam.label || "PTZ Camera " + (idx + 1))} (${cam.ip || (cam.rtsp ? (cam.rtsp.match(/@([^:/]+)/) || [])[1] : '') || "Configured"})</option>
     `
       )
       .join("");
@@ -671,13 +671,12 @@
 
   async function ptzZoom(direction) {
     if (!activePtzCamera) {
-      activePtzCamera = (ptzCameras && ptzCameras.length > 0) ? ptzCameras[0] : {
-        ip: "192.168.96.30",
-        port: 80,
-        username: "admin",
-        password: "",
-        rtsp: "rtsp://admin:@192.168.96.30:554/ch0_0.264"
-      };
+      if (ptzCameras && ptzCameras.length > 0) {
+        activePtzCamera = ptzCameras[0];
+      } else {
+        showStatusToast("Please configure or select a PTZ camera first");
+        return;
+      }
     }
     showStatusToast(`Zoom ${direction.toUpperCase()}...`);
 
