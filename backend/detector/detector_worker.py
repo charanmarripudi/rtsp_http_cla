@@ -106,8 +106,8 @@ YOLO_CACHE = {}
 # ------------------------------------------------------------------------------
 # TUNABLE KNOBS
 # ------------------------------------------------------------------------------
-# Shorter track age (1.0s) ensures snappy box movement that tracks moving people cleanly
-TRACK_MAX_AGE_S = 1.0
+# Track age (2.0s) prevents flickering and keeps valid detections stably rendered on live video
+TRACK_MAX_AGE_S = 2.0
 
 # 0.0 EMA gives 100% instant weight to fresh coordinates so boxes lock tightly to moving objects with zero lag
 BOX_EMA_ALPHA = 0.0
