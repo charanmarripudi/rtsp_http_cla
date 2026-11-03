@@ -532,6 +532,7 @@ class LocationDashboard {
                         const cls = card.getAttribute("data-class");
                         const cSlider = card.querySelector(".model-conf-slider");
                         const iSlider = card.querySelector(".model-iou-slider");
+                        const crSlider = card.querySelector(".model-crowd-thresh-slider");
                         if (mName && cSlider && iSlider) {
                             const key = String(item.id !== undefined ? item.id : idx);
                             const assignedForCam = this.cameraModels[key] || [];
@@ -544,6 +545,7 @@ class LocationDashboard {
 
                             const cVal = parseFloat(cSlider.value);
                             const iVal = parseFloat(iSlider.value);
+                            let crVal = crSlider ? parseInt(crSlider.value, 10) : undefined;
 
                             const origClasses = (modelConfigs[normModel] && modelConfigs[normModel].enabled_classes) ||
                                 (modelConfigs[cleanName] && modelConfigs[cleanName].enabled_classes) || [];
@@ -552,16 +554,34 @@ class LocationDashboard {
                                 modelConfigs[normModel] = modelConfigs[normModel] || {};
                                 modelConfigs[normModel].enabled_classes = origClasses;
                                 modelConfigs[normModel].class_configs = modelConfigs[normModel].class_configs || {};
-                                modelConfigs[normModel].class_configs[cls] = { conf: cVal, iou: iVal };
+
+                                const existingClassCfg = (modelConfigs[normModel].class_configs && modelConfigs[normModel].class_configs[cls]) || {};
+                                if ((crVal === undefined || isNaN(crVal)) && existingClassCfg.crowd_threshold !== undefined) {
+                                    crVal = existingClassCfg.crowd_threshold;
+                                }
+
+                                const clsPayload = { conf: cVal, iou: iVal };
+                                if (crVal !== undefined && !isNaN(crVal)) {
+                                    clsPayload.crowd_threshold = crVal;
+                                    modelConfigs[normModel].crowd_threshold = crVal;
+                                }
+                                modelConfigs[normModel].class_configs[cls] = Object.assign({}, existingClassCfg, clsPayload);
 
                                 modelConfigs[cleanName] = modelConfigs[cleanName] || {};
                                 modelConfigs[cleanName].enabled_classes = origClasses;
                                 modelConfigs[cleanName].class_configs = modelConfigs[cleanName].class_configs || {};
-                                modelConfigs[cleanName].class_configs[cls] = { conf: cVal, iou: iVal };
+                                modelConfigs[cleanName].class_configs[cls] = Object.assign({}, existingClassCfg, clsPayload);
+                                if (crVal !== undefined && !isNaN(crVal)) {
+                                    modelConfigs[cleanName].crowd_threshold = crVal;
+                                }
                             } else {
                                 const existingPt = modelConfigs[normModel] || {};
-                                modelConfigs[normModel] = Object.assign({}, existingPt, { conf: cVal, iou: iVal, enabled_classes: origClasses });
-                                modelConfigs[cleanName] = Object.assign({}, existingPt, { conf: cVal, iou: iVal, enabled_classes: origClasses });
+                                const ptPayload = { conf: cVal, iou: iVal, enabled_classes: origClasses };
+                                if (crVal !== undefined && !isNaN(crVal)) {
+                                    ptPayload.crowd_threshold = crVal;
+                                }
+                                modelConfigs[normModel] = Object.assign({}, existingPt, ptPayload);
+                                modelConfigs[cleanName] = Object.assign({}, existingPt, ptPayload);
                             }
                         }
                     });
@@ -709,6 +729,21 @@ class LocationDashboard {
             const confSlider = camBox.querySelector(".conf-slider");
             const iouSlider = camBox.querySelector(".iou-slider");
             if (confSlider) {
+                confSlider.setAttribute("tabindex", "0");
+                confSlider.addEventListener("pointerdown", () => confSlider.focus());
+                confSlider.addEventListener("keydown", (e) => {
+                    if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+                        e.preventDefault();
+                        const next = Math.max(0.05, Math.round((parseFloat(confSlider.value) - 0.01) * 100) / 100);
+                        confSlider.value = next;
+                        confSlider.dispatchEvent(new Event("input", { bubbles: true }));
+                    } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+                        e.preventDefault();
+                        const next = Math.min(0.95, Math.round((parseFloat(confSlider.value) + 0.01) * 100) / 100);
+                        confSlider.value = next;
+                        confSlider.dispatchEvent(new Event("input", { bubbles: true }));
+                    }
+                });
                 confSlider.addEventListener("input", e => {
                     stream.conf = parseFloat(e.target.value);
                     const valSpan = camBox.querySelector(".conf-val");
@@ -716,6 +751,21 @@ class LocationDashboard {
                 });
             }
             if (iouSlider) {
+                iouSlider.setAttribute("tabindex", "0");
+                iouSlider.addEventListener("pointerdown", () => iouSlider.focus());
+                iouSlider.addEventListener("keydown", (e) => {
+                    if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+                        e.preventDefault();
+                        const next = Math.max(0.05, Math.round((parseFloat(iouSlider.value) - 0.01) * 100) / 100);
+                        iouSlider.value = next;
+                        iouSlider.dispatchEvent(new Event("input", { bubbles: true }));
+                    } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+                        e.preventDefault();
+                        const next = Math.min(0.95, Math.round((parseFloat(iouSlider.value) + 0.01) * 100) / 100);
+                        iouSlider.value = next;
+                        iouSlider.dispatchEvent(new Event("input", { bubbles: true }));
+                    }
+                });
                 iouSlider.addEventListener("input", e => {
                     stream.iou = parseFloat(e.target.value);
                     const valSpan = camBox.querySelector(".iou-val");

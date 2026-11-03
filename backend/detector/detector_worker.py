@@ -578,10 +578,12 @@ class DetectorWorker:
         if getattr(self, "crowd_engine", None):
             cfg = get_config_for_model(self._model_configs, "yolov8n.pt") if self._model_configs else {}
             class_cfg = cfg.get("class_configs", {}).get("person", {}) if isinstance(cfg, dict) else {}
-            new_thresh = class_cfg.get("crowd_threshold") or cfg.get("crowd_threshold")
-            if new_thresh is not None:
+            val = class_cfg.get("crowd_threshold")
+            if val is None:
+                val = cfg.get("crowd_threshold")
+            if val is not None:
                 try:
-                    self.crowd_engine.crowd_threshold = int(new_thresh)
+                    self.crowd_engine.crowd_threshold = max(1, int(val))
                 except Exception:
                     pass
         print(f"[WORKER-ROI-UPDATE] Camera {getattr(self, 'cam_id', '?')} model_configs updated, roi_polygon={self.roi_polygon}", flush=True)
@@ -1651,16 +1653,20 @@ class DetectorWorker:
             # Check Crowd Gathering Alert in ROI if person class monitored
             cfg = get_config_for_model(self.model_configs, "yolov8n.pt") if self.model_configs else {}
             class_cfg = cfg.get("class_configs", {}).get("person", {}) if isinstance(cfg, dict) else {}
-            crowd_thresh = class_cfg.get("crowd_threshold") or cfg.get("crowd_threshold")
-            if crowd_thresh is not None:
-                try: crowd_thresh = int(crowd_thresh)
+            val = class_cfg.get("crowd_threshold")
+            if val is None:
+                val = cfg.get("crowd_threshold")
+            if val is not None:
+                try: crowd_thresh = int(val)
                 except: crowd_thresh = None
+            else:
+                crowd_thresh = None
 
-            # Crowd limit: Must be at least 2 people to be a crowd
-            if crowd_thresh is not None and crowd_thresh < 2:
-                crowd_thresh = 2
+            # Crowd limit: Minimum 1 person in ROI
+            if crowd_thresh is not None and crowd_thresh < 1:
+                crowd_thresh = 1
 
-            if crowd_thresh and crowd_thresh >= 2:
+            if crowd_thresh and crowd_thresh >= 1:
                 person_boxes_in_roi = 0
                 for b in display_boxes:
                     if b.get('cls', '').lower() == 'person':

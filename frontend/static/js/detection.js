@@ -222,6 +222,80 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         playHLS(video, meta.hls_raw, i);
     }
 
+    // Interactive Stepper & Keyboard Arrow Handler for Conf, IoU, and Crowd ROI Limit Sliders
+    function setupInteractiveSlider(row, slider, span, isCrowd, onChange) {
+        if (!slider) return;
+
+        const step = parseFloat(slider.step) || (isCrowd ? 1 : 0.01);
+        const min = !isNaN(parseFloat(slider.min)) ? parseFloat(slider.min) : (isCrowd ? 1 : 0.05);
+        const max = !isNaN(parseFloat(slider.max)) ? parseFloat(slider.max) : (isCrowd ? 20 : 0.95);
+
+        const updateDisplay = (val) => {
+            if (!span) return;
+            if (isCrowd) {
+                const intVal = parseInt(val, 10);
+                span.textContent = `${intVal} ${intVal === 1 ? 'person' : 'people'}`;
+            } else {
+                span.textContent = parseFloat(val).toFixed(2);
+            }
+        };
+
+        const adjust = (direction) => {
+            let cur = isCrowd ? parseInt(slider.value, 10) : parseFloat(slider.value);
+            if (isNaN(cur)) cur = isCrowd ? 1 : 0.40;
+            let next;
+            if (direction > 0) {
+                next = Math.min(max, cur + step);
+            } else {
+                next = Math.max(min, cur - step);
+            }
+            if (isCrowd) {
+                next = Math.round(next);
+            } else {
+                next = Math.round(next * 100) / 100;
+            }
+            slider.value = next;
+            updateDisplay(next);
+            if (onChange) onChange();
+            slider.dispatchEvent(new Event("input", { bubbles: true }));
+            try { slider.focus(); } catch (_) {}
+        };
+
+        slider.setAttribute("tabindex", "0");
+        slider.addEventListener("pointerdown", () => {
+            try { slider.focus(); } catch (_) {}
+        });
+
+        slider.addEventListener("keydown", (e) => {
+            if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+                e.preventDefault();
+                adjust(-1);
+            } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+                e.preventDefault();
+                adjust(1);
+            }
+        });
+
+        if (row) {
+            const btnDown = row.querySelector(".slider-step-down");
+            const btnUp = row.querySelector(".slider-step-up");
+            if (btnDown) {
+                btnDown.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    adjust(-1);
+                });
+            }
+            if (btnUp) {
+                btnUp.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    adjust(1);
+                });
+            }
+        }
+    }
+
     // Render Assigned Models with Per-Model Conf & IoU Sliders (Matching UI Screenshot, Smooth Dragging!)
     const chipsList = box.querySelector(".assigned-chips-list");
     let thresholdSyncTimer = null;
@@ -268,7 +342,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             const cVal = cCfg.conf !== undefined ? parseFloat(cCfg.conf).toFixed(2) : parseFloat(mCfg.conf || meta.conf || 0.40).toFixed(2);
                             const iVal = cCfg.iou !== undefined ? parseFloat(cCfg.iou).toFixed(2) : parseFloat(mCfg.iou || meta.iou || 0.45).toFixed(2);
                             const isPerson = (cls.toLowerCase() === "person");
-                            const crowdThreshVal = parseInt(cCfg.crowd_threshold || mCfg.crowd_threshold || 4);
+                            const crowdThreshVal = parseInt(cCfg.crowd_threshold !== undefined ? cCfg.crowd_threshold : (mCfg.crowd_threshold !== undefined ? mCfg.crowd_threshold : 1), 10);
 
                             const card = document.createElement("div");
                             card.className = "model-card-box";
@@ -281,9 +355,40 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                     <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${cleanName} - ${cls}</span>
                                 </div>
                                 <div class="thresholds compact" style="display:flex;gap:12px;flex-wrap:wrap;">
-                                    <div class="thresh-row" style="flex:1;min-width:110px;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
-                                    <div class="thresh-row" style="flex:1;min-width:110px;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
-                                    ${isPerson ? `<div class="thresh-row" style="flex:1;min-width:130px;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Crowd ROI Limit <span class="model-crowd-thresh-val" style="color:#38bdf8;font-weight:700;">${crowdThreshVal} ${crowdThreshVal === 1 ? 'person' : 'people'}</span></label><input class="model-crowd-thresh-slider" type="range" min="1" max="20" step="1" value="${crowdThreshVal}" style="accent-color:#38bdf8;width:100%;"></div>` : ''}
+                                    <div class="thresh-row thresh-row-conf" style="flex:1;min-width:110px;">
+                                        <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.7rem;color:var(--muted);user-select:none;">
+                                            <span>Conf</span>
+                                            <span style="display:inline-flex;align-items:center;gap:4px;">
+                                                <button type="button" class="slider-step-down" style="background:rgba(255,255,255,0.06);border:1px solid rgba(0,255,170,0.3);color:#00ffaa;border-radius:3px;padding:0 5px;font-size:0.65rem;cursor:pointer;line-height:1.2;font-weight:bold;user-select:none;" title="Decrease (Left Arrow)">◀</button>
+                                                <span class="model-conf-val" style="color:#00ffaa;font-weight:700;min-width:28px;text-align:center;">${cVal}</span>
+                                                <button type="button" class="slider-step-up" style="background:rgba(255,255,255,0.06);border:1px solid rgba(0,255,170,0.3);color:#00ffaa;border-radius:3px;padding:0 5px;font-size:0.65rem;cursor:pointer;line-height:1.2;font-weight:bold;user-select:none;" title="Increase (Right Arrow)">▶</button>
+                                            </span>
+                                        </label>
+                                        <input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}" tabindex="0" style="width:100%;">
+                                    </div>
+                                    <div class="thresh-row thresh-row-iou" style="flex:1;min-width:110px;">
+                                        <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.7rem;color:var(--muted);user-select:none;">
+                                            <span>IoU</span>
+                                            <span style="display:inline-flex;align-items:center;gap:4px;">
+                                                <button type="button" class="slider-step-down" style="background:rgba(255,255,255,0.06);border:1px solid rgba(0,255,170,0.3);color:#00ffaa;border-radius:3px;padding:0 5px;font-size:0.65rem;cursor:pointer;line-height:1.2;font-weight:bold;user-select:none;" title="Decrease (Left Arrow)">◀</button>
+                                                <span class="model-iou-val" style="color:#00ffaa;font-weight:700;min-width:28px;text-align:center;">${iVal}</span>
+                                                <button type="button" class="slider-step-up" style="background:rgba(255,255,255,0.06);border:1px solid rgba(0,255,170,0.3);color:#00ffaa;border-radius:3px;padding:0 5px;font-size:0.65rem;cursor:pointer;line-height:1.2;font-weight:bold;user-select:none;" title="Increase (Right Arrow)">▶</button>
+                                            </span>
+                                        </label>
+                                        <input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}" tabindex="0" style="width:100%;">
+                                    </div>
+                                    ${isPerson ? `
+                                    <div class="thresh-row thresh-row-crowd" style="flex:1;min-width:145px;">
+                                        <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.7rem;color:var(--muted);user-select:none;">
+                                            <span>Crowd ROI Limit</span>
+                                            <span style="display:inline-flex;align-items:center;gap:4px;">
+                                                <button type="button" class="slider-step-down" style="background:rgba(255,255,255,0.06);border:1px solid rgba(56,189,248,0.4);color:#38bdf8;border-radius:3px;padding:0 5px;font-size:0.65rem;cursor:pointer;line-height:1.2;font-weight:bold;user-select:none;" title="Decrease (Left Arrow)">◀</button>
+                                                <span class="model-crowd-thresh-val" style="color:#38bdf8;font-weight:700;min-width:55px;text-align:center;">${crowdThreshVal} ${crowdThreshVal === 1 ? 'person' : 'people'}</span>
+                                                <button type="button" class="slider-step-up" style="background:rgba(255,255,255,0.06);border:1px solid rgba(56,189,248,0.4);color:#38bdf8;border-radius:3px;padding:0 5px;font-size:0.65rem;cursor:pointer;line-height:1.2;font-weight:bold;user-select:none;" title="Increase (Right Arrow)">▶</button>
+                                            </span>
+                                        </label>
+                                        <input class="model-crowd-thresh-slider" type="range" min="1" max="20" step="1" value="${crowdThreshVal}" style="accent-color:#38bdf8;width:100%;" tabindex="0">
+                                    </div>` : ''}
                                 </div>`;
                             chipsList.appendChild(card);
 
@@ -302,12 +407,20 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                     meta.model_configs = meta.model_configs || {};
                                     meta.model_configs[normM] = meta.model_configs[normM] || {};
                                     meta.model_configs[normM].class_configs = meta.model_configs[normM].class_configs || {};
-                                    meta.model_configs[normM].class_configs[cls] = { conf: cNum, iou: iNum };
-
+                                    
+                                    const clsCfg = { conf: cNum, iou: iNum };
                                     if (crSlider) {
                                         const crNum = parseInt(crSlider.value, 10);
-                                        meta.model_configs[normM].class_configs[cls].crowd_threshold = crNum;
+                                        clsCfg.crowd_threshold = crNum;
                                         meta.model_configs[normM].crowd_threshold = crNum;
+                                    }
+                                    meta.model_configs[normM].class_configs[cls] = Object.assign({}, meta.model_configs[normM].class_configs[cls] || {}, clsCfg);
+
+                                    meta.model_configs[cleanName] = meta.model_configs[cleanName] || {};
+                                    meta.model_configs[cleanName].class_configs = meta.model_configs[cleanName].class_configs || {};
+                                    meta.model_configs[cleanName].class_configs[cls] = Object.assign({}, meta.model_configs[cleanName].class_configs[cls] || {}, clsCfg);
+                                    if (crSlider) {
+                                        meta.model_configs[cleanName].crowd_threshold = parseInt(crSlider.value, 10);
                                     }
 
                                     if (window.roiDrawStates && window.roiDrawStates[i] && window.roiDrawStates[i].vertices && window.roiDrawStates[i].vertices.length === 2) {
@@ -341,6 +454,16 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                     syncClassThreshold();
                                 };
                             }
+
+                            const cRow = card.querySelector(".thresh-row-conf") || (cSlider && cSlider.closest(".thresh-row"));
+                            const iRow = card.querySelector(".thresh-row-iou") || (iSlider && iSlider.closest(".thresh-row"));
+                            const crRow = card.querySelector(".thresh-row-crowd") || (crSlider && crSlider.closest(".thresh-row"));
+
+                            setupInteractiveSlider(cRow, cSlider, cSpan, false, syncClassThreshold);
+                            setupInteractiveSlider(iRow, iSlider, iSpan, false, syncClassThreshold);
+                            if (crSlider) {
+                                setupInteractiveSlider(crRow, crSlider, crSpan, true, syncClassThreshold);
+                            }
                         });
                 } else {
                     const cVal = mCfg.conf !== undefined ? parseFloat(mCfg.conf).toFixed(2) : (meta.conf !== undefined ? parseFloat(meta.conf).toFixed(2) : "0.40");
@@ -354,9 +477,29 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                         <div class="model-chip-header" style="margin-bottom:6px;">
                             <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${cleanName}</span>
                         </div>
-                        <div class="thresholds compact" style="display:flex;gap:12px;">
-                            <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">Conf <span class="model-conf-val" style="color:#00ffaa;font-weight:700;">${cVal}</span></label><input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}"></div>
-                            <div class="thresh-row" style="flex:1;"><label style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);">IoU <span class="model-iou-val" style="color:#00ffaa;font-weight:700;">${iVal}</span></label><input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}"></div>
+                        <div class="thresholds compact" style="display:flex;gap:12px;flex-wrap:wrap;">
+                            <div class="thresh-row thresh-row-conf" style="flex:1;min-width:110px;">
+                                <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.7rem;color:var(--muted);user-select:none;">
+                                    <span>Conf</span>
+                                    <span style="display:inline-flex;align-items:center;gap:4px;">
+                                        <button type="button" class="slider-step-down" style="background:rgba(255,255,255,0.06);border:1px solid rgba(0,255,170,0.3);color:#00ffaa;border-radius:3px;padding:0 5px;font-size:0.65rem;cursor:pointer;line-height:1.2;font-weight:bold;user-select:none;" title="Decrease (Left Arrow)">◀</button>
+                                        <span class="model-conf-val" style="color:#00ffaa;font-weight:700;min-width:28px;text-align:center;">${cVal}</span>
+                                        <button type="button" class="slider-step-up" style="background:rgba(255,255,255,0.06);border:1px solid rgba(0,255,170,0.3);color:#00ffaa;border-radius:3px;padding:0 5px;font-size:0.65rem;cursor:pointer;line-height:1.2;font-weight:bold;user-select:none;" title="Increase (Right Arrow)">▶</button>
+                                    </span>
+                                </label>
+                                <input class="model-conf-slider" type="range" min="0.05" max="0.95" step="0.01" value="${cVal}" tabindex="0" style="width:100%;">
+                            </div>
+                            <div class="thresh-row thresh-row-iou" style="flex:1;min-width:110px;">
+                                <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.7rem;color:var(--muted);user-select:none;">
+                                    <span>IoU</span>
+                                    <span style="display:inline-flex;align-items:center;gap:4px;">
+                                        <button type="button" class="slider-step-down" style="background:rgba(255,255,255,0.06);border:1px solid rgba(0,255,170,0.3);color:#00ffaa;border-radius:3px;padding:0 5px;font-size:0.65rem;cursor:pointer;line-height:1.2;font-weight:bold;user-select:none;" title="Decrease (Left Arrow)">◀</button>
+                                        <span class="model-iou-val" style="color:#00ffaa;font-weight:700;min-width:28px;text-align:center;">${iVal}</span>
+                                        <button type="button" class="slider-step-up" style="background:rgba(255,255,255,0.06);border:1px solid rgba(0,255,170,0.3);color:#00ffaa;border-radius:3px;padding:0 5px;font-size:0.65rem;cursor:pointer;line-height:1.2;font-weight:bold;user-select:none;" title="Increase (Right Arrow)">▶</button>
+                                    </span>
+                                </label>
+                                <input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}" tabindex="0" style="width:100%;">
+                            </div>
                         </div>`;
                     chipsList.appendChild(card);
 
@@ -373,6 +516,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             meta.model_configs = meta.model_configs || {};
                             const normM = m.endsWith(".pt") ? m : `${m}.pt`;
                             meta.model_configs[normM] = { conf: cNum, iou: iNum };
+                            meta.model_configs[cleanName] = { conf: cNum, iou: iNum };
 
                             if (window.roiDrawStates && window.roiDrawStates[i] && window.roiDrawStates[i].vertices && window.roiDrawStates[i].vertices.length === 2) {
                                 meta.model_configs.roi_polygon = window.roiDrawStates[i].vertices;
@@ -398,6 +542,11 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             syncModelThreshold();
                         };
                     }
+
+                    const cRow = card.querySelector(".thresh-row-conf") || (cSlider && cSlider.closest(".thresh-row"));
+                    const iRow = card.querySelector(".thresh-row-iou") || (iSlider && iSlider.closest(".thresh-row"));
+                    setupInteractiveSlider(cRow, cSlider, cSpan, false, syncModelThreshold);
+                    setupInteractiveSlider(iRow, iSlider, iSpan, false, syncModelThreshold);
                 }
             });
         }
@@ -443,15 +592,17 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
         }
         if (!models.length) return alert("No active models or classes assigned");
 
-        // 3. Build class-specific confidence and enabled_classes configurations
+        // 3. Build class-specific confidence, iou, and crowd_threshold configurations
         box.querySelectorAll(".model-card-box").forEach(card => {
             const mName = card.getAttribute("data-model");
             const cls = card.getAttribute("data-class");
             const cSlider = card.querySelector(".model-conf-slider");
             const iSlider = card.querySelector(".model-iou-slider");
+            const crSlider = card.querySelector(".model-crowd-thresh-slider");
             if (mName && cSlider && iSlider) {
                 const cVal = parseFloat(cSlider.value);
                 const iVal = parseFloat(iSlider.value);
+                let crNum = crSlider ? parseInt(crSlider.value, 10) : undefined;
                 const norm = mName.endsWith(".pt") ? mName : `${mName}.pt`;
                 const clean = mName.replace(".pt", "");
                 
@@ -462,15 +613,34 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                     domModelConfigs[norm] = domModelConfigs[norm] || {};
                     domModelConfigs[norm].enabled_classes = activeClasses;
                     domModelConfigs[norm].class_configs = domModelConfigs[norm].class_configs || {};
-                    domModelConfigs[norm].class_configs[cls] = { conf: cVal, iou: iVal };
+
+                    const existingClassCfg = domModelConfigs[norm].class_configs[cls] || {};
+                    if ((crNum === undefined || isNaN(crNum)) && existingClassCfg.crowd_threshold !== undefined) {
+                        crNum = existingClassCfg.crowd_threshold;
+                    }
+
+                    const clsPayload = { conf: cVal, iou: iVal };
+                    if (crNum !== undefined && !isNaN(crNum)) {
+                        clsPayload.crowd_threshold = crNum;
+                        domModelConfigs[norm].crowd_threshold = crNum;
+                    }
+                    domModelConfigs[norm].class_configs[cls] = Object.assign({}, existingClassCfg, clsPayload);
 
                     domModelConfigs[clean] = domModelConfigs[clean] || {};
                     domModelConfigs[clean].enabled_classes = activeClasses;
                     domModelConfigs[clean].class_configs = domModelConfigs[clean].class_configs || {};
-                    domModelConfigs[clean].class_configs[cls] = { conf: cVal, iou: iVal };
+                    domModelConfigs[clean].class_configs[cls] = Object.assign({}, existingClassCfg, clsPayload);
+                    if (crNum !== undefined && !isNaN(crNum)) {
+                        domModelConfigs[clean].crowd_threshold = crNum;
+                    }
                 } else {
-                    domModelConfigs[norm] = Object.assign({}, domModelConfigs[norm], { conf: cVal, iou: iVal, enabled_classes: activeClasses });
-                    domModelConfigs[clean] = Object.assign({}, domModelConfigs[clean], { conf: cVal, iou: iVal, enabled_classes: activeClasses });
+                    const existingPt = domModelConfigs[norm] || {};
+                    const ptPayload = { conf: cVal, iou: iVal, enabled_classes: activeClasses };
+                    if (crNum !== undefined && !isNaN(crNum)) {
+                        ptPayload.crowd_threshold = crNum;
+                    }
+                    domModelConfigs[norm] = Object.assign({}, existingPt, ptPayload);
+                    domModelConfigs[clean] = Object.assign({}, existingPt, ptPayload);
                 }
             }
         });
@@ -570,23 +740,28 @@ function startClientSync() {
                     const cleanM     = normM.replace(".pt", "");
                     const mCfg       = modelConfigs[normM] || modelConfigs[cleanM] || {};
 
-                    let srvConf = null, srvIou = null;
+                    let srvConf = null, srvIou = null, srvCrowd = null;
                     if (className) {
                         // Per-class config takes precedence (only sync if specifically configured)
                         const cCfg = (mCfg.class_configs && mCfg.class_configs[className]);
                         if (cCfg && cCfg.conf !== undefined) srvConf = parseFloat(cCfg.conf);
                         if (cCfg && cCfg.iou !== undefined)  srvIou  = parseFloat(cCfg.iou);
+                        if (cCfg && cCfg.crowd_threshold !== undefined) srvCrowd = parseInt(cCfg.crowd_threshold, 10);
+                        else if (mCfg.crowd_threshold !== undefined) srvCrowd = parseInt(mCfg.crowd_threshold, 10);
                     } else {
                         srvConf = mCfg.conf !== undefined ? parseFloat(mCfg.conf)
                                 : (meta.conf !== undefined ? parseFloat(meta.conf) : null);
                         srvIou  = mCfg.iou  !== undefined ? parseFloat(mCfg.iou)
                                 : (meta.iou  !== undefined ? parseFloat(meta.iou) : null);
+                        if (mCfg.crowd_threshold !== undefined) srvCrowd = parseInt(mCfg.crowd_threshold, 10);
                     }
 
                     const cSlider = card.querySelector(".model-conf-slider");
                     const iSlider = card.querySelector(".model-iou-slider");
+                    const crSlider = card.querySelector(".model-crowd-thresh-slider");
                     const cSpan   = card.querySelector(".model-conf-val");
                     const iSpan   = card.querySelector(".model-iou-val");
+                    const crSpan  = card.querySelector(".model-crowd-thresh-val");
 
                     // Only update if user is not actively dragging and value changed
                     if (cSlider && document.activeElement !== cSlider && srvConf !== null) {
@@ -599,6 +774,12 @@ function startClientSync() {
                         if (Math.abs(parseFloat(iSlider.value) - srvIou) > 0.005) {
                             iSlider.value = srvIou.toFixed(2);
                             if (iSpan) iSpan.textContent = srvIou.toFixed(2);
+                        }
+                    }
+                    if (crSlider && document.activeElement !== crSlider && srvCrowd !== null) {
+                        if (parseInt(crSlider.value, 10) !== srvCrowd) {
+                            crSlider.value = srvCrowd;
+                            if (crSpan) crSpan.textContent = `${srvCrowd} ${srvCrowd === 1 ? 'person' : 'people'}`;
                         }
                     }
                 });

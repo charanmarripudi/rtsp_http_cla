@@ -9,52 +9,16 @@
     "model_configs": {
       "hansung_ppe_violations.pt": {
         "enabled_classes": [
-          "NO-Hardhat",
-          "No-Safety-Belt"
+          "NO-Safety Vest",
+          "No-Gloves"
         ],
         "class_configs": {
-          "NO-Hardhat": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
           "NO-Mask": {
             "conf": 0.4,
             "iou": 0.45
           },
-          "NO-Safety Vest": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
           "No-Gloves": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "No-Shoes": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "No-Goggles": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "No-Safety-Belt": {
-            "conf": 0.4,
-            "iou": 0.45
-          }
-        }
-      },
-      "hansung_ppe_violations": {
-        "enabled_classes": [
-          "NO-Hardhat",
-          "No-Safety-Belt"
-        ],
-        "class_configs": {
-          "NO-Hardhat": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "No-Safety-Belt": {
-            "conf": 0.4,
+            "conf": 0.18,
             "iou": 0.45
           }
         }
