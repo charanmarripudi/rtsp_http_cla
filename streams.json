@@ -20,6 +20,26 @@
           "No-Gloves": {
             "conf": 0.18,
             "iou": 0.45
+          },
+          "NO-Safety Vest": {
+            "conf": 0.4,
+            "iou": 0.45
+          }
+        }
+      },
+      "hansung_ppe_violations": {
+        "enabled_classes": [
+          "NO-Safety Vest",
+          "No-Gloves"
+        ],
+        "class_configs": {
+          "NO-Safety Vest": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "No-Gloves": {
+            "conf": 0.18,
+            "iou": 0.45
           }
         }
       }

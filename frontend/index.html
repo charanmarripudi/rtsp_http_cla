@@ -2142,8 +2142,12 @@
           return;
         }
 
+        if (window.dashboardInstance || window.locationDashboard) {
+          return;
+        }
+
         try {
-          const r = await fetch("/api/alerts");
+          const r = await fetch(`/api/alerts?t=${Date.now()}`);
           const alerts = await r.json();
 
           const vioKpi = document.getElementById("kpi-violation-count");

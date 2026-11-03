@@ -1055,6 +1055,7 @@ class LocationDashboard {
 async function initLocationDashboard() {
     const dashboard = new LocationDashboard();
     window.dashboardInstance = dashboard;
+    window.locationDashboard = dashboard;
     await dashboard.init();
 }
 

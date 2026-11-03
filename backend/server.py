@@ -3936,19 +3936,26 @@ def is_negative_alert_string(evt: str) -> bool:
     """Filter to ensure only genuine safety violations / negative alerts are returned."""
     if not evt: return False
     e = str(evt).lower().replace("_", "-").replace(" ", "-")
+
+    # 1. Explicit violation / negative indicators ALWAYS take precedence
+    violation_indicators = [
+        "violation", "no-", "no_", "non-", "without-", "fall", "over-speed", "overspeed",
+        "fire", "smoke", "spillage", "dome-opened", "dome-open", "valve-box-open",
+        "defective", "crowd"
+    ]
+    if any(vi in e for vi in violation_indicators):
+        return True
+
+    # 2. Positive compliant detections that should not trigger violation alerts
     positive_words = [
-        "hardhat-detected", "helmet-detected", "safety-vest-detected", "vest-detected",
-        "mask-detected", "gloves-detected", "boots-detected", "shoes-detected",
-        "dome-closed", "valve-box-close", "good-tyre", "person-detected", "worker-detected", "safety-cone"
+        "hardhat", "helmet", "safety-vest", "saftey-vest", "vest",
+        "mask", "gloves", "boots", "shoes", "goggles", "glasses",
+        "dome-closed", "valve-box-close", "good-tyre", "person", "worker", "safety-cone"
     ]
     if any(pw in e for pw in positive_words):
         return False
-    violation_indicators = [
-        "no-", "no_", "non-", "without-", "fall", "violation", "over-speed", "overspeed",
-        "fire", "smoke", "spillage", "dome-opened", "valve-box-open",
-        "defective", "crowd-alert"
-    ]
-    return any(vi in e for vi in violation_indicators)
+
+    return False
 
 @app.get("/api/alerts")
 def get_alerts_json():
