@@ -954,9 +954,12 @@ class DetectorWorker:
             if m_imgsz % 32 != 0:
                 m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
 
-            filter_classes = enabled_classes if (enabled_classes is not None) else []
-            if not filter_classes and camera_selected_classes:
-                filter_classes = camera_selected_classes
+            if enabled_classes is not None:
+                filter_classes = list(enabled_classes)
+            elif camera_selected_classes:
+                filter_classes = list(camera_selected_classes)
+            else:
+                filter_classes = None
 
             effective_conf = float(m_conf) if (m_conf is not None) else float(self.conf)
             min_class_conf = effective_conf
@@ -991,10 +994,10 @@ class DetectorWorker:
                             cls_name = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
                             conf_val = float(b.conf[0].item())
                             all_raw_dets.append(f"{cls_name} {conf_val:.2f}")
-                            if not filter_classes or any(match_class(cls_name, e) for e in filter_classes):
+                            if filter_classes is None or any(match_class(cls_name, e) for e in filter_classes):
                                 mod_dets.append(f"{cls_name} {conf_val:.2f}")
 
-                print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure: {infer_ms}ms | Selected: {filter_classes if filter_classes else 'ALL'} | Filtered Match: {mod_dets if mod_dets else 'None'} | Raw YOLO Output: {all_raw_dets if all_raw_dets else 'None'} ({datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
+                print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure: {infer_ms}ms | Selected: {filter_classes if filter_classes is not None else 'ALL'} | Filtered Match: {mod_dets if mod_dets else 'None'} | Raw YOLO Output: {all_raw_dets if all_raw_dets else 'None'} ({datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
             except Exception as pred_err:
                 print(f"[PREDICT-ERR] Camera {self.cam_id} model {m_name}: {pred_err}", flush=True)
                 continue
@@ -1006,7 +1009,7 @@ class DetectorWorker:
                         cls      = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
                         conf_val = float(b.conf[0].item())
 
-                        if filter_classes:
+                        if filter_classes is not None:
                             if not any(match_class(cls, e) for e in filter_classes):
                                 continue
 
@@ -1392,7 +1395,7 @@ class DetectorWorker:
             sand_enabled = cfg.get("enabled_classes") if (cfg and isinstance(cfg, dict)) else None
 
             def is_sand_cls_enabled(target_name):
-                if not sand_enabled:
+                if sand_enabled is None:
                     return True
                 t_clean = target_name.lower().replace("-", "").replace("_", "")
                 return any(t_clean in str(e).lower().replace("-", "").replace("_", "") for e in sand_enabled)

@@ -867,7 +867,7 @@ class LocationDashboard {
                 </div>
                 <div class="model-classes-wrap" id="classes-wrap-${cameraIndex}-${this.escapeHtml(cleanM)}" style="display: ${isAssigned ? 'flex' : 'none'}; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
                     ${negClasses.length > 0 ? negClasses.map(cls => {
-                        const isChecked = isAssigned && (savedEnabledClasses.length === 0 || savedEnabledClasses.includes(cls));
+                        const isChecked = isAssigned && Array.isArray(savedEnabledClasses) && savedEnabledClasses.includes(cls);
                         return `
                         <label class="class-chip ${isChecked ? 'checked' : ''}" style="margin: 0; display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; background: ${isChecked ? 'rgba(237, 28, 36, 0.16)' : 'rgba(255, 255, 255, 0.03)'}; border: 1px solid ${isChecked ? 'var(--danger)' : 'rgba(255,255,255,0.1)'}; border-radius: 5px; font-size: 0.68rem; cursor: pointer; transition: all 0.2s;">
                             <input type="checkbox" class="class-checkbox" value="${this.escapeHtml(cls)}" data-model="${this.escapeHtml(model)}" data-camera="${cameraIndex}" ${isChecked ? "checked" : ""} style="accent-color: var(--danger); width: 13px; height: 13px; margin: 0; cursor: pointer;">
@@ -898,18 +898,22 @@ class LocationDashboard {
             }
             if (wrap) {
                 wrap.style.display = cb.checked ? "flex" : "none";
-                const classCbs = wrap.querySelectorAll(".class-checkbox");
-                classCbs.forEach(classCb => {
-                    classCb.checked = cb.checked;
-                    const chip = classCb.closest(".class-chip");
-                    if (chip) {
-                        chip.classList.toggle("checked", cb.checked);
-                        chip.style.borderColor = cb.checked ? "var(--danger)" : "rgba(255,255,255,0.1)";
-                        chip.style.background = cb.checked ? "rgba(237, 28, 36, 0.16)" : "rgba(255, 255, 255, 0.03)";
-                        const sp = chip.querySelector("span");
-                        if (sp) sp.style.color = cb.checked ? "#FFFFFF" : "var(--muted)";
-                    }
-                });
+                if (!cb.checked) {
+                    // When unchecking model, uncheck all classes under it
+                    const classCbs = wrap.querySelectorAll(".class-checkbox");
+                    classCbs.forEach(classCb => {
+                        classCb.checked = false;
+                        const chip = classCb.closest(".class-chip");
+                        if (chip) {
+                            chip.classList.remove("checked");
+                            chip.style.borderColor = "rgba(255,255,255,0.1)";
+                            chip.style.background = "rgba(255, 255, 255, 0.03)";
+                            const sp = chip.querySelector("span");
+                            if (sp) sp.style.color = "var(--muted)";
+                        }
+                    });
+                }
+                // When selecting a model, classes remain non-selected by default so the user explicitly chooses which classes to monitor
             }
         });
     }
