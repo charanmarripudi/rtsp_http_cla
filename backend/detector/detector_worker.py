@@ -1731,12 +1731,16 @@ class DetectorWorker:
             base_url = os.getenv("LOCAL_BASE_URL", "http://localhost:8080").rstrip("/")
             image_path = f"{base_url}/hls/alerts/{filename}"
 
-            if "OVER SPEED" in str(class_name).upper() or "CROWD" in str(class_name).upper():
-                type_of_alert_str = str(class_name)
-            elif vehicle_label:
-                type_of_alert_str = f"VIOLATION: {vehicle_label} Detected"
+            lbl = vehicle_label or class_name
+            lbl_str = str(lbl).strip()
+            if "OVER SPEED" in lbl_str.upper() or "CROWD" in lbl_str.upper():
+                type_of_alert_str = lbl_str
+            elif lbl_str.upper().startswith("VIOLATION:"):
+                type_of_alert_str = lbl_str if lbl_str.lower().endswith("detected") else f"{lbl_str} Detected"
+            elif lbl_str.lower().endswith("detected"):
+                type_of_alert_str = f"VIOLATION: {lbl_str}"
             else:
-                type_of_alert_str = f"VIOLATION: {class_name} Detected"
+                type_of_alert_str = f"VIOLATION: {lbl_str} Detected"
 
             # 1. Append to alerts.json for immediate UI dashboard update
             alerts_json_file = os.path.join(adir, "alerts.json")
