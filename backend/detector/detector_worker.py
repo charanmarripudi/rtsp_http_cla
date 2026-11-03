@@ -633,23 +633,8 @@ class DetectorWorker:
         self.model_paths = DetectorWorker._resolve_companion_models(model_paths)
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
         self.is_speed_worker = (str(self.cam_id) == "speed")
+        self.is_crowd_worker = (str(self.cam_id) == "crowd")
         _check_models = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
-
-        def _check_crowd(models):
-            if str(self.cam_id) == "crowd":
-                return True
-            for mp in models:
-                m_str = str(mp).lower()
-                if "crowd" in m_str:
-                    return True
-                if "yolov8n" in m_str:
-                    cfg = get_config_for_model(self.model_configs, os.path.basename(mp)) if self.model_configs else {}
-                    enabled = cfg.get("enabled_classes") if isinstance(cfg, dict) else None
-                    if enabled is None or any("person" in str(e).lower() for e in enabled):
-                        return True
-            return False
-
-        self.is_crowd_worker = _check_crowd(_check_models)
         self.fps = 10.0
         self.width, self.height = 640, 360
         self._latest_raw_frame = None
@@ -778,22 +763,7 @@ class DetectorWorker:
         self._ema_next_id = 0
         self._needs_immediate_inference = True
 
-        _check_models = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
-        def _check_crowd_dyn(models):
-            if str(self.cam_id) == "crowd":
-                return True
-            for mp in models:
-                m_str = str(mp).lower()
-                if "crowd" in m_str:
-                    return True
-                if "yolov8n" in m_str:
-                    cfg = get_config_for_model(self.model_configs, os.path.basename(mp)) if self.model_configs else {}
-                    enabled = cfg.get("enabled_classes") if isinstance(cfg, dict) else None
-                    if enabled is None or any("person" in str(e).lower() for e in enabled):
-                        return True
-            return False
-
-        self.is_crowd_worker = _check_crowd_dyn(_check_models)
+        self.is_crowd_worker = (str(self.cam_id) == "crowd")
         if self.is_crowd_worker and CrowdMonitoring is not None:
             crowd_model = "yolov8n.pt"
             cfg = get_config_for_model(self.model_configs, "yolov8n.pt") if self.model_configs else {}
