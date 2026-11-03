@@ -1656,7 +1656,16 @@ class DetectorWorker:
                                 if (min_x <= cx <= max_x and min_y <= cy <= max_y) or (min_x <= gx <= max_x and min_y <= gy <= max_y):
                                     person_boxes_in_roi += 1
 
-                if person_boxes_in_roi >= crowd_thresh:
+                # Crowd gathering alert condition:
+                # 1 person alone is NEVER a crowd.
+                # If limit is 1 person: 1 person is allowed (within limit). Alert triggers when count > 1 (2+ people).
+                # If limit is N >= 2: violation triggers when count reaches or exceeds threshold (count >= N and count >= 2).
+                if crowd_thresh == 1:
+                    is_crowd_alert = (person_boxes_in_roi > 1)
+                else:
+                    is_crowd_alert = (person_boxes_in_roi >= crowd_thresh and person_boxes_in_roi >= 2)
+
+                if is_crowd_alert:
                     for b in display_boxes:
                         if b.get('cls', '').lower() == 'person':
                             b['color'] = (20, 20, 237)
@@ -1669,6 +1678,11 @@ class DetectorWorker:
                         crowd_event_name = f"CROWD ALERT: {person_boxes_in_roi} Persons in ROI"
                         print(f"[ALERT-TRIGGER-CROWD] Crowd Gathering alert triggered: cam={self.cam_id}, count={person_boxes_in_roi} (threshold={crowd_thresh})", flush=True)
                         self._save_alert(crowd_event_name, frame_snapshot)
+                else:
+                    for b in display_boxes:
+                        if b.get('cls', '').lower() == 'person':
+                            b['color'] = (0, 255, 0)
+                            b['label'] = f"person {b.get('conf', 0.8):.2f}"
 
             with self._box_lock:
                 self._tracked_boxes = display_boxes
