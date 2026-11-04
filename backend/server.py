@@ -1300,6 +1300,12 @@ MODEL_CLASSES_CACHE = {
     "intrusion": [
         "person", "truck"
     ],
+    "non_working_hours.pt": [
+        "person", "truck"
+    ],
+    "non_working_hours": [
+        "person", "truck"
+    ],
     "ppe_new.pt": [
         "Cap-Lamp", "Gloves", "Gum-Boots", "Hard-Hat", "Mask", "NO-Mask",
         "No-Cap-Lamp", "No-Gloves", "No-Gum-Boots", "No-Hard-Hat",

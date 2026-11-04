@@ -2289,7 +2289,8 @@
           "Valve_box_best.pt",
           "dome_open_closed_best.pt",
           "yolov8n.pt",
-          "intrusion.pt"
+          "intrusion.pt",
+          "non_working_hours.pt"
         ];
       }
 
@@ -2691,7 +2692,8 @@
               { file: "Valve_box_best.pt", label: "VALVE BOX CLASSES", color: "#38bdf8", classes: ["Valve_Box_Close", "Valve_Box_Open"] },
               { file: "dome_open_closed_best.pt", label: "DOME OPEN/CLOSED CLASSES", color: "#14b8a6", classes: ["Dome_Closed", "Dome_Opened"] },
               { file: "yolov8n.pt", label: "CROWD DETECTION CLASSES", color: "#38bdf8", classes: ["person"] },
-              { file: "intrusion.pt", label: "INTRUSION DETECTION / PERIMETER INTRUSION CLASSES", color: "#f43f5e", classes: ["person", "truck"] }
+              { file: "intrusion.pt", label: "INTRUSION DETECTION / PERIMETER INTRUSION CLASSES", color: "#f43f5e", classes: ["person", "truck"] },
+              { file: "non_working_hours.pt", label: "INTRUSION IN NON-WORKING HOURS CLASSES", color: "#e11d48", classes: ["person", "truck"] }
             ];
 
             const specFileNames = specializedModels.map(s => s.file);

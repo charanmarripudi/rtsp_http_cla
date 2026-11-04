@@ -284,7 +284,7 @@ def is_negative_violation_class(cls_name: str, model_name: str = "") -> bool:
         return True
 
     # 5. Over speed / crowd alerts / intrusion alerts
-    if "over-speed" in c or "overspeed" in c or "crowd-alert" in c or "crowd alert" in c.replace("-", " ") or "intrusion" in c:
+    if "over-speed" in c or "overspeed" in c or "crowd-alert" in c or "crowd alert" in c.replace("-", " ") or "intrusion" in c or "non-working" in c or "non_working" in c:
         return True
 
     return False
@@ -1969,6 +1969,85 @@ class DetectorWorker:
                                 print(f"[ALERT-TRIGGER-INTRUSION] Camera {self.cam_id}: {alert_msg}", flush=True)
                                 self._save_alert(alert_msg, frame_snapshot)
 
+            # -- Intrusion in Non-Working Hours --------------------------------
+            is_nwh_assigned = any("non_working" in str(p).lower() or "off_hours" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
+            if is_nwh_assigned:
+                nwh_cfg = get_config_for_model(self.model_configs, "non_working_hours.pt") or get_config_for_model(self.model_configs, "non_working_hours") or {}
+                nwh_classes = nwh_cfg.get("enabled_classes") if isinstance(nwh_cfg, dict) else None
+                if nwh_classes is None:
+                    nwh_classes = ["person", "truck"]
+
+                start_str = str(nwh_cfg.get("off_hours_start", "18:00") or "18:00") if isinstance(nwh_cfg, dict) else "18:00"
+                end_str = str(nwh_cfg.get("off_hours_end", "08:00") or "08:00") if isinstance(nwh_cfg, dict) else "08:00"
+                raw_test_mode = nwh_cfg.get("test_mode") if isinstance(nwh_cfg, dict) else None
+                if raw_test_mode is None:
+                    test_mode = True  # Default to True so user can test immediately
+                elif isinstance(raw_test_mode, str):
+                    test_mode = raw_test_mode.lower() in ("true", "1", "yes", "on")
+                else:
+                    test_mode = bool(raw_test_mode)
+
+                try:
+                    s_parts = [int(p) for p in start_str.split(":")[:2]]
+                    start_mins = s_parts[0] * 60 + (s_parts[1] if len(s_parts) > 1 else 0)
+                except Exception:
+                    start_mins = 18 * 60
+
+                try:
+                    e_parts = [int(p) for p in end_str.split(":")[:2]]
+                    end_mins = e_parts[0] * 60 + (e_parts[1] if len(e_parts) > 1 else 0)
+                except Exception:
+                    end_mins = 8 * 60
+
+                now_dt = datetime.now()
+                now_mins = now_dt.hour * 60 + now_dt.minute
+
+                if start_mins > end_mins:
+                    is_off_hours = (now_mins >= start_mins or now_mins <= end_mins)
+                else:
+                    is_off_hours = (start_mins <= now_mins <= end_mins)
+
+                if is_off_hours or test_mode:
+                    has_roi = bool(self.roi_polygon and len(self.roi_polygon) == 2)
+                    if has_roi:
+                        r_min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
+                        r_max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
+                        r_min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
+                        r_max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
+
+                    for tid, trk in list(self._ema_tracks.items()):
+                        c_trk = trk.get('cls', '')
+                        if not any(match_class(c_trk, nc) for nc in nwh_classes):
+                            continue
+                        if (now_t - trk.get('last_seen', 0.0)) > 0.40:
+                            continue
+                        bx = trk.get('box', [])
+                        if len(bx) != 4:
+                            continue
+                        cx = (bx[0] + bx[2]) / 2.0
+                        cy = (bx[1] + bx[3]) / 2.0
+                        gx, gy = cx, bx[3]
+
+                        if has_roi:
+                            in_nwh_zone = ((r_min_x <= cx <= r_max_x and r_min_y <= cy <= r_max_y) or
+                                           (r_min_x <= gx <= r_max_x and r_min_y <= gy <= r_max_y))
+                        else:
+                            in_nwh_zone = True
+
+                        if in_nwh_zone:
+                            for b in display_boxes:
+                                ob = b.get('box', [0, 0, 0, 0])
+                                if b.get('trk_id') == tid or (abs(ob[0] - bx[0]) < 15 and abs(ob[1] - bx[1]) < 15):
+                                    b['color'] = (20, 20, 237)
+                                    b['label'] = f"VIOLATION: NON-WORKING HOURS ({c_trk}) {trk.get('conf', 0.8):.2f}"
+                                    b['sub'] = f"OFF-HOURS INTRUSION DETECTED"
+
+                            cd_key = f"nwh_{c_trk}"
+                            if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
+                                alert_msg = f"VIOLATION: Intrusion in Non-Working Hours Detected ({c_trk.capitalize()}{' in ROI' if has_roi else ''})"
+                                print(f"[ALERT-TRIGGER-NWH] Camera {self.cam_id}: {alert_msg}", flush=True)
+                                self._save_alert(alert_msg, frame_snapshot)
+
             with self._box_lock:
                 self._tracked_boxes = display_boxes
 
@@ -2006,7 +2085,7 @@ class DetectorWorker:
             if "OVER SPEED" in lbl_str.upper() or "CROWD" in lbl_str.upper():
                 type_of_alert_str = lbl_str
             elif lbl_str.upper().startswith("VIOLATION:"):
-                type_of_alert_str = lbl_str if lbl_str.lower().endswith("detected") else f"{lbl_str} Detected"
+                type_of_alert_str = lbl_str if "detected" in lbl_str.lower() else f"{lbl_str} Detected"
             elif lbl_str.lower().endswith("detected"):
                 type_of_alert_str = f"VIOLATION: {lbl_str}"
             else:

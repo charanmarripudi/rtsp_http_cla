@@ -47,6 +47,7 @@ companion_models/*.pt
 models_backup/
 !models/yolov8n.pt
 !models/intrusion.pt
+!models/non_working_hours.pt
 
 # Database credentials
 .env

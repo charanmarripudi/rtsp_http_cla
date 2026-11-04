@@ -16,39 +16,7 @@
           0.9747,
           0.8438
         ]
-      ],
-      "intrusion.pt": {
-        "enabled_classes": [
-          "person",
-          "truck"
-        ],
-        "class_configs": {
-          "person": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "truck": {
-            "conf": 0.4,
-            "iou": 0.45
-          }
-        }
-      },
-      "intrusion": {
-        "enabled_classes": [
-          "person",
-          "truck"
-        ],
-        "class_configs": {
-          "person": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "truck": {
-            "conf": 0.4,
-            "iou": 0.45
-          }
-        }
-      }
+      ]
     },
     "device_id": "RPI-001",
     "serial_number": "",
