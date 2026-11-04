@@ -355,8 +355,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
 
                             const isNonWorkingHours = (cleanName.toLowerCase() === "non_working_hours");
                             const nwhStartVal = mCfg.off_hours_start || cCfg.off_hours_start || "18:00";
-                            const nwhEndVal = mCfg.off_hours_end || cCfg.off_hours_end || "08:00";
-                            const nwhTestMode = (mCfg.test_mode !== undefined) ? !!mCfg.test_mode : ((cCfg.test_mode !== undefined) ? !!cCfg.test_mode : true);
+                            const nwhEndVal = mCfg.off_hours_end || cCfg.off_hours_end || "06:00";
 
                             const card = document.createElement("div");
                             card.className = "model-card-box";
@@ -414,10 +413,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                             To
                                             <input class="nwh-time-end" type="time" value="${nwhEndVal}" style="background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.2);color:#fff;border-radius:4px;padding:2px 6px;font-size:0.68rem;outline:none;font-family:var(--mono);">
                                         </label>
-                                        <label style="color:#38bdf8;display:inline-flex;align-items:center;gap:5px;cursor:pointer;margin-left:auto;font-weight:600;" title="Test Mode allows instant verification during any hour">
-                                            <input class="nwh-test-mode" type="checkbox" ${nwhTestMode ? "checked" : ""} style="accent-color:#38bdf8;cursor:pointer;">
-                                            <span>Test Mode (Always Active)</span>
-                                        </label>
                                     </div>` : ''}
                                 </div>`;
                             chipsList.appendChild(card);
@@ -447,7 +442,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                     if (isNonWorkingHours) {
                                         const sInput = card.querySelector(".nwh-time-start");
                                         const eInput = card.querySelector(".nwh-time-end");
-                                        const tCheck = card.querySelector(".nwh-test-mode");
                                         if (sInput) {
                                             meta.model_configs[normM].off_hours_start = sInput.value;
                                             meta.model_configs[cleanName] = meta.model_configs[cleanName] || {};
@@ -457,11 +451,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                             meta.model_configs[normM].off_hours_end = eInput.value;
                                             meta.model_configs[cleanName] = meta.model_configs[cleanName] || {};
                                             meta.model_configs[cleanName].off_hours_end = eInput.value;
-                                        }
-                                        if (tCheck) {
-                                            meta.model_configs[normM].test_mode = tCheck.checked;
-                                            meta.model_configs[cleanName] = meta.model_configs[cleanName] || {};
-                                            meta.model_configs[cleanName].test_mode = tCheck.checked;
                                         }
                                     }
                                     meta.model_configs[normM].class_configs[cls] = Object.assign({}, meta.model_configs[normM].class_configs[cls] || {}, clsCfg);
@@ -507,10 +496,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             if (isNonWorkingHours) {
                                 const sInput = card.querySelector(".nwh-time-start");
                                 const eInput = card.querySelector(".nwh-time-end");
-                                const tCheck = card.querySelector(".nwh-test-mode");
                                 if (sInput) sInput.onchange = () => syncClassThreshold();
                                 if (eInput) eInput.onchange = () => syncClassThreshold();
-                                if (tCheck) tCheck.onchange = () => syncClassThreshold();
                             }
 
                             const cRow = card.querySelector(".thresh-row-conf") || (cSlider && cSlider.closest(".thresh-row"));
@@ -537,8 +524,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                     }
                     const isNwhWhole = (cleanName.toLowerCase() === "non_working_hours");
                     const nwhStartVal = mCfg.off_hours_start || "18:00";
-                    const nwhEndVal = mCfg.off_hours_end || "08:00";
-                    const nwhTestMode = (mCfg.test_mode !== undefined) ? !!mCfg.test_mode : true;
+                    const nwhEndVal = mCfg.off_hours_end || "06:00";
 
                     const card = document.createElement("div");
                     card.className = "model-card-box";
@@ -582,10 +568,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                     To
                                     <input class="nwh-time-end" type="time" value="${nwhEndVal}" style="background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.2);color:#fff;border-radius:4px;padding:2px 6px;font-size:0.68rem;outline:none;font-family:var(--mono);">
                                 </label>
-                                <label style="color:#38bdf8;display:inline-flex;align-items:center;gap:5px;cursor:pointer;margin-left:auto;font-weight:600;" title="Test Mode allows instant verification during any hour">
-                                    <input class="nwh-test-mode" type="checkbox" ${nwhTestMode ? "checked" : ""} style="accent-color:#38bdf8;cursor:pointer;">
-                                    <span>Test Mode (Always Active)</span>
-                                </label>
                             </div>` : ''}
                         </div>`;
                     chipsList.appendChild(card);
@@ -608,7 +590,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             if (isNwhWhole) {
                                 const sInput = card.querySelector(".nwh-time-start");
                                 const eInput = card.querySelector(".nwh-time-end");
-                                const tCheck = card.querySelector(".nwh-test-mode");
                                 if (sInput) {
                                     meta.model_configs[normM].off_hours_start = sInput.value;
                                     meta.model_configs[cleanName].off_hours_start = sInput.value;
@@ -616,10 +597,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                 if (eInput) {
                                     meta.model_configs[normM].off_hours_end = eInput.value;
                                     meta.model_configs[cleanName].off_hours_end = eInput.value;
-                                }
-                                if (tCheck) {
-                                    meta.model_configs[normM].test_mode = tCheck.checked;
-                                    meta.model_configs[cleanName].test_mode = tCheck.checked;
                                 }
                             }
 
@@ -650,10 +627,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                     if (isNwhWhole) {
                         const sInput = card.querySelector(".nwh-time-start");
                         const eInput = card.querySelector(".nwh-time-end");
-                        const tCheck = card.querySelector(".nwh-test-mode");
                         if (sInput) sInput.onchange = () => syncModelThreshold();
                         if (eInput) eInput.onchange = () => syncModelThreshold();
-                        if (tCheck) tCheck.onchange = () => syncModelThreshold();
                     }
 
                     const cRow = card.querySelector(".thresh-row-conf") || (cSlider && cSlider.closest(".thresh-row"));
@@ -758,7 +733,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                 if (mName.toLowerCase().includes("non_working")) {
                     const sInput = card.querySelector(".nwh-time-start");
                     const eInput = card.querySelector(".nwh-time-end");
-                    const tCheck = card.querySelector(".nwh-test-mode");
                     if (sInput) {
                         domModelConfigs[norm].off_hours_start = sInput.value;
                         domModelConfigs[clean].off_hours_start = sInput.value;
@@ -766,10 +740,6 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                     if (eInput) {
                         domModelConfigs[norm].off_hours_end = eInput.value;
                         domModelConfigs[clean].off_hours_end = eInput.value;
-                    }
-                    if (tCheck) {
-                        domModelConfigs[norm].test_mode = tCheck.checked;
-                        domModelConfigs[clean].test_mode = tCheck.checked;
                     }
                 }
             }

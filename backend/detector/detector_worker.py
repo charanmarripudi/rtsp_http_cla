@@ -1978,36 +1978,39 @@ class DetectorWorker:
                     nwh_classes = ["person", "truck"]
 
                 start_str = str(nwh_cfg.get("off_hours_start", "18:00") or "18:00") if isinstance(nwh_cfg, dict) else "18:00"
-                end_str = str(nwh_cfg.get("off_hours_end", "08:00") or "08:00") if isinstance(nwh_cfg, dict) else "08:00"
-                raw_test_mode = nwh_cfg.get("test_mode") if isinstance(nwh_cfg, dict) else None
-                if raw_test_mode is None:
-                    test_mode = True  # Default to True so user can test immediately
-                elif isinstance(raw_test_mode, str):
-                    test_mode = raw_test_mode.lower() in ("true", "1", "yes", "on")
-                else:
-                    test_mode = bool(raw_test_mode)
+                end_str = str(nwh_cfg.get("off_hours_end", "06:00") or "06:00") if isinstance(nwh_cfg, dict) else "06:00"
 
-                try:
-                    s_parts = [int(p) for p in start_str.split(":")[:2]]
-                    start_mins = s_parts[0] * 60 + (s_parts[1] if len(s_parts) > 1 else 0)
-                except Exception:
-                    start_mins = 18 * 60
+                def _to_mins(t_str, def_val):
+                    try:
+                        s = str(t_str).strip().upper()
+                        is_pm = "PM" in s
+                        is_am = "AM" in s
+                        s = s.replace("PM", "").replace("AM", "").strip()
+                        parts = [int(p) for p in s.split(":")[:2]]
+                        h = parts[0]
+                        m = parts[1] if len(parts) > 1 else 0
+                        if is_pm and h < 12:
+                            h += 12
+                        elif is_am and h == 12:
+                            h = 0
+                        return (h * 60 + m) % 1440
+                    except Exception:
+                        return def_val
 
-                try:
-                    e_parts = [int(p) for p in end_str.split(":")[:2]]
-                    end_mins = e_parts[0] * 60 + (e_parts[1] if len(e_parts) > 1 else 0)
-                except Exception:
-                    end_mins = 8 * 60
+                start_mins = _to_mins(start_str, 18 * 60)
+                end_mins = _to_mins(end_str, 6 * 60)
 
                 now_dt = datetime.now()
                 now_mins = now_dt.hour * 60 + now_dt.minute
 
                 if start_mins > end_mins:
+                    # Overnight schedule (e.g. 18:00 to 06:00 / 6:00 PM to 6:00 AM)
                     is_off_hours = (now_mins >= start_mins or now_mins <= end_mins)
                 else:
+                    # Same-day schedule (e.g. 09:00 to 18:00)
                     is_off_hours = (start_mins <= now_mins <= end_mins)
 
-                if is_off_hours or test_mode:
+                if is_off_hours:
                     has_roi = bool(self.roi_polygon and len(self.roi_polygon) == 2)
                     if has_roi:
                         r_min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width

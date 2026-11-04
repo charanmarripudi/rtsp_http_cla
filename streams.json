@@ -16,7 +16,43 @@
           0.9747,
           0.8438
         ]
-      ]
+      ],
+      "non_working_hours.pt": {
+        "enabled_classes": [
+          "person",
+          "truck"
+        ],
+        "class_configs": {
+          "person": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "truck": {
+            "conf": 0.4,
+            "iou": 0.45
+          }
+        },
+        "off_hours_start": "18:00",
+        "off_hours_end": "06:00"
+      },
+      "non_working_hours": {
+        "off_hours_start": "18:00",
+        "off_hours_end": "06:00",
+        "class_configs": {
+          "person": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "truck": {
+            "conf": 0.4,
+            "iou": 0.45
+          }
+        },
+        "enabled_classes": [
+          "person",
+          "truck"
+        ]
+      }
     },
     "device_id": "RPI-001",
     "serial_number": "",
