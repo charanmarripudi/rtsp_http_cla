@@ -2902,11 +2902,12 @@ def start_speed_tracker(d: dict = Body(...)):
 
     models = d.get("models")
     if not models or not isinstance(models, list):
-        models = ["yolov8n.pt"]
+        return JSONResponse(status_code=400, content={"status": "error", "message": "No model selected. Please select a model and vehicle classes."})
 
     conf = float(d.get("conf", 0.40))
     iou = float(d.get("iou", 0.45))
     model_configs = d.get("model_configs") or {}
+    model_configs["enable_speed"] = True
     for m in models:
         norm_m = m if m.endswith(".pt") else f"{m}.pt"
         if norm_m not in model_configs:
@@ -2915,8 +2916,6 @@ def start_speed_tracker(d: dict = Body(...)):
                 "imgsz": 320
             }
         else:
-            if not model_configs[norm_m].get("enabled_classes"):
-                model_configs[norm_m]["enabled_classes"] = ["truck"]
             model_configs[norm_m]["imgsz"] = 320
 
     return start_detection({

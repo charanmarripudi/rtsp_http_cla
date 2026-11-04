@@ -1,7 +1,6 @@
 {
   "0": [
-    "hansung_ppe_violations.pt",
-    "yolov8n.pt"
+    "intrusion.pt"
   ],
   "1": []
 }

@@ -7,72 +7,24 @@
     "conf": 0.4,
     "iou": 0.45,
     "model_configs": {
-      "hansung_ppe_violations.pt": {
+      "intrusion.pt": {
         "enabled_classes": [
-          "NO-Hardhat",
-          "NO-Safety Vest"
+          "person",
+          "truck"
         ],
-        "class_configs": {
-          "NO-Hardhat": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "NO-Safety Vest": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "No-Goggles": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "No-Safety-Belt": {
-            "conf": 0.4,
-            "iou": 0.45
-          }
-        }
+        "conf": 0.4,
+        "iou": 0.45
       },
-      "yolov8n.pt": {
-        "enabled_classes": [
-          "person"
+      "roi_polygon": [
+        [
+          0.576,
+          0.2212
         ],
-        "class_configs": {
-          "person": {
-            "conf": 0.4,
-            "iou": 0.45,
-            "crowd_threshold": 1
-          }
-        },
-        "crowd_threshold": 1
-      },
-      "hansung_ppe_violations": {
-        "enabled_classes": [
-          "NO-Hardhat",
-          "NO-Safety Vest"
-        ],
-        "class_configs": {
-          "NO-Hardhat": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "NO-Safety Vest": {
-            "conf": 0.4,
-            "iou": 0.45
-          }
-        }
-      },
-      "yolov8n": {
-        "enabled_classes": [
-          "person"
-        ],
-        "class_configs": {
-          "person": {
-            "conf": 0.4,
-            "iou": 0.45,
-            "crowd_threshold": 1
-          }
-        },
-        "crowd_threshold": 1
-      }
+        [
+          0.9747,
+          0.8438
+        ]
+      ]
     },
     "device_id": "RPI-001",
     "serial_number": "",

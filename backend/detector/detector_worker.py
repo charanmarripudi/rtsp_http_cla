@@ -653,7 +653,10 @@ class DetectorWorker:
         self.rtsp_url, self.output_dir, self.conf, self.iou, self.location = rtsp_url, output_dir, conf, iou, location
         self.model_paths = DetectorWorker._resolve_companion_models(model_paths)
         self.cam_id = os.path.basename(output_dir).replace("stream", "").replace("_detected", "")
-        self.is_speed_worker = (str(self.cam_id) == "speed")
+        speed_flag = False
+        if isinstance(self._model_configs, dict):
+            speed_flag = bool(self._model_configs.get("enable_speed") or self._model_configs.get("speed_tracking") or self._model_configs.get("is_speed"))
+        self.is_speed_worker = (str(self.cam_id) == "speed" or speed_flag)
         self.is_crowd_worker = (str(self.cam_id) == "crowd")
         _check_models = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
         self.fps = 10.0
@@ -1419,7 +1422,10 @@ class DetectorWorker:
 
         # Check whether this camera is configured as a dedicated speed camera
         active_mods = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
-        is_speed_camera = (getattr(self, 'is_speed_worker', False) or str(self.cam_id) == "speed" or any("speed" in str(mp).lower() for mp in active_mods))
+        speed_flag = False
+        if isinstance(self.model_configs, dict):
+            speed_flag = bool(self.model_configs.get("enable_speed") or self.model_configs.get("speed_tracking") or self.model_configs.get("is_speed"))
+        is_speed_camera = (getattr(self, 'is_speed_worker', False) or str(self.cam_id) == "speed" or speed_flag or any("speed" in str(mp).lower() for mp in active_mods))
 
         # -- Vehicle Speed Estimation & Dual-Line Timing (ONLY for dedicated speed cameras) --
         speed_limit = float(getattr(self, 'speed_limit_kmh', 10.0))

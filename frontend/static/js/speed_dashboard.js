@@ -377,7 +377,7 @@ class SpeedDashboard {
 
             this.renderModelCards(speedModels);
 
-            if (countSpan) countSpan.textContent = "1 vehicle model ready (yolov8n.pt)";
+            if (countSpan) countSpan.textContent = "Select a model and classes below";
         } catch (e) {
             console.error("[SPEED-DASH] Error loading models:", e);
             if (countSpan) countSpan.textContent = "Ready";
@@ -397,8 +397,8 @@ class SpeedDashboard {
             card.className = "speed-model-card";
             card.id = `speed-model-card-${normName}`;
             card.style.cssText = `
-                background: rgba(15, 23, 42, 0.6);
-                border: 1px solid #38bdf8;
+                background: rgba(15, 23, 42, 0.4);
+                border: 1px solid var(--border);
                 border-radius: 8px;
                 padding: 10px 14px;
                 display: flex;
@@ -419,9 +419,21 @@ class SpeedDashboard {
             mChk.type = "checkbox";
             mChk.className = "speed-model-checkbox";
             mChk.value = m;
-            mChk.checked = true;
+            mChk.checked = false;
             mChk.id = `chk-model-${normName}`;
             mChk.style.cursor = "pointer";
+
+            mChk.addEventListener("change", () => {
+                card.style.borderColor = mChk.checked ? "#38bdf8" : "var(--border)";
+                card.style.background = mChk.checked ? "rgba(15, 23, 42, 0.7)" : "rgba(15, 23, 42, 0.4)";
+                if (!mChk.checked) {
+                    card.querySelectorAll(`.class-chk-${normName}`).forEach(cb => {
+                        cb.checked = false;
+                        cb.parentElement.style.borderColor = 'var(--border)';
+                        cb.parentElement.style.background = 'rgba(0,0,0,0.3)';
+                    });
+                }
+            });
 
             const nameBadge = document.createElement("span");
             nameBadge.style.cssText = `
@@ -445,6 +457,9 @@ class SpeedDashboard {
             quickAllBtn.style.cssText = "background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--muted); font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; cursor: pointer;";
             quickAllBtn.onclick = (e) => {
                 e.stopPropagation();
+                mChk.checked = true;
+                card.style.borderColor = "#38bdf8";
+                card.style.background = "rgba(15, 23, 42, 0.7)";
                 card.querySelectorAll(`.class-chk-${normName}`).forEach(cb => { cb.checked = true; cb.parentElement.style.borderColor = '#00ffaa'; cb.parentElement.style.background = 'rgba(0,255,170,0.12)'; });
             };
 
@@ -491,17 +506,15 @@ class SpeedDashboard {
                 classContainer.appendChild(emptySpan);
             } else {
                 classes.forEach(c => {
-                    // In Vehicle Speed tab, only enable vehicle classes (e.g. truck) by default
-                    const isVehicle = ["truck", "vehicle", "car", "bus"].includes(c.toLowerCase());
-                    const isChecked = isVehicle;
+                    const isChecked = false;
 
                     const cLabel = document.createElement("label");
                     cLabel.style.cssText = `
                         display: inline-flex;
                         align-items: center;
                         gap: 5px;
-                        background: ${isChecked ? "rgba(0,255,170,0.12)" : "rgba(0,0,0,0.3)"};
-                        border: 1px solid ${isChecked ? "#00ffaa" : "var(--border)"};
+                        background: rgba(0,0,0,0.3);
+                        border: 1px solid var(--border);
                         padding: 3px 8px;
                         border-radius: 4px;
                         cursor: pointer;
@@ -521,6 +534,11 @@ class SpeedDashboard {
                     cChk.addEventListener("change", () => {
                         cLabel.style.borderColor = cChk.checked ? "#00ffaa" : "var(--border)";
                         cLabel.style.background = cChk.checked ? "rgba(0,255,170,0.12)" : "rgba(0,0,0,0.3)";
+                        if (cChk.checked && !mChk.checked) {
+                            mChk.checked = true;
+                            card.style.borderColor = "#38bdf8";
+                            card.style.background = "rgba(15, 23, 42, 0.7)";
+                        }
                     });
 
                     const cSpan = document.createElement("span");
@@ -743,16 +761,25 @@ class SpeedDashboard {
 
         const checkedModelBoxes = document.querySelectorAll(".speed-model-checkbox:checked");
         let selectedModels = Array.from(checkedModelBoxes).map(cb => cb.value);
-        if (selectedModels.length === 0) selectedModels = this.availableModels.slice(0, 1);
+        if (selectedModels.length === 0) {
+            alert("Please select a model and vehicle classes (e.g. truck) before starting speed tracking.");
+            if (statusSpan) {
+                statusSpan.textContent = "Select a model & classes to start";
+                statusSpan.style.color = "var(--danger)";
+            }
+            return;
+        }
 
         const modelConfigs = {};
         let overallConf = 0.25;
         let overallIou = 0.45;
+        let totalEnabledClasses = 0;
 
         selectedModels.forEach(m => {
             const normName = m.replace(".pt", "");
             const checkedClassBoxes = document.querySelectorAll(`.class-chk-${normName}:checked`);
             const enabledClasses = Array.from(checkedClassBoxes).map(cb => cb.value);
+            totalEnabledClasses += enabledClasses.length;
 
             const confEl = document.getElementById(`speed-conf-${normName}`);
             const iouEl = document.getElementById(`speed-iou-${normName}`);
@@ -768,6 +795,15 @@ class SpeedDashboard {
                 imgsz: 320
             };
         });
+
+        if (totalEnabledClasses === 0) {
+            alert("Please select at least one vehicle class (e.g. truck) to monitor for vehicle speed.");
+            if (statusSpan) {
+                statusSpan.textContent = "Select at least one vehicle class";
+                statusSpan.style.color = "var(--danger)";
+            }
+            return;
+        }
 
         if (this.lineA || this.lineB) {
             await this.saveConfig();
