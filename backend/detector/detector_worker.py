@@ -134,6 +134,27 @@ LABEL_FONT_SCALE   = 0.55
 LABEL_THICKNESS    = 1
 LABEL_BOX_PADDING  = 5
 
+# Global persistent alert cooldown tracker (cam_id, alert_class) -> timestamp
+GLOBAL_ALERT_COOLDOWNS = {}
+GLOBAL_ALERT_COOLDOWNS_LOCK = threading.Lock()
+ALERT_COOLDOWN_SECONDS = 30.0
+
+def check_and_record_alert_cooldown(cam_id, alert_class, cooldown_s=30.0):
+    """
+    Thread-safe global alert cooldown manager across all cameras and workers.
+    Ensures a strict minimum gap (default 30 seconds) between alerts of the same class on the same camera,
+    persisting across worker restarts, slider updates, and stream reconnections.
+    """
+    now_t = time.time()
+    c_clean = str(alert_class).strip().lower().replace("_", "-").replace("saftey", "safety")
+    key = (str(cam_id), c_clean)
+    with GLOBAL_ALERT_COOLDOWNS_LOCK:
+        last_t = GLOBAL_ALERT_COOLDOWNS.get(key, 0.0)
+        if (now_t - last_t) < cooldown_s:
+            return False
+        GLOBAL_ALERT_COOLDOWNS[key] = now_t
+        return True
+
 def clean_str(s):
     res = re.sub(r'[^a-z0-9]', '', str(s).lower())
     return res.replace("saftey", "safety")
@@ -916,6 +937,7 @@ class DetectorWorker:
 
         cur_cls, now = set(), time.time()
         raw_boxes = []   # list of (xyxy_in_output_res, color, conf, cls_name)
+        detected_persons_raw = []  # list of (rx1, ry1, rx2, ry2, conf) for dual near/far zoom
 
         # Collect all classes the user explicitly enabled for this camera
         camera_selected_classes = []
@@ -944,12 +966,30 @@ class DetectorWorker:
             default_imgsz   = 320 if is_veh_model else int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz         = default_imgsz
             cfg             = get_config_for_model(self.model_configs, m_name)
-            class_configs   = cfg.get("class_configs", {}) if isinstance(cfg, dict) else {}
+            # Companion model inheritance: ppe_new and nik inherit from hansung_ppe_violations if not explicitly configured
+            if any(k in m_name.lower() for k in ("ppe_new", "nik")):
+                h_cfg = get_config_for_model(self.model_configs, "hansung_ppe_violations.pt")
+                if h_cfg and isinstance(h_cfg, dict):
+                    if not cfg or not cfg.get("enabled_classes"):
+                        h_enabled = h_cfg.get("enabled_classes")
+                        if h_enabled is not None:
+                            enabled_classes = h_enabled
+                    if m_conf == self.conf and "conf" in h_cfg:
+                        m_conf = float(h_cfg["conf"])
+                    if m_iou == self.iou and "iou" in h_cfg:
+                        m_iou = float(h_cfg["iou"])
+                    h_cc = h_cfg.get("class_configs", {})
+                    if h_cc:
+                        class_configs = dict(h_cc)
+
             if cfg and isinstance(cfg, dict):
-                m_conf          = float(cfg.get("conf", self.conf))
-                m_iou           = float(cfg.get("iou", self.iou))
-                enabled_classes = cfg.get("enabled_classes")
+                m_conf          = float(cfg.get("conf", m_conf))
+                m_iou           = float(cfg.get("iou", m_iou))
+                if "enabled_classes" in cfg:
+                    enabled_classes = cfg.get("enabled_classes")
                 m_imgsz         = int(cfg.get("imgsz", default_imgsz))
+                if "class_configs" in cfg:
+                    class_configs = cfg.get("class_configs", class_configs)
 
             if m_imgsz % 32 != 0:
                 m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
@@ -1009,6 +1049,13 @@ class DetectorWorker:
                         cls      = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
                         conf_val = float(b.conf[0].item())
 
+                        box_raw = b.xyxy[0].cpu().numpy().tolist()
+                        rx1, ry1, rx2, ry2 = box_raw
+
+                        # Always record person detections for dual-distance PPE crop-and-zoom
+                        if cls.lower() == "person" and conf_val >= 0.25:
+                            detected_persons_raw.append((rx1, ry1, rx2, ry2, conf_val))
+
                         if filter_classes is not None:
                             if not any(match_class(cls, e) for e in filter_classes):
                                 continue
@@ -1028,8 +1075,6 @@ class DetectorWorker:
                             continue
 
                         # Scale coordinates from original raw frame space -> output stream resolution
-                        box_raw = b.xyxy[0].cpu().numpy().tolist()
-                        rx1, ry1, rx2, ry2 = box_raw
                         x1 = max(0, min(self.width  - 1, rx1 * scale_x))
                         y1 = max(0, min(self.height - 1, ry1 * scale_y))
                         x2 = max(0, min(self.width  - 1, rx2 * scale_x))
@@ -1049,8 +1094,11 @@ class DetectorWorker:
                             # -- Filter 3: Sky filter --
                             if y2 < self.height * 0.16:
                                 continue
-                        elif bw < 10 or bh < 10:
-                            continue
+                        else:
+                            is_ppe = any(k in cls.lower() for k in ("hat", "helmet", "mask", "vest", "glove", "boot", "shoe", "goggle", "belt", "harness", "lamp", "tape"))
+                            min_dim = 3 if is_ppe else 8
+                            if bw < min_dim or bh < min_dim:
+                                continue
                             
                         cx = (x1 + x2) / 2.0
                         cy = (y1 + y2) / 2.0
@@ -1074,6 +1122,159 @@ class DetectorWorker:
 
                         color_val = get_dynamic_class_color(cls)
                         raw_boxes.append((box_xyxy, color_val, conf_val, cls))
+
+        # -- Stage 2: Dual Near & Far Distance Detection (Adaptive Person Crop-and-Zoom) --
+        # For standard cameras at 10-15m, small PPE items (hardhat, mask, gloves, belt)
+        # downscale to 2-5 pixels on full frame inference.
+        # We extract high-resolution person crops directly from the native RTSP frame
+        # and evaluate all active PPE companion models (Hansung, ppe_new, nik_ppe_best).
+        # This provides crystal-clear detection at both 1-4m (close) and 10-15m (far).
+        if detected_persons_raw and self.models:
+            ppe_companion_models = []
+            for midx, p_mod in enumerate(self.models):
+                if p_mod is None:
+                    continue
+                p_pth = self.model_paths[midx] if (isinstance(self.model_paths, list) and midx < len(self.model_paths)) else str(self.model_paths)
+                p_nm = os.path.basename(p_pth)
+                if any(k in p_nm.lower() for k in ("hansung", "ppe", "nik", "gear")):
+                    ppe_companion_models.append((p_mod, p_nm))
+
+            if ppe_companion_models:
+                distant_candidates = [
+                    p for p in detected_persons_raw
+                    if 30 <= (p[3] - p[1]) < (orig_h * 0.45) and (p[2] - p[0]) >= 15
+                ]
+                unique_distant_persons = []
+                for p in distant_candidates:
+                    p_box = [p[0], p[1], p[2], p[3]]
+                    dup = False
+                    for u in unique_distant_persons:
+                        u_box = [u[0], u[1], u[2], u[3]]
+                        iou, _ = DetectorWorker._box_iou_and_io_min(p_box, u_box)
+                        if iou > 0.40:
+                            dup = True
+                            break
+                    if not dup:
+                        unique_distant_persons.append(p)
+
+                unique_distant_persons = sorted(unique_distant_persons, key=lambda p: (p[2] - p[0]) * (p[3] - p[1]), reverse=True)[:3]
+
+                for d_rx1, d_ry1, d_rx2, d_ry2, d_conf in unique_distant_persons:
+                    pw = d_rx2 - d_rx1
+                    ph = d_ry2 - d_ry1
+                    pad_x = pw * 0.12
+                    pad_y = ph * 0.12
+                    cx1 = max(0, int(d_rx1 - pad_x))
+                    cy1 = max(0, int(d_ry1 - pad_y))
+                    cx2 = min(orig_w, int(d_rx2 + pad_x))
+                    cy2 = min(orig_h, int(d_ry2 + pad_y))
+                    crop_h = cy2 - cy1
+                    crop_w = cx2 - cx1
+                    if crop_h < 30 or crop_w < 15:
+                        continue
+
+                    person_crop = f[cy1:cy2, cx1:cx2]
+
+                    for p_model, p_name in ppe_companion_models:
+                        p_cfg = get_config_for_model(self.model_configs, p_name)
+                        # Inherit hansung config if companion model has no explicit config
+                        if (not p_cfg or not isinstance(p_cfg, dict)) and any(k in p_name.lower() for k in ("ppe_new", "nik")):
+                            p_cfg = get_config_for_model(self.model_configs, "hansung_ppe_violations.pt")
+                        p_class_configs = p_cfg.get("class_configs", {}) if isinstance(p_cfg, dict) else {}
+                        p_enabled = p_cfg.get("enabled_classes") if isinstance(p_cfg, dict) else None
+                        if p_enabled is not None:
+                            p_filters = list(p_enabled)
+                        elif camera_selected_classes:
+                            p_filters = list(camera_selected_classes)
+                        else:
+                            p_filters = None
+
+                        if p_filters is not None and len(p_filters) == 0:
+                            continue
+
+                        p_conf_val = float(p_cfg.get("conf", self.conf)) if isinstance(p_cfg, dict) else float(self.conf)
+                        min_crop_conf = p_conf_val
+                        if p_class_configs and isinstance(p_class_configs, dict):
+                            for cc in p_class_configs.values():
+                                if isinstance(cc, dict) and "conf" in cc:
+                                    min_crop_conf = min(min_crop_conf, float(cc["conf"]))
+
+                        crop_predict_kwargs = {
+                            "source": person_crop,
+                            "conf": max(PREDICT_CONF_FLOOR, min_crop_conf),
+                            "iou": self.iou,
+                            "imgsz": 320,
+                            "verbose": False
+                        }
+
+                        try:
+                            if 'torch' in globals() and hasattr(torch, 'inference_mode'):
+                                with torch.inference_mode():
+                                    c_results = p_model.predict(**crop_predict_kwargs)
+                            else:
+                                c_results = p_model.predict(**crop_predict_kwargs)
+
+                            for cr in c_results:
+                                if not cr.boxes:
+                                    continue
+                                for cb in cr.boxes:
+                                    c_cls_id = int(cb.cls[0].item())
+                                    c_cls = cr.names.get(c_cls_id, str(c_cls_id)) if hasattr(cr, 'names') else str(c_cls_id)
+                                    c_conf = float(cb.conf[0].item())
+
+                                    if c_cls.lower() == "person":
+                                        continue
+
+                                    if p_filters is not None:
+                                        if not any(match_class(c_cls, e) for e in p_filters):
+                                            continue
+                                    if camera_selected_classes:
+                                        if not any(match_class(c_cls, sc) for sc in camera_selected_classes):
+                                            continue
+
+                                    req_crop_conf = p_conf_val
+                                    if p_class_configs:
+                                        for cc_name, cc_val in p_class_configs.items():
+                                            if match_class(c_cls, cc_name) and isinstance(cc_val, dict) and "conf" in cc_val:
+                                                req_crop_conf = float(cc_val["conf"])
+                                                break
+                                    if c_conf < req_crop_conf:
+                                        continue
+
+                                    c_raw = cb.xyxy[0].cpu().numpy().tolist()
+                                    glob_rx1 = cx1 + c_raw[0]
+                                    glob_ry1 = cy1 + c_raw[1]
+                                    glob_rx2 = cx1 + c_raw[2]
+                                    glob_ry2 = cy1 + c_raw[3]
+
+                                    gx1 = max(0, min(self.width - 1, glob_rx1 * scale_x))
+                                    gy1 = max(0, min(self.height - 1, glob_ry1 * scale_y))
+                                    gx2 = max(0, min(self.width - 1, glob_rx2 * scale_x))
+                                    gy2 = max(0, min(self.height - 1, glob_ry2 * scale_y))
+
+                                    gbw = max(0, gx2 - gx1)
+                                    gbh = max(0, gy2 - gy1)
+                                    if gbw < 3 or gbh < 3:
+                                        continue
+
+                                    if self.roi_polygon and len(self.roi_polygon) == 2:
+                                        try:
+                                            gcx = (gx1 + gx2) / 2.0
+                                            gcy = (gy1 + gy2) / 2.0
+                                            roi_x1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                                            roi_y1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                                            roi_x2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                                            roi_y2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                                            in_roi = (roi_x1 <= gcx <= roi_x2 and roi_y1 <= gcy <= roi_y2)
+                                            if not in_roi:
+                                                continue
+                                        except Exception:
+                                            pass
+
+                                    g_col = get_dynamic_class_color(c_cls)
+                                    raw_boxes.append(([gx1, gy1, gx2, gy2], g_col, c_conf, c_cls))
+                        except Exception as _ce:
+                            pass
 
         # -- Multi-Model NMS ---------------------------------------------------
         kept_items = self._apply_nms(raw_boxes)
@@ -1441,7 +1642,8 @@ class DetectorWorker:
                         cur_cls.add('no-Fire_Extinguisher')
                         
                         if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
-                        if (now_t - self.alert_cooldowns.get('no-Fire_Extinguisher', 0.0)) >= 30.0:
+                        if check_and_record_alert_cooldown(self.cam_id, 'no-Fire_Extinguisher', 30.0):
+                            self.alert_cooldowns['no-Fire_Extinguisher'] = now_t
                             absence_alerts_to_trigger.append('no-Fire_Extinguisher')
 
             # Absence check: Sand Bucket
@@ -1472,7 +1674,8 @@ class DetectorWorker:
                         cur_cls.add('no-Sand-Bucket')
                         
                         if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
-                        if (now_t - self.alert_cooldowns.get('no-Sand-Bucket', 0.0)) >= 30.0:
+                        if check_and_record_alert_cooldown(self.cam_id, 'no-Sand-Bucket', 30.0):
+                            self.alert_cooldowns['no-Sand-Bucket'] = now_t
                             absence_alerts_to_trigger.append('no-Sand-Bucket')
 
             # Absence check: Wheel Choke on stationary vehicles / trucks
@@ -1518,8 +1721,9 @@ class DetectorWorker:
 
                         if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
                         cd_key = f'no-wheel-choke-{tid}'
-                        if (now_t - self.alert_cooldowns.get(cd_key, 0.0)) >= 30.0 and (now_t - self.alert_cooldowns.get('no-wheel-choke', 0.0)) >= 30.0:
+                        if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0) and check_and_record_alert_cooldown(self.cam_id, 'no-wheel-choke', 30.0):
                             self.alert_cooldowns[cd_key] = now_t
+                            self.alert_cooldowns['no-wheel-choke'] = now_t
                             absence_alerts_to_trigger.append('no-wheel-choke')
 
         with self._box_lock:
@@ -1610,15 +1814,15 @@ class DetectorWorker:
                 if camera_selected_classes and not any(match_class(disp_c, sc) for sc in camera_selected_classes):
                     continue
 
-                # 1. Strict 30-Second Cooldown per class per camera
+                # 1. Strict 30-Second Cooldown per class per camera (thread-safe global tracking)
                 if not hasattr(self, 'alert_cooldowns'):
                     self.alert_cooldowns = {}
-                if (now_t - self.alert_cooldowns.get(disp_c, 0.0)) < 30.0:
+                if not check_and_record_alert_cooldown(self.cam_id, disp_c, 30.0):
                     continue
+                self.alert_cooldowns[disp_c] = now_t
 
                 total_hits = trk.get('hit_count', 0)
                 if total_hits >= 1:
-                    self.alert_cooldowns[disp_c] = now_t
                     trk['last_alert_time'] = now_t
                     print(f"[ALERT-TRIGGER-VIOLATION] Negative alert generated: cam={self.cam_id}, class={disp_c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
                     self._save_alert(disp_c, frame_snapshot)
@@ -1640,33 +1844,49 @@ class DetectorWorker:
                 crowd_thresh = 1
 
             if crowd_thresh and crowd_thresh >= 1:
-                person_boxes_in_roi = 0
-                for b in display_boxes:
-                    if b.get('cls', '').lower() == 'person':
-                        bx = b.get('box', [])
-                        if len(bx) == 4:
-                            if not self.roi_polygon or len(self.roi_polygon) != 2:
-                                person_boxes_in_roi += 1
-                            else:
-                                min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
-                                max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
-                                min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
-                                max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
-                                cx = (bx[0] + bx[2]) / 2.0
-                                cy = (bx[1] + bx[3]) / 2.0
-                                gx = cx
-                                gy = bx[3]
-                                if (min_x <= cx <= max_x and min_y <= cy <= max_y) or (min_x <= gx <= max_x and min_y <= gy <= max_y):
-                                    person_boxes_in_roi += 1
+                # Count only ACTIVE, DEDUPLICATED persons detected in the latest frame cycle
+                active_person_boxes = []
+                for tid, trk in self._ema_tracks.items():
+                    c_trk = trk.get('cls', '')
+                    if not match_class(c_trk, 'person'):
+                        continue
+                    # Ghost track filter: must have been seen in current cycle (<0.40s)
+                    if (now_t - trk.get('last_seen', 0.0)) > 0.40:
+                        continue
+                    bx = trk.get('box', [])
+                    if len(bx) != 4:
+                        continue
+
+                    # ROI filter if ROI boundary configured
+                    if self.roi_polygon and len(self.roi_polygon) == 2:
+                        min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
+                        max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
+                        min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
+                        max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
+                        cx = (bx[0] + bx[2]) / 2.0
+                        cy = (bx[1] + bx[3]) / 2.0
+                        gx, gy = cx, bx[3]
+                        if not ((min_x <= cx <= max_x and min_y <= cy <= max_y) or (min_x <= gx <= max_x and min_y <= gy <= max_y)):
+                            continue
+
+                    # Overlap deduplication: prevent double-counting of single person
+                    is_duplicate = False
+                    for existing_box in active_person_boxes:
+                        iou_v, io_min_v = DetectorWorker._box_iou_and_io_min(bx, existing_box)
+                        if iou_v >= 0.20 or io_min_v >= 0.35:
+                            is_duplicate = True
+                            break
+                    if not is_duplicate:
+                        active_person_boxes.append(bx)
+
+                person_boxes_in_roi = len(active_person_boxes)
 
                 # Crowd gathering alert condition:
-                # 1 person alone is NEVER a crowd.
-                # If limit is 1 person: 1 person is allowed (within limit). Alert triggers when count > 1 (2+ people).
-                # If limit is N >= 2: violation triggers when count reaches or exceeds threshold (count >= N and count >= 2).
-                if crowd_thresh == 1:
-                    is_crowd_alert = (person_boxes_in_roi > 1)
-                else:
-                    is_crowd_alert = (person_boxes_in_roi >= crowd_thresh and person_boxes_in_roi >= 2)
+                # "Crowd ROI Limit: N" defines the maximum permissible occupancy.
+                # When limit is N, occupancy <= N is compliant.
+                # Violation triggers ONLY when occupancy strictly exceeds limit (count > crowd_thresh)
+                # AND when count >= 2 (a single person alone is NEVER a crowd).
+                is_crowd_alert = (person_boxes_in_roi > crowd_thresh) and (person_boxes_in_roi >= 2)
 
                 if is_crowd_alert:
                     for b in display_boxes:
@@ -1676,7 +1896,7 @@ class DetectorWorker:
                     cd_key = f"crowd_alert_cam{self.cam_id}"
                     if not hasattr(self, 'alert_cooldowns'):
                         self.alert_cooldowns = {}
-                    if (now_t - self.alert_cooldowns.get(cd_key, 0.0)) >= 30.0:
+                    if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
                         self.alert_cooldowns[cd_key] = now_t
                         crowd_event_name = f"CROWD ALERT: {person_boxes_in_roi} Persons in ROI"
                         print(f"[ALERT-TRIGGER-CROWD] Crowd Gathering alert triggered: cam={self.cam_id}, count={person_boxes_in_roi} (threshold={crowd_thresh})", flush=True)
@@ -2140,14 +2360,13 @@ class DetectorWorker:
                                 with self._frame_lock:
                                     self._latest_jpeg_frame = j_bytes.tobytes()
 
-                            # Trigger alert if crowd threshold reached (with 30-second cooldown)
+                            # Trigger alert if crowd threshold reached (with global 30-second cooldown)
                             if metrics.get("is_alert"):
-                                now_c_t = time.time()
                                 cd_key = f"crowd_alert_cam{self.cam_id}"
                                 if not hasattr(self, 'alert_cooldowns'):
                                     self.alert_cooldowns = {}
-                                if (now_c_t - self.alert_cooldowns.get(cd_key, 0.0)) >= 30.0:
-                                    self.alert_cooldowns[cd_key] = now_c_t
+                                if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
+                                    self.alert_cooldowns[cd_key] = time.time()
                                     cnt = metrics.get("in_roi_count", 0)
                                     print(f"[ALERT] [ALERT-TRIGGER-CROWD] Crowd Gathering alert: cam={self.cam_id}, count={cnt} (threshold={self.crowd_engine.crowd_threshold})", flush=True)
                                     self._save_alert(f"CROWD ALERT: {cnt} Persons in ROI", pf)

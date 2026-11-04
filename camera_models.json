@@ -3,9 +3,5 @@
     "hansung_ppe_violations.pt",
     "yolov8n.pt"
   ],
-  "1": [],
-  "2": [],
-  "crowd": [
-    "yolov8n.pt"
-  ]
+  "1": []
 }

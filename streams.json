@@ -10,23 +10,14 @@
       "hansung_ppe_violations.pt": {
         "enabled_classes": [
           "NO-Hardhat",
-          "NO-Mask",
           "NO-Safety Vest"
         ],
         "class_configs": {
-          "NO-Mask": {
+          "NO-Hardhat": {
             "conf": 0.4,
-            "iou": 0.45
-          },
-          "No-Gloves": {
-            "conf": 0.18,
             "iou": 0.45
           },
           "NO-Safety Vest": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "NO-Hardhat": {
             "conf": 0.4,
             "iou": 0.45
           }
@@ -40,36 +31,18 @@
           "person": {
             "conf": 0.4,
             "iou": 0.45,
-            "crowd_threshold": 2
+            "crowd_threshold": 1
           }
         },
-        "crowd_threshold": 2
-      },
-      "yolov8n": {
-        "class_configs": {
-          "person": {
-            "conf": 0.4,
-            "iou": 0.45,
-            "crowd_threshold": 2
-          }
-        },
-        "crowd_threshold": 2,
-        "enabled_classes": [
-          "person"
-        ]
+        "crowd_threshold": 1
       },
       "hansung_ppe_violations": {
         "enabled_classes": [
           "NO-Hardhat",
-          "NO-Mask",
           "NO-Safety Vest"
         ],
         "class_configs": {
           "NO-Hardhat": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "NO-Mask": {
             "conf": 0.4,
             "iou": 0.45
           },
@@ -78,6 +51,19 @@
             "iou": 0.45
           }
         }
+      },
+      "yolov8n": {
+        "enabled_classes": [
+          "person"
+        ],
+        "class_configs": {
+          "person": {
+            "conf": 0.4,
+            "iou": 0.45,
+            "crowd_threshold": 1
+          }
+        },
+        "crowd_threshold": 1
       }
     },
     "device_id": "RPI-001",

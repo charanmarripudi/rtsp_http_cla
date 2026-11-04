@@ -2286,13 +2286,14 @@ def start_detection(d: dict):
             if cid.isdigit() and int(cid) < len(metadata) and isinstance(metadata[int(cid)], dict):
                 saved_mc = metadata[int(cid)].get("model_configs") or {}
                 saved_cfg = saved_mc.get(norm_m) or saved_mc.get(m_clean) or {}
-            if isinstance(saved_cfg, dict) and saved_cfg.get("enabled_classes"):
+            if isinstance(saved_cfg, dict) and saved_cfg.get("enabled_classes") is not None:
                 e_classes = saved_cfg.get("enabled_classes")
                 if isinstance(cfg, dict):
                     cfg["enabled_classes"] = e_classes
                 else:
                     cfg = saved_cfg
-        e_classes = e_classes if e_classes is not None else []
+        if e_classes is not None and isinstance(cfg, dict):
+            cfg["enabled_classes"] = e_classes
         if norm_m not in active_mods: 
             active_mods.append(norm_m)
         if isinstance(cfg, dict):
