@@ -320,16 +320,16 @@ def match_class(box_cls, enabled_cls):
         
     return False
 
-def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, all_persons=None):
+def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, all_persons=None, frame_height=360):
     """
     Classifies unauthorized activities for a person in Parking Area / Terminal ROI.
     Returns: (activity_name, confidence, details) or (None, 0.0, None)
     
     Activities evaluated:
     - fighting_posture: Guard stance with raised fists / wrists at shoulder level with nearby person
-    - smoking_gesture: Hand-to-mouth or wrist-to-nose gesture (< 35% torso distance)
-    - lying_down: Person horizontal, bbox w > h * 1.1 or torso/legs horizontal
-    - sitting: Person seated, hip-knee angle / horizontal thigh or bbox squat aspect ratio
+    - smoking_gesture: Hand-to-mouth or wrist-to-nose gesture (< 28% body height)
+    - lying_down: Person horizontal, confirmed by torso/legs orientation (not upright portrait)
+    - sitting: Person seated, hip-knee angle / horizontal thigh in parking bay
     - loitering: Person dwelling in parking area / ROI for >= 30 seconds
     """
     if not enabled_activities:
@@ -342,8 +342,21 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
     bw = max(1.0, x2 - x1)
     bh = max(1.0, y2 - y1)
     aspect_ratio = bw / bh
+    is_bottom_cropped = (y2 >= frame_height * 0.88)
 
     has_kp = (kp_data is not None and len(kp_data) >= 17)
+
+    # Check vertical upright alignment from keypoints
+    is_upright = False
+    if has_kp:
+        nose = kp_data[0]
+        l_sh = kp_data[5]
+        r_sh = kp_data[6]
+        sh_conf = max(l_sh[2], r_sh[2])
+        sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
+        if nose[2] > 0.20 and sh_conf > 0.20:
+            if nose[1] < sh_y:
+                is_upright = True
 
     # 1. Fighting Posture check (Highest safety hazard)
     if _is_enabled('fighting_posture') and has_kp:
@@ -377,6 +390,8 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         nose = kp_data[0]
         l_wr = kp_data[9]
         r_wr = kp_data[10]
+        l_el = kp_data[7]
+        r_el = kp_data[8]
         face_x, face_y = nose[0], nose[1]
         face_conf = nose[2]
         if face_conf < 0.25:
@@ -387,10 +402,12 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                 face_conf = 0.5
 
         if face_conf >= 0.25:
-            d_l = math.hypot(l_wr[0] - face_x, l_wr[1] - face_y) if l_wr[2] > 0.25 else 9999.0
-            d_r = math.hypot(r_wr[0] - face_x, r_wr[1] - face_y) if r_wr[2] > 0.25 else 9999.0
+            l_valid = (l_wr[2] > 0.25 and (l_el[2] < 0.2 or l_wr[1] <= l_el[1] + bh * 0.10))
+            r_valid = (r_wr[2] > 0.25 and (r_el[2] < 0.2 or r_wr[1] <= r_el[1] + bh * 0.10))
+            d_l = math.hypot(l_wr[0] - face_x, l_wr[1] - face_y) if l_valid else 9999.0
+            d_r = math.hypot(r_wr[0] - face_x, r_wr[1] - face_y) if r_valid else 9999.0
             min_hand_dist = min(d_l, d_r)
-            if min_hand_dist < min(bh * 0.32, bw * 0.70):
+            if min_hand_dist < min(bh * 0.28, bw * 0.60):
                 smoke_cnt = trk.get('smoke_frames', 0) + 1
                 trk['smoke_frames'] = smoke_cnt
                 if smoke_cnt >= 2:
@@ -398,12 +415,10 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             else:
                 trk['smoke_frames'] = max(0, trk.get('smoke_frames', 0) - 1)
 
-    # 3. Lying Down check
-    if _is_enabled('lying_down'):
+    # 3. Lying Down check (Must NOT trigger on upright person or bottom-cropped portrait)
+    if _is_enabled('lying_down') and not is_upright:
         is_lying = False
-        if aspect_ratio >= 1.15:
-            is_lying = True
-        elif has_kp:
+        if has_kp:
             l_sh, r_sh = kp_data[5], kp_data[6]
             l_hip, r_hip = kp_data[11], kp_data[12]
             if (l_sh[2] > 0.25 or r_sh[2] > 0.25) and (l_hip[2] > 0.25 or r_hip[2] > 0.25):
@@ -413,24 +428,31 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                 hip_x = (l_hip[0] + r_hip[0]) / 2.0
                 dx = abs(hip_x - sh_x)
                 dy = abs(hip_y - sh_y)
-                if dx > dy * 1.2:
+                # Torso is strictly horizontal
+                if dx > dy * 1.3:
                     is_lying = True
+        # Full-body horizontal on ground fallback (only when full body is in scene, not bottom-cropped)
+        if not is_lying and not is_bottom_cropped and aspect_ratio >= 1.35 and bh > 25:
+            is_lying = True
+
         if is_lying:
             return 'lying_down', 0.88, 'Horizontal Body Orientation'
 
-    # 4. Sitting check
+    # 4. Sitting check (Only when seated posture is confirmed)
     if _is_enabled('sitting'):
         is_sitting = False
         if has_kp:
             l_hip, r_hip = kp_data[11], kp_data[12]
             l_knee, r_knee = kp_data[13], kp_data[14]
-            if (l_hip[2] > 0.2 or r_hip[2] > 0.2) and (l_knee[2] > 0.2 or r_knee[2] > 0.2):
+            if (l_hip[2] > 0.25 or r_hip[2] > 0.25) and (l_knee[2] > 0.25 or r_knee[2] > 0.25):
                 hip_y = (l_hip[1] + r_hip[1]) / 2.0
                 knee_y = (l_knee[1] + r_knee[1]) / 2.0
                 hip_knee_dy = abs(knee_y - hip_y)
-                if hip_knee_dy < bh * 0.18:
+                # Sitting on ground or chair: knees at similar vertical level to hips
+                if hip_knee_dy < bh * 0.16:
                     is_sitting = True
-        if not is_sitting and 0.68 <= aspect_ratio <= 1.10:
+        # Squat / seated aspect ratio fallback only if not bottom-cropped
+        if not is_sitting and not is_bottom_cropped and 0.70 <= aspect_ratio <= 1.05 and bh > 35:
             is_sitting = True
         if is_sitting:
             return 'sitting', 0.82, 'Seated Posture in Parking Bay'
@@ -1742,7 +1764,7 @@ class DetectorWorker:
                     if in_zone and unauth_classes:
                         dwell_time = now_t - trk.get('first_seen', now_t)
                         act, act_conf, act_sub = classify_pose_activity(
-                            trk, trk.get('keypoints'), bx, dwell_time, unauth_classes, all_person_boxes
+                            trk, trk.get('keypoints'), bx, dwell_time, unauth_classes, all_person_boxes, frame_height=self.height
                         )
                         trk['unauth_activity'] = act
                         trk['unauth_conf'] = act_conf

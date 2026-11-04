@@ -358,22 +358,12 @@ class SpeedDashboard {
         if (!container) return;
 
         try {
-            // Vehicle Speed Tracking uses yolov8n with vehicle classes (truck, etc.)
+            // Vehicle Speed Tracking uses yolov8n for vehicle detection (truck, car, bus, motorcycle)
             const speedModels = ["yolov8n.pt"];
             this.availableModels = speedModels;
 
-            // Fetch classes directly from the model metadata
-            await Promise.all(speedModels.map(async (m) => {
-                try {
-                    const r = await fetch(`/api/model-classes?model=${encodeURIComponent(m)}`);
-                    if (r.ok) {
-                        const d = await r.json();
-                        this.modelClassesCache[m] = d.classes || [];
-                    }
-                } catch (e) {
-                    this.modelClassesCache[m] = ["truck"];
-                }
-            }));
+            // Vehicle speed explicitly monitors vehicle classes only
+            this.modelClassesCache["yolov8n.pt"] = ["truck", "car", "bus", "motorcycle"];
 
             this.renderModelCards(speedModels);
 
@@ -442,7 +432,7 @@ class SpeedDashboard {
                 font-weight: 700;
                 color: #00ffaa;
             `;
-            nameBadge.textContent = m;
+            nameBadge.textContent = "Vehicle Speed (yolov8n.pt)";
 
             leftHeader.appendChild(mChk);
             leftHeader.appendChild(nameBadge);

@@ -1312,6 +1312,12 @@ MODEL_CLASSES_CACHE = {
     "vehicle_intrusion": [
         "car", "truck", "bus", "motorcycle"
     ],
+    "vehicle_speed.pt": [
+        "truck", "car", "bus", "motorcycle"
+    ],
+    "vehicle_speed": [
+        "truck", "car", "bus", "motorcycle"
+    ],
     "unauthorized_activity.pt": [
         "sitting", "lying_down", "loitering", "smoking_gesture", "fighting_posture"
     ],
