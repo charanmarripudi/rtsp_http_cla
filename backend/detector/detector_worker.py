@@ -390,9 +390,24 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         elif sh_valid and abs(l_sh[0] - r_sh[0]) > bw * 0.30 and abs(l_sh[1] - r_sh[1]) < abs(l_sh[0] - r_sh[0]) * 0.45:
             is_upright = True
 
-    # 2. Biomechanical Sitting Detection
+    # 2. Standing Check (A standing person has tall aspect ratio bw/bh < 0.58 and/or straight knees)
+    is_definitely_standing = (aspect_ratio < 0.58)
+    if has_kp:
+        l_hip, r_hip = kp_data[11], kp_data[12]
+        l_knee, r_knee = kp_data[13], kp_data[14]
+        l_ank, r_ank = kp_data[15], kp_data[16]
+        l_ang = calculate_joint_angle(l_hip, l_knee, l_ank) if (l_hip[2] > 0.20 and l_knee[2] > 0.20 and l_ank[2] > 0.15) else None
+        r_ang = calculate_joint_angle(r_hip, r_knee, r_ank) if (r_hip[2] > 0.20 and r_knee[2] > 0.20 and r_ank[2] > 0.15) else None
+        if l_ang is not None and r_ang is not None and l_ang > 145.0 and r_ang > 145.0:
+            is_definitely_standing = True
+        elif l_ang is not None and r_ang is None and l_ang > 145.0 and aspect_ratio < 0.65:
+            is_definitely_standing = True
+        elif r_ang is not None and l_ang is None and r_ang > 145.0 and aspect_ratio < 0.65:
+            is_definitely_standing = True
+
+    # 3. Biomechanical Sitting Detection
     is_sitting = False
-    if _is_enabled('sitting') and has_kp:
+    if _is_enabled('sitting') and has_kp and not is_definitely_standing:
         l_sh, r_sh = kp_data[5], kp_data[6]
         l_hip, r_hip = kp_data[11], kp_data[12]
         l_knee, r_knee = kp_data[13], kp_data[14]
@@ -403,7 +418,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             l_knee_ang = calculate_joint_angle(l_hip, l_knee, l_ank)
             l_thigh_dy = abs(l_knee[1] - l_hip[1])
             l_thigh_dx = abs(l_knee[0] - l_hip[0])
-            if 60.0 <= l_knee_ang <= 135.0 and (l_thigh_dy < l_thigh_dx * 0.85 or l_thigh_dy < bh * 0.25):
+            if 55.0 <= l_knee_ang <= 135.0 and (l_thigh_dy < l_thigh_dx * 0.85 or l_thigh_dy < bh * 0.20):
                 is_sitting = True
 
         # Right leg knee flexion
@@ -411,21 +426,22 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             r_knee_ang = calculate_joint_angle(r_hip, r_knee, r_ank)
             r_thigh_dy = abs(r_knee[1] - r_hip[1])
             r_thigh_dx = abs(r_knee[0] - r_hip[0])
-            if 60.0 <= r_knee_ang <= 135.0 and (r_thigh_dy < r_thigh_dx * 0.85 or r_thigh_dy < bh * 0.25):
+            if 55.0 <= r_knee_ang <= 135.0 and (r_thigh_dy < r_thigh_dx * 0.85 or r_thigh_dy < bh * 0.20):
                 is_sitting = True
 
-        # Cross-legged floor sitting (e.g. Indian style sitting)
-        if not is_sitting and (l_knee[2] > 0.20 or r_knee[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20):
-            if l_knee[2] > 0.20 and r_knee[2] > 0.20:
-                knee_spread = abs(l_knee[0] - r_knee[0])
-                if knee_spread > bw * 0.40:
-                    hip_y = (l_hip[1] + r_hip[1]) / 2.0 if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1])
+        # Cross-legged floor sitting (e.g. Indian style sitting, as in Image 1)
+        # MUST have compressed aspect ratio (bw/bh >= 0.65), knees spread wide, and knees near ankles vertically
+        if not is_sitting and aspect_ratio >= 0.65 and (l_knee[2] > 0.20 and r_knee[2] > 0.20):
+            knee_spread = abs(l_knee[0] - r_knee[0])
+            if knee_spread > bw * 0.45:
+                if l_ank[2] > 0.15 and r_ank[2] > 0.15:
                     knee_y = (l_knee[1] + r_knee[1]) / 2.0
-                    if abs(hip_y - knee_y) < bh * 0.28:
+                    ank_y = (l_ank[1] + r_ank[1]) / 2.0
+                    if abs(knee_y - ank_y) < bh * 0.18:
                         is_sitting = True
 
         # Torso-thigh angle (hip flexion) when seated on chair/bench
-        if not is_sitting and (l_sh[2] > 0.20 or r_sh[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20) and (l_knee[2] > 0.20 or r_knee[2] > 0.20):
+        if not is_sitting and aspect_ratio >= 0.60 and (l_sh[2] > 0.20 or r_sh[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20) and (l_knee[2] > 0.20 or r_knee[2] > 0.20):
             sh_pt = l_sh if l_sh[2] > 0.20 else r_sh
             hip_pt = l_hip if l_hip[2] > 0.20 else r_hip
             knee_pt = l_knee if l_knee[2] > 0.20 else r_knee
@@ -433,17 +449,17 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             if 65.0 <= hip_ang <= 130.0:
                 is_sitting = True
 
-    # Aspect ratio / squat fallback for full body sitting (not bottom cropped)
-    if not is_sitting and _is_enabled('sitting') and not is_bottom_cropped and 0.70 <= aspect_ratio <= 1.25 and bh > 35:
+    # Squat fallback only when full body is in scene with squat aspect ratio
+    if not is_sitting and _is_enabled('sitting') and not is_bottom_cropped and 0.70 <= aspect_ratio <= 1.25 and bh > 35 and not is_definitely_standing:
         if has_kp:
             l_hip, r_hip = kp_data[11], kp_data[12]
             if max(l_hip[2], r_hip[2]) > 0.20:
                 hip_y = l_hip[1] if l_hip[2] > 0.20 else r_hip[1]
-                if (hip_y - y1) > bh * 0.38:
+                if (hip_y - y1) > bh * 0.40:
                     is_sitting = True
 
-    # 3. Lying Down (Torso Strictly Horizontal on Ground, NOT Upright)
-    if _is_enabled('lying_down') and not is_upright:
+    # 4. Lying Down (Torso Strictly Horizontal on Ground, NOT Upright)
+    if _is_enabled('lying_down'):
         is_lying = False
         if has_kp:
             l_sh, r_sh = kp_data[5], kp_data[6]
@@ -455,11 +471,11 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                 hip_y = (l_hip[1] + r_hip[1]) / 2.0 if (l_hip[2] > 0.15 and r_hip[2] > 0.15) else (l_hip[1] if l_hip[2] > 0.15 else r_hip[1])
                 dx = abs(hip_x - sh_x)
                 dy = abs(hip_y - sh_y)
-                if dx > dy * 1.15 and dx > bw * 0.20:
+                if dx > dy * 1.10 and dx > bw * 0.20:
                     is_lying = True
 
         # Fallback for small / distant figure lying down (e.g. mud video)
-        if not is_lying and not is_bottom_cropped and aspect_ratio >= 1.25 and bh >= 14:
+        if not is_lying and not is_bottom_cropped and aspect_ratio >= 1.20 and bh >= 14 and not is_upright:
             is_lying = True
 
         if is_lying:
@@ -1278,7 +1294,7 @@ class DetectorWorker:
 
             predict_kwargs = {
                 "source": f,
-                "conf":   max(PREDICT_CONF_FLOOR, min(0.25, min_class_conf, effective_conf) if is_unauth_mod else min(min_class_conf, effective_conf)),
+                "conf":   max(PREDICT_CONF_FLOOR, min(0.20, min_class_conf, effective_conf) if is_unauth_mod else min(min_class_conf, effective_conf)),
                 "iou":    m_iou,
                 "imgsz":  m_imgsz,
                 "verbose": False
@@ -1340,7 +1356,7 @@ class DetectorWorker:
                                     continue
 
                         # Per-class confidence gate (hard reject)
-                        req_conf = min(0.25, effective_conf) if is_unauth_mod else effective_conf
+                        req_conf = min(0.20, effective_conf) if is_unauth_mod else effective_conf
                         if class_configs and not is_unauth_mod:
                             for cc_name, cc_val in class_configs.items():
                                 if match_class(cls, cc_name) and isinstance(cc_val, dict) and "conf" in cc_val:

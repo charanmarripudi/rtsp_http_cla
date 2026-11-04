@@ -41,7 +41,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         sh_valid = (l_sh[2] > 0.20 and r_sh[2] > 0.20)
         sh_y = min(l_sh[1], r_sh[1]) if sh_valid else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
 
-        # If head keypoint is above shoulders, person is upright
+        # If head keypoint is above shoulders, person is definitely upright
         if head_y is not None and sh_y > 0 and head_y < sh_y:
             is_upright = True
         # If shoulders are aligned and hips are below shoulders
@@ -56,9 +56,24 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         elif sh_valid and abs(l_sh[0] - r_sh[0]) > bw * 0.30 and abs(l_sh[1] - r_sh[1]) < abs(l_sh[0] - r_sh[0]) * 0.45:
             is_upright = True
 
-    # 2. Biomechanical Sitting Detection
+    # 2. Standing Check (A standing person has tall aspect ratio bw/bh < 0.58 and/or straight knees)
+    is_definitely_standing = (aspect_ratio < 0.58)
+    if has_kp:
+        l_hip, r_hip = kp_data[11], kp_data[12]
+        l_knee, r_knee = kp_data[13], kp_data[14]
+        l_ank, r_ank = kp_data[15], kp_data[16]
+        l_ang = calculate_joint_angle(l_hip, l_knee, l_ank) if (l_hip[2] > 0.20 and l_knee[2] > 0.20 and l_ank[2] > 0.15) else None
+        r_ang = calculate_joint_angle(r_hip, r_knee, r_ank) if (r_hip[2] > 0.20 and r_knee[2] > 0.20 and r_ank[2] > 0.15) else None
+        if l_ang is not None and r_ang is not None and l_ang > 145.0 and r_ang > 145.0:
+            is_definitely_standing = True
+        elif l_ang is not None and r_ang is None and l_ang > 145.0 and aspect_ratio < 0.65:
+            is_definitely_standing = True
+        elif r_ang is not None and l_ang is None and r_ang > 145.0 and aspect_ratio < 0.65:
+            is_definitely_standing = True
+
+    # 3. Biomechanical Sitting Detection
     is_sitting = False
-    if _is_enabled('sitting') and has_kp:
+    if _is_enabled('sitting') and has_kp and not is_definitely_standing:
         l_sh, r_sh = kp_data[5], kp_data[6]
         l_hip, r_hip = kp_data[11], kp_data[12]
         l_knee, r_knee = kp_data[13], kp_data[14]
@@ -69,7 +84,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             l_knee_ang = calculate_joint_angle(l_hip, l_knee, l_ank)
             l_thigh_dy = abs(l_knee[1] - l_hip[1])
             l_thigh_dx = abs(l_knee[0] - l_hip[0])
-            if 60.0 <= l_knee_ang <= 135.0 and (l_thigh_dy < l_thigh_dx * 0.85 or l_thigh_dy < bh * 0.25):
+            if 55.0 <= l_knee_ang <= 135.0 and (l_thigh_dy < l_thigh_dx * 0.85 or l_thigh_dy < bh * 0.20):
                 is_sitting = True
 
         # Right leg knee flexion
@@ -77,21 +92,22 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             r_knee_ang = calculate_joint_angle(r_hip, r_knee, r_ank)
             r_thigh_dy = abs(r_knee[1] - r_hip[1])
             r_thigh_dx = abs(r_knee[0] - r_hip[0])
-            if 60.0 <= r_knee_ang <= 135.0 and (r_thigh_dy < r_thigh_dx * 0.85 or r_thigh_dy < bh * 0.25):
+            if 55.0 <= r_knee_ang <= 135.0 and (r_thigh_dy < r_thigh_dx * 0.85 or r_thigh_dy < bh * 0.20):
                 is_sitting = True
 
         # Cross-legged floor sitting (e.g. Indian style sitting, as in Image 1)
-        if not is_sitting and (l_knee[2] > 0.20 or r_knee[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20):
-            if l_knee[2] > 0.20 and r_knee[2] > 0.20:
-                knee_spread = abs(l_knee[0] - r_knee[0])
-                if knee_spread > bw * 0.40:
-                    hip_y = (l_hip[1] + r_hip[1]) / 2.0 if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1])
+        # MUST have compressed aspect ratio (bw/bh >= 0.65), knees spread wide, and knees near ankles vertically
+        if not is_sitting and aspect_ratio >= 0.65 and (l_knee[2] > 0.20 and r_knee[2] > 0.20):
+            knee_spread = abs(l_knee[0] - r_knee[0])
+            if knee_spread > bw * 0.45:
+                if l_ank[2] > 0.15 and r_ank[2] > 0.15:
                     knee_y = (l_knee[1] + r_knee[1]) / 2.0
-                    if abs(hip_y - knee_y) < bh * 0.28:
+                    ank_y = (l_ank[1] + r_ank[1]) / 2.0
+                    if abs(knee_y - ank_y) < bh * 0.18:
                         is_sitting = True
 
         # Torso-thigh angle (hip flexion) when seated on chair/bench
-        if not is_sitting and (l_sh[2] > 0.20 or r_sh[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20) and (l_knee[2] > 0.20 or r_knee[2] > 0.20):
+        if not is_sitting and aspect_ratio >= 0.60 and (l_sh[2] > 0.20 or r_sh[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20) and (l_knee[2] > 0.20 or r_knee[2] > 0.20):
             sh_pt = l_sh if l_sh[2] > 0.20 else r_sh
             hip_pt = l_hip if l_hip[2] > 0.20 else r_hip
             knee_pt = l_knee if l_knee[2] > 0.20 else r_knee
@@ -99,17 +115,17 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             if 65.0 <= hip_ang <= 130.0:
                 is_sitting = True
 
-    # Aspect ratio / squat fallback for full body sitting (not bottom cropped)
-    if not is_sitting and _is_enabled('sitting') and not is_bottom_cropped and 0.70 <= aspect_ratio <= 1.25 and bh > 35:
+    # Squat fallback only when full body is in scene with squat aspect ratio
+    if not is_sitting and _is_enabled('sitting') and not is_bottom_cropped and 0.70 <= aspect_ratio <= 1.25 and bh > 35 and not is_definitely_standing:
         if has_kp:
             l_hip, r_hip = kp_data[11], kp_data[12]
             if max(l_hip[2], r_hip[2]) > 0.20:
                 hip_y = l_hip[1] if l_hip[2] > 0.20 else r_hip[1]
-                if (hip_y - y1) > bh * 0.38:
+                if (hip_y - y1) > bh * 0.40:
                     is_sitting = True
 
-    # 3. Lying Down (Torso Strictly Horizontal on Ground, NOT Upright)
-    if _is_enabled('lying_down') and not is_upright:
+    # 4. Lying Down (Torso Strictly Horizontal on Ground, NOT Upright)
+    if _is_enabled('lying_down'):
         is_lying = False
         if has_kp:
             l_sh, r_sh = kp_data[5], kp_data[6]
@@ -121,11 +137,11 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                 hip_y = (l_hip[1] + r_hip[1]) / 2.0 if (l_hip[2] > 0.15 and r_hip[2] > 0.15) else (l_hip[1] if l_hip[2] > 0.15 else r_hip[1])
                 dx = abs(hip_x - sh_x)
                 dy = abs(hip_y - sh_y)
-                if dx > dy * 1.15 and dx > bw * 0.20:
+                if dx > dy * 1.10 and dx > bw * 0.20:
                     is_lying = True
 
         # Fallback for small / distant figure lying down (e.g. mud video)
-        if not is_lying and not is_bottom_cropped and aspect_ratio >= 1.25 and bh >= 14:
+        if not is_lying and not is_bottom_cropped and aspect_ratio >= 1.20 and bh >= 14 and not is_upright:
             is_lying = True
 
         if is_lying:
@@ -136,7 +152,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         else:
             trk['lie_start_t'] = None
 
-    # 4. Fighting Posture (Multi-Person Combat Guard Stance / Physical Altercation)
+    # 5. Fighting Posture (Multi-Person Combat Guard Stance / Physical Altercation)
     if _is_enabled('fighting_posture') and has_kp and not is_sitting:
         l_sh, r_sh = kp_data[5], kp_data[6]
         l_wr, r_wr = kp_data[9], kp_data[10]
@@ -155,8 +171,6 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                     near_combatant = True
                     break
 
-        # A true fighting guard stance requires fists/wrists raised to SHOULDER OR HEAD LEVEL:
-        # Fists protect the chin/face (y_wrist <= sh_y + bh * 0.04)
         l_fist_raised = (l_wr[2] > 0.20 and sh_y > 0 and l_wr[1] <= sh_y + bh * 0.04)
         r_fist_raised = (r_wr[2] > 0.20 and sh_y > 0 and r_wr[1] <= sh_y + bh * 0.04)
 
@@ -186,7 +200,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         else:
             trk['fight_start_t'] = None
 
-    # 5. Smoking Gesture (Hand-to-Mouth + Bent Elbow + Forearm Raised)
+    # 6. Smoking Gesture (Hand-to-Mouth + Bent Elbow + Forearm Raised)
     if _is_enabled('smoking_gesture') and has_kp:
         nose = kp_data[0]
         l_wr, r_wr = kp_data[9], kp_data[10]
@@ -225,7 +239,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             else:
                 trk['smoke_start_t'] = None
 
-    # 6. Sitting Confirmation
+    # 7. Sitting Confirmation
     if is_sitting:
         sit_start = trk.get('sit_start_t') or now_t
         trk['sit_start_t'] = sit_start
@@ -234,7 +248,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
     else:
         trk['sit_start_t'] = None
 
-    # 7. Loitering
+    # 8. Loitering
     if _is_enabled('loitering'):
         if dwell_time >= 30.0:
             return 'loitering', 0.88, f'Dwell Time {int(dwell_time)}s >= 30s'
@@ -244,66 +258,50 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
 def run_tests():
     enabled = ["sitting", "lying_down", "loitering", "smoking_gesture", "fighting_posture"]
     
-    # -------------------------------------------------------------
     # Test 1: User holding phone sitting at desk (Image 4 & 6)
-    # Wrists at mid-chest (y=175), shoulders at y=150, bh=140, bw=180
-    # -------------------------------------------------------------
     trk1 = {'fight_start_t': time.time() - 5.0, 'sit_start_t': None}
     kp1 = [[100, 110, 0.9]] + [[0,0,0]]*4 + [[70, 150, 0.85], [130, 150, 0.85], [50, 195, 0.8], [150, 195, 0.8], [80, 175, 0.85], [120, 175, 0.85]] + [[0,0,0]]*6
     box1 = [10, 80, 190, 220]
     act1, _, _ = classify_pose_activity(trk1, kp1, box1, 10.0, enabled)
     assert act1 is None, f"Test 1 FAILED: Expected None, got {act1}"
-    print("Test 1 PASSED: User holding phone at desk -> None (No false fight/smoke/lying)")
+    print("Test 1 PASSED: User holding phone at desk -> None")
 
-    # -------------------------------------------------------------
     # Test 2: User upper body portrait sitting upright (Image 2)
-    # Box aspect ratio 1.66 (bw=200, bh=120), head at top, shoulders horizontal
-    # -------------------------------------------------------------
     trk2 = {'lie_start_t': time.time() - 5.0}
     kp2 = [[100, 70, 0.85]] + [[0,0,0]]*4 + [[50, 110, 0.85], [150, 110, 0.85]] + [[0,0,0]]*10
     box2 = [20, 50, 220, 170]
     act2, _, _ = classify_pose_activity(trk2, kp2, box2, 10.0, enabled)
     assert act2 is None, f"Test 2 FAILED: Expected None, got {act2}"
-    print("Test 2 PASSED: User portrait upright -> None (No false lying down)")
+    print("Test 2 PASSED: User portrait upright -> None")
 
-    # -------------------------------------------------------------
     # Test 3: Person lying in mud (Image 6)
-    # Low-res figure, aspect ratio 1.63 (bw=36, bh=22), not upright
-    # -------------------------------------------------------------
     trk3 = {'lie_start_t': time.time() - 1.0}
-    box3 = [200, 250, 236, 272]  # bw=36, bh=22
+    box3 = [200, 250, 236, 272]
     act3, conf3, sub3 = classify_pose_activity(trk3, None, box3, 5.0, enabled)
     assert act3 == 'lying_down', f"Test 3 FAILED: Expected lying_down, got {act3}"
-    print(f"Test 3 PASSED: Person in mud -> {act3} ({sub3})")
+    print(f"Test 3 PASSED: Person in mud -> {act3}")
 
-    # -------------------------------------------------------------
     # Test 4: Man sitting cross-legged with hand on chin (Image 1)
-    # Knees spread wide (x=40, x=160), hips at y=170, knees at y=180, hand on chin
-    # -------------------------------------------------------------
     trk4 = {'sit_start_t': time.time() - 1.0, 'smoke_start_t': time.time() - 1.0}
-    # kp indices: 0:nose, 5:l_sh, 6:r_sh, 7:l_el, 8:r_el, 9:l_wr, 10:r_wr, 11:l_hip, 12:r_hip, 13:l_knee, 14:r_knee, 15:l_ank, 16:r_ank
     kp4 = [[100, 70, 0.9]] + [[0,0,0]]*4 + [
-        [70, 105, 0.9], [130, 105, 0.9],  # shoulders
-        [50, 140, 0.8], [140, 130, 0.8],  # elbows
-        [50, 170, 0.8], [105, 88, 0.85],  # wrists (right wrist propping chin under jaw)
-        [80, 165, 0.85], [120, 165, 0.85], # hips
-        [40, 180, 0.85], [160, 180, 0.85], # knees (spread wide)
-        [70, 190, 0.8], [130, 190, 0.8]    # ankles
+        [70, 105, 0.9], [130, 105, 0.9],
+        [50, 140, 0.8], [140, 130, 0.8],
+        [50, 170, 0.8], [105, 88, 0.85],
+        [80, 165, 0.85], [120, 165, 0.85],
+        [40, 180, 0.85], [160, 180, 0.85],
+        [70, 190, 0.8], [130, 190, 0.8]
     ]
-    box4 = [30, 50, 170, 200]  # bw=140, bh=150
+    box4 = [30, 50, 170, 200]
     act4, conf4, sub4 = classify_pose_activity(trk4, kp4, box4, 5.0, enabled)
     assert act4 == 'sitting', f"Test 4 FAILED: Expected sitting, got {act4}"
-    print(f"Test 4 PASSED: Man sitting cross-legged with hand on chin -> {act4} (NOT smoking!)")
+    print(f"Test 4 PASSED: Man sitting cross-legged -> {act4}")
 
-    # -------------------------------------------------------------
-    # Test 5: Boy pulling jacket / adjusting shirt (Image 5)
-    # Wrists at chest level (y=130), nose at y=70, shoulders at y=105
-    # -------------------------------------------------------------
+    # Test 5: Boy pulling jacket / adjusting shirt
     trk5 = {'smoke_start_t': time.time() - 5.0}
     kp5 = [[100, 70, 0.9]] + [[0,0,0]]*4 + [
         [65, 105, 0.9], [135, 105, 0.9],
         [40, 125, 0.8], [160, 125, 0.8],
-        [60, 130, 0.85], [140, 130, 0.85], # hands pulling jacket at chest
+        [60, 130, 0.85], [140, 130, 0.85],
         [80, 180, 0.8], [120, 180, 0.8],
         [80, 240, 0.8], [120, 240, 0.8],
         [80, 300, 0.8], [120, 300, 0.8]
@@ -311,17 +309,14 @@ def run_tests():
     box5 = [35, 50, 165, 310]
     act5, _, _ = classify_pose_activity(trk5, kp5, box5, 5.0, enabled)
     assert act5 is None, f"Test 5 FAILED: Expected None, got {act5}"
-    print("Test 5 PASSED: Boy pulling jacket -> None (No false smoking)")
+    print("Test 5 PASSED: Boy pulling jacket -> None")
 
-    # -------------------------------------------------------------
     # Test 6: Karate / Martial Arts Combat (Image 4)
-    # Two people close together, fists raised at face/shoulder level
-    # -------------------------------------------------------------
     trk6 = {'fight_start_t': time.time() - 1.0}
     kp6 = [[90, 80, 0.9]] + [[0,0,0]]*4 + [
         [70, 110, 0.85], [110, 110, 0.85],
         [60, 130, 0.85], [120, 130, 0.85],
-        [75, 100, 0.85], [105, 100, 0.85], # fists raised at head/shoulder level (guard)
+        [75, 100, 0.85], [105, 100, 0.85],
         [80, 170, 0.8], [100, 170, 0.8],
         [75, 230, 0.8], [105, 230, 0.8],
         [70, 290, 0.8], [110, 290, 0.8]
@@ -330,17 +325,14 @@ def run_tests():
     box6_b = [140, 60, 220, 300]
     act6, conf6, sub6 = classify_pose_activity(trk6, kp6, box6_a, 5.0, enabled, all_persons=[box6_a, box6_b])
     assert act6 == 'fighting_posture', f"Test 6 FAILED: Expected fighting_posture, got {act6}"
-    print(f"Test 6 PASSED: Karate sparring fighters -> {act6} ({sub6})")
+    print(f"Test 6 PASSED: Karate sparring fighters -> {act6}")
 
-    # -------------------------------------------------------------
     # Test 7: Real smoking gesture
-    # Hand at lips/mouth (x=102, y=78, nose=100, 72), wrist above elbow
-    # -------------------------------------------------------------
     trk7 = {'smoke_start_t': time.time() - 2.0}
     kp7 = [[100, 72, 0.9]] + [[0,0,0]]*4 + [
         [70, 110, 0.85], [130, 110, 0.85],
-        [60, 160, 0.8], [140, 135, 0.8],  # right elbow at y=135
-        [60, 200, 0.8], [103, 79, 0.9],    # right wrist at mouth (y=79 < y=135)
+        [60, 160, 0.8], [140, 135, 0.8],
+        [60, 200, 0.8], [103, 79, 0.9],
         [80, 180, 0.8], [120, 180, 0.8],
         [80, 240, 0.8], [120, 240, 0.8],
         [80, 300, 0.8], [120, 300, 0.8]
@@ -348,9 +340,54 @@ def run_tests():
     box7 = [50, 50, 150, 310]
     act7, conf7, sub7 = classify_pose_activity(trk7, kp7, box7, 5.0, enabled)
     assert act7 == 'smoking_gesture', f"Test 7 FAILED: Expected smoking_gesture, got {act7}"
-    print(f"Test 7 PASSED: Real smoking gesture -> {act7} ({sub7})")
+    print(f"Test 7 PASSED: Real smoking gesture -> {act7}")
 
-    print("\nALL 7 TESTS PASSED ACCURATELY!")
+    # Test 8: STANDING person with legs spread (Image 1 Box 0 - Maroon shirt boy)
+    trk8 = {'sit_start_t': time.time() - 5.0}
+    kp8 = [
+        [262.0, 108.6, 0.9], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [251.8, 135.4, 0.9], [210.6, 132.1, 1.0],
+        [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [249.8, 226.8, 1.0], [219.1, 226.5, 1.0],
+        [259.5, 290.9, 1.0], [204.8, 291.9, 1.0],
+        [266.8, 356.3, 1.0], [188.1, 363.1, 1.0]
+    ]
+    box8 = [172.5, 78.7, 291.0, 373.7]
+    act8, _, _ = classify_pose_activity(trk8, kp8, box8, 5.0, enabled)
+    assert act8 is None, f"Test 8 FAILED: Expected None (Standing), got {act8}"
+    print("Test 8 PASSED: Standing boy with legs spread (Image 1) -> None (NOT sitting!)")
+
+    # Test 9: STANDING person upright (Image 3 Box 1 - Black jacket)
+    trk9 = {'sit_start_t': time.time() - 5.0}
+    kp9 = [
+        [448.5, 335.4, 0.9], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [467.1, 355.9, 1.0], [435.1, 358.2, 1.0],
+        [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [466.9, 414.4, 1.0], [443.1, 415.5, 1.0],
+        [482.8, 458.7, 1.0], [432.7, 459.1, 1.0],
+        [497.0, 503.6, 1.0], [426.5, 503.5, 1.0]
+    ]
+    box9 = [420.3, 317.9, 510.2, 519.9]
+    act9, _, _ = classify_pose_activity(trk9, kp9, box9, 5.0, enabled)
+    assert act9 is None, f"Test 9 FAILED: Expected None (Standing), got {act9}"
+    print("Test 9 PASSED: Standing man in black jacket (Image 3) -> None (NOT sitting!)")
+
+    # Test 10: Prone person lying down on ground with horizontal torso
+    trk10 = {'lie_start_t': time.time() - 2.0}
+    kp10 = [
+        [150.0, 300.0, 0.8], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [180.0, 305.0, 0.8], [180.0, 315.0, 0.8], # shoulders
+        [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [250.0, 308.0, 0.8], [250.0, 318.0, 0.8], # hips (dx = 70, dy = 3)
+        [300.0, 310.0, 0.8], [300.0, 320.0, 0.8],
+        [350.0, 312.0, 0.8], [350.0, 322.0, 0.8]
+    ]
+    box10 = [140.0, 290.0, 360.0, 335.0]
+    act10, conf10, sub10 = classify_pose_activity(trk10, kp10, box10, 5.0, enabled)
+    assert act10 == 'lying_down', f"Test 10 FAILED: Expected lying_down, got {act10}"
+    print(f"Test 10 PASSED: Horizontal prone person -> {act10}")
+
+    print("\nALL 10 TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()
