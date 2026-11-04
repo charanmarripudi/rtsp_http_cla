@@ -1289,6 +1289,15 @@ def get_models():
 
 MODEL_CLASSES_CACHE = {
     "yolov8n.pt": [
+        "person"
+    ],
+    "yolov8n": [
+        "person"
+    ],
+    "intrusion.pt": [
+        "person", "truck"
+    ],
+    "intrusion": [
         "person", "truck"
     ],
     "ppe_new.pt": [
@@ -3942,7 +3951,7 @@ def is_negative_alert_string(evt: str) -> bool:
     violation_indicators = [
         "violation", "no-", "no_", "non-", "without-", "fall", "over-speed", "overspeed",
         "fire", "smoke", "spillage", "dome-opened", "dome-open", "valve-box-open",
-        "defective", "crowd"
+        "defective", "crowd", "intrusion"
     ]
     if any(vi in e for vi in violation_indicators):
         return True

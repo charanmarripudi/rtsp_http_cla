@@ -192,7 +192,7 @@ class LocationDashboardStore {
         this.locations = JSON.parse(localStorage.getItem("offline_locations") || "[]");
         this.streams = JSON.parse(localStorage.getItem("offline_streams") || "[]").map((item, idx) => this.streamView(item, idx));
         this.cameraModels = JSON.parse(localStorage.getItem("offline_camera_models") || "{}");
-        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt"];
+        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "intrusion.pt"];
     }
 
     seedLocationsFromStreams() {
@@ -795,7 +795,9 @@ class LocationDashboard {
             "150_firehose_best": ["fire_hose", "firehose_box"],
             "sand_ext_chocks": ["no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"],
             "best_tape": ["reflective_tape_floor", "reflective_tape_person", "reflective_tape_vehicles", "traffic_tape_bollards", "traffic_tape_cone"],
-            "yolov8n": ["person", "truck"]
+            "yolov8n": ["person"],
+            "crowd_detection": ["person"],
+            "intrusion": ["person", "truck"]
         };
         if (map[norm]) return map[norm];
         const loaded = this.modelClasses[modelName] || this.modelClasses[norm] || [];
@@ -856,14 +858,34 @@ class LocationDashboard {
             const savedEnabledClasses = mCfg.enabled_classes || [];
             const negClasses = this.getNegativeClasses(model);
 
+            let displayTitle = cleanM;
+            let badgeText = "VIOLATION CLASSES";
+            let badgeColor = "var(--danger)";
+            let badgeBg = "rgba(237, 28, 36, 0.12)";
+            let badgeBorder = "rgba(237, 28, 36, 0.35)";
+
+            if (cleanM.toLowerCase() === "yolov8n" || cleanM.toLowerCase() === "crowd_detection") {
+                displayTitle = "Crowd Detection";
+                badgeText = "CROWD MONITORING";
+                badgeColor = "#38bdf8";
+                badgeBg = "rgba(56, 189, 248, 0.12)";
+                badgeBorder = "rgba(56, 189, 248, 0.35)";
+            } else if (cleanM.toLowerCase() === "intrusion") {
+                displayTitle = "Intrusion Detection";
+                badgeText = "INTRUSION ROI";
+                badgeColor = "#f59e0b";
+                badgeBg = "rgba(245, 158, 11, 0.12)";
+                badgeBorder = "rgba(245, 158, 11, 0.35)";
+            }
+
             html += `
             <div class="model-accordion-card" style="width: 100%; background: rgba(14, 26, 51, 0.55); border: 1px solid ${isAssigned ? '#0A74DA' : 'var(--border)'}; border-radius: 8px; padding: 10px 12px; box-sizing: border-box; transition: all 0.2s;">
                 <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
                     <label class="model-header-label" style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; margin: 0;">
                         <input type="checkbox" class="parent-model-checkbox" value="${this.escapeHtml(model)}" ${isAssigned ? "checked" : ""} data-camera="${cameraIndex}" style="accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; margin: 0;">
-                        <span style="font-weight: 700; font-size: 0.78rem; color: ${isAssigned ? '#FFFFFF' : 'var(--text)'};">${this.escapeHtml(cleanM)}</span>
+                        <span style="font-weight: 700; font-size: 0.78rem; color: ${isAssigned ? '#FFFFFF' : 'var(--text)'};">${this.escapeHtml(displayTitle)}</span>
                     </label>
-                    <span style="font-size: 0.60rem; color: var(--danger); background: rgba(237, 28, 36, 0.12); border: 1px solid rgba(237, 28, 36, 0.35); padding: 2px 7px; border-radius: 4px; font-weight: 700; letter-spacing: 0.5px;">VIOLATION CLASSES</span>
+                    <span style="font-size: 0.60rem; color: ${badgeColor}; background: ${badgeBg}; border: 1px solid ${badgeBorder}; padding: 2px 7px; border-radius: 4px; font-weight: 700; letter-spacing: 0.5px;">${badgeText}</span>
                 </div>
                 <div class="model-classes-wrap" id="classes-wrap-${cameraIndex}-${this.escapeHtml(cleanM)}" style="display: ${isAssigned ? 'flex' : 'none'}; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
                     ${negClasses.length > 0 ? negClasses.map(cls => {

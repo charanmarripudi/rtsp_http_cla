@@ -20,6 +20,14 @@
           "NO-Safety Vest": {
             "conf": 0.4,
             "iou": 0.45
+          },
+          "No-Goggles": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "No-Safety-Belt": {
+            "conf": 0.4,
+            "iou": 0.45
           }
         }
       },

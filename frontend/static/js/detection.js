@@ -341,8 +341,15 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             const cCfg = (mCfg.class_configs && mCfg.class_configs[cls]) || {};
                             const cVal = cCfg.conf !== undefined ? parseFloat(cCfg.conf).toFixed(2) : parseFloat(mCfg.conf || meta.conf || 0.40).toFixed(2);
                             const iVal = cCfg.iou !== undefined ? parseFloat(cCfg.iou).toFixed(2) : parseFloat(mCfg.iou || meta.iou || 0.45).toFixed(2);
-                            const isPerson = (cls.toLowerCase() === "person");
+                            const isCrowdPerson = (cls.toLowerCase() === "person" && (cleanName.toLowerCase() === "yolov8n" || cleanName.toLowerCase() === "crowd_detection"));
                             const crowdThreshVal = parseInt(cCfg.crowd_threshold !== undefined ? cCfg.crowd_threshold : (mCfg.crowd_threshold !== undefined ? mCfg.crowd_threshold : 1), 10);
+
+                            let displayModelName = cleanName;
+                            if (cleanName.toLowerCase() === "yolov8n" || cleanName.toLowerCase() === "crowd_detection") {
+                                displayModelName = "Crowd Detection";
+                            } else if (cleanName.toLowerCase() === "intrusion") {
+                                displayModelName = "Intrusion Detection";
+                            }
 
                             const card = document.createElement("div");
                             card.className = "model-card-box";
@@ -352,7 +359,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
                             card.innerHTML = `
                                 <div class="model-chip-header" style="margin-bottom:6px;">
-                                    <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${cleanName} - ${cls}</span>
+                                    <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${displayModelName} - ${cls}</span>
                                 </div>
                                 <div class="thresholds compact" style="display:flex;gap:12px;flex-wrap:wrap;">
                                     <div class="thresh-row thresh-row-conf" style="flex:1;min-width:110px;">
@@ -377,7 +384,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                         </label>
                                         <input class="model-iou-slider" type="range" min="0.05" max="0.95" step="0.01" value="${iVal}" tabindex="0" style="width:100%;">
                                     </div>
-                                    ${isPerson ? `
+                                    ${isCrowdPerson ? `
                                     <div class="thresh-row thresh-row-crowd" style="flex:1;min-width:145px;">
                                         <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.7rem;color:var(--muted);user-select:none;">
                                             <span>Crowd ROI Limit</span>
@@ -469,13 +476,20 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                     const cVal = mCfg.conf !== undefined ? parseFloat(mCfg.conf).toFixed(2) : (meta.conf !== undefined ? parseFloat(meta.conf).toFixed(2) : "0.40");
                     const iVal = mCfg.iou !== undefined ? parseFloat(mCfg.iou).toFixed(2) : (meta.iou !== undefined ? parseFloat(meta.iou).toFixed(2) : "0.45");
 
+                    let displayM = cleanName;
+                    if (cleanName.toLowerCase() === "yolov8n" || cleanName.toLowerCase() === "crowd_detection") {
+                        displayM = "Crowd Detection";
+                    } else if (cleanName.toLowerCase() === "intrusion") {
+                        displayM = "Intrusion Detection";
+                    }
+
                     const card = document.createElement("div");
                     card.className = "model-card-box";
                     card.setAttribute("data-model", m);
                     card.style.cssText = "width:100%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;";
                     card.innerHTML = `
                         <div class="model-chip-header" style="margin-bottom:6px;">
-                            <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${cleanName}</span>
+                            <span class="model-chip checked" style="font-size:0.75rem;padding:3px 10px;border-radius:12px;background:rgba(0,255,170,0.12);color:#00ffaa;border:1px solid rgba(0,255,170,0.3);font-family:var(--mono);font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:#f5a623;border-radius:2px;display:inline-block;"></span>${displayM}</span>
                         </div>
                         <div class="thresholds compact" style="display:flex;gap:12px;flex-wrap:wrap;">
                             <div class="thresh-row thresh-row-conf" style="flex:1;min-width:110px;">

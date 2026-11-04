@@ -283,8 +283,8 @@ def is_negative_violation_class(cls_name: str, model_name: str = "") -> bool:
     if any(hv in c for hv in hazards_and_violations):
         return True
 
-    # 5. Over speed / crowd alerts
-    if "over-speed" in c or "overspeed" in c or "crowd-alert" in c or "crowd alert" in c.replace("-", " "):
+    # 5. Over speed / crowd alerts / intrusion alerts
+    if "over-speed" in c or "overspeed" in c or "crowd-alert" in c or "crowd alert" in c.replace("-", " ") or "intrusion" in c:
         return True
 
     return False
@@ -1910,6 +1910,54 @@ class DetectorWorker:
                         if b.get('cls', '').lower() == 'person':
                             b['color'] = (0, 255, 0)
                             b['label'] = f"person {b.get('conf', 0.8):.2f}"
+
+            # -- Intrusion Detection in User-Drawn ROI -------------------------
+            is_intrusion_assigned = any("intrusion" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
+            if is_intrusion_assigned:
+                intru_cfg = get_config_for_model(self.model_configs, "intrusion.pt") or get_config_for_model(self.model_configs, "intrusion") or {}
+                intru_classes = intru_cfg.get("enabled_classes") if isinstance(intru_cfg, dict) else None
+                if intru_classes is None:
+                    intru_classes = ["person", "truck"]
+
+                has_roi = bool(self.roi_polygon and len(self.roi_polygon) == 2)
+                if has_roi:
+                    r_min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
+                    r_max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
+                    r_min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
+                    r_max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
+
+                    for tid, trk in list(self._ema_tracks.items()):
+                        c_trk = trk.get('cls', '')
+                        if not any(match_class(c_trk, ic) for ic in intru_classes):
+                            continue
+                        if (now_t - trk.get('last_seen', 0.0)) > 0.40:
+                            continue
+                        bx = trk.get('box', [])
+                        if len(bx) != 4:
+                            continue
+                        cx = (bx[0] + bx[2]) / 2.0
+                        cy = (bx[1] + bx[3]) / 2.0
+                        gx, gy = cx, bx[3]
+
+                        # Check if object centroid or base touches drawn ROI
+                        in_roi = ((r_min_x <= cx <= r_max_x and r_min_y <= cy <= r_max_y) or
+                                  (r_min_x <= gx <= r_max_x and r_min_y <= gy <= r_max_y))
+
+                        if in_roi:
+                            # Highlight box in Alert Red with INTRUSION label on video
+                            for b in display_boxes:
+                                ob = b.get('box', [0, 0, 0, 0])
+                                if abs(ob[0] - bx[0]) < 10 and abs(ob[1] - bx[1]) < 10:
+                                    b['color'] = (20, 20, 237)
+                                    b['label'] = f"VIOLATION: INTRUSION ({c_trk}) {trk.get('conf', 0.8):.2f}"
+                                    b['sub'] = f"INTRUSION IN RESTRICTED ROI"
+
+                            # Trigger alert with global 30-second cooldown
+                            cd_key = f"intrusion_{c_trk}"
+                            if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
+                                alert_msg = f"VIOLATION: Intrusion Detected ({c_trk.capitalize()} in ROI)"
+                                print(f"[ALERT-TRIGGER-INTRUSION] Camera {self.cam_id}: {alert_msg}", flush=True)
+                                self._save_alert(alert_msg, frame_snapshot)
 
             with self._box_lock:
                 self._tracked_boxes = display_boxes
