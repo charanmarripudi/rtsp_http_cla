@@ -962,10 +962,14 @@ class DetectorWorker:
             m_conf = self.conf
             m_iou  = self.iou
             enabled_classes = None
+            class_configs   = {}
             is_veh_model    = ("vehicle" in m_name.lower() or "speed" in m_name.lower())
             default_imgsz   = 320 if is_veh_model else int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz         = default_imgsz
             cfg             = get_config_for_model(self.model_configs, m_name)
+            if cfg and isinstance(cfg, dict):
+                class_configs = dict(cfg.get("class_configs", {}) or {})
+
             # Companion model inheritance: ppe_new and nik inherit from hansung_ppe_violations if not explicitly configured
             if any(k in m_name.lower() for k in ("ppe_new", "nik")):
                 h_cfg = get_config_for_model(self.model_configs, "hansung_ppe_violations.pt")
@@ -979,7 +983,7 @@ class DetectorWorker:
                     if m_iou == self.iou and "iou" in h_cfg:
                         m_iou = float(h_cfg["iou"])
                     h_cc = h_cfg.get("class_configs", {})
-                    if h_cc:
+                    if h_cc and not class_configs:
                         class_configs = dict(h_cc)
 
             if cfg and isinstance(cfg, dict):
@@ -989,7 +993,7 @@ class DetectorWorker:
                     enabled_classes = cfg.get("enabled_classes")
                 m_imgsz         = int(cfg.get("imgsz", default_imgsz))
                 if "class_configs" in cfg:
-                    class_configs = cfg.get("class_configs", class_configs)
+                    class_configs = cfg.get("class_configs", class_configs) or {}
 
             if m_imgsz % 32 != 0:
                 m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
