@@ -353,6 +353,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                 displayModelName = "Intrusion in Non-Working Hours";
                             } else if (cleanName.toLowerCase() === "vehicle_intrusion") {
                                 displayModelName = "Vehicle Intrusion Detection";
+                            } else if (cleanName.toLowerCase() === "unauthorized_activity") {
+                                displayModelName = "Unauthorized Activity (Parking Area)";
                             }
 
                             const isNonWorkingHours = (cleanName.toLowerCase() === "non_working_hours");
@@ -525,6 +527,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                         displayM = "Intrusion in Non-Working Hours";
                     } else if (cleanName.toLowerCase() === "vehicle_intrusion") {
                         displayM = "Vehicle Intrusion Detection";
+                    } else if (cleanName.toLowerCase() === "unauthorized_activity") {
+                        displayM = "Unauthorized Activity (Parking Area)";
                     }
                     const isNwhWhole = (cleanName.toLowerCase() === "non_working_hours");
                     const nwhStartVal = mCfg.off_hours_start || "18:00";

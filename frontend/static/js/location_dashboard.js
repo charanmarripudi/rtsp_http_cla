@@ -192,7 +192,7 @@ class LocationDashboardStore {
         this.locations = JSON.parse(localStorage.getItem("offline_locations") || "[]");
         this.streams = JSON.parse(localStorage.getItem("offline_streams") || "[]").map((item, idx) => this.streamView(item, idx));
         this.cameraModels = JSON.parse(localStorage.getItem("offline_camera_models") || "{}");
-        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "intrusion.pt", "non_working_hours.pt", "vehicle_intrusion.pt"];
+        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "intrusion.pt", "non_working_hours.pt", "vehicle_intrusion.pt", "unauthorized_activity.pt"];
     }
 
     seedLocationsFromStreams() {
@@ -799,7 +799,8 @@ class LocationDashboard {
             "crowd_detection": ["person"],
             "intrusion": ["person", "truck"],
             "non_working_hours": ["person", "truck"],
-            "vehicle_intrusion": ["car", "truck", "bus", "motorcycle"]
+            "vehicle_intrusion": ["car", "truck", "bus", "motorcycle"],
+            "unauthorized_activity": ["sitting", "lying_down", "loitering", "smoking_gesture", "fighting_posture"]
         };
         if (map[norm]) return map[norm];
         const loaded = this.modelClasses[modelName] || this.modelClasses[norm] || [];
@@ -890,6 +891,12 @@ class LocationDashboard {
                 badgeColor = "#3b82f6";
                 badgeBg = "rgba(59, 130, 246, 0.12)";
                 badgeBorder = "rgba(59, 130, 246, 0.35)";
+            } else if (cleanM.toLowerCase() === "unauthorized_activity") {
+                displayTitle = "Unauthorized Activity (Parking Area)";
+                badgeText = "PARKING AREA SAFETY";
+                badgeColor = "#f43f5e";
+                badgeBg = "rgba(244, 63, 94, 0.12)";
+                badgeBorder = "rgba(244, 63, 94, 0.35)";
             }
 
             html += `

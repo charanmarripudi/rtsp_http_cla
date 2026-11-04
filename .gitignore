@@ -49,6 +49,7 @@ models_backup/
 !models/intrusion.pt
 !models/non_working_hours.pt
 !models/vehicle_intrusion.pt
+!models/unauthorized_activity.pt
 
 # Database credentials
 .env

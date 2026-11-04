@@ -283,8 +283,10 @@ def is_negative_violation_class(cls_name: str, model_name: str = "") -> bool:
     if any(hv in c for hv in hazards_and_violations):
         return True
 
-    # 5. Over speed / crowd alerts / intrusion alerts
-    if "over-speed" in c or "overspeed" in c or "crowd-alert" in c or "crowd alert" in c.replace("-", " ") or "intrusion" in c or "non-working" in c or "non_working" in c:
+    # 5. Over speed / crowd alerts / intrusion alerts / unauthorized activities
+    if ("over-speed" in c or "overspeed" in c or "crowd-alert" in c or "crowd alert" in c.replace("-", " ") or
+        "intrusion" in c or "non-working" in c or "non_working" in c or "unauthorized" in c or
+        "sitting" in c or "lying" in c or "loitering" in c or "smoking" in c or "fighting" in c):
         return True
 
     return False
@@ -317,6 +319,128 @@ def match_class(box_cls, enabled_cls):
         return True
         
     return False
+
+def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, all_persons=None):
+    """
+    Classifies unauthorized activities for a person in Parking Area / Terminal ROI.
+    Returns: (activity_name, confidence, details) or (None, 0.0, None)
+    
+    Activities evaluated:
+    - fighting_posture: Guard stance with raised fists / wrists at shoulder level with nearby person
+    - smoking_gesture: Hand-to-mouth or wrist-to-nose gesture (< 35% torso distance)
+    - lying_down: Person horizontal, bbox w > h * 1.1 or torso/legs horizontal
+    - sitting: Person seated, hip-knee angle / horizontal thigh or bbox squat aspect ratio
+    - loitering: Person dwelling in parking area / ROI for >= 30 seconds
+    """
+    if not enabled_activities:
+        return None, 0.0, None
+        
+    def _is_enabled(act_name):
+        return any(act_name.lower().replace('-', '_') in str(e).lower().replace('-', '_') for e in enabled_activities)
+
+    x1, y1, x2, y2 = box if (box and len(box) == 4) else [0, 0, 1, 1]
+    bw = max(1.0, x2 - x1)
+    bh = max(1.0, y2 - y1)
+    aspect_ratio = bw / bh
+
+    has_kp = (kp_data is not None and len(kp_data) >= 17)
+
+    # 1. Fighting Posture check (Highest safety hazard)
+    if _is_enabled('fighting_posture') and has_kp:
+        l_sh = kp_data[5]
+        r_sh = kp_data[6]
+        l_wr = kp_data[9]
+        r_wr = kp_data[10]
+        sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.25 and r_sh[2] > 0.25) else (l_sh[1] if l_sh[2] > 0.25 else r_sh[1])
+        if sh_y > 0 and (l_wr[2] > 0.25 or r_wr[2] > 0.25):
+            hands_up = (l_wr[2] > 0.25 and l_wr[1] <= sh_y + bh * 0.15) and (r_wr[2] > 0.25 and r_wr[1] <= sh_y + bh * 0.15)
+            near_person = False
+            if all_persons:
+                for ob in all_persons:
+                    if ob == box:
+                        continue
+                    ox1, oy1, ox2, oy2 = ob
+                    dist_cen = math.hypot((x1 + x2) / 2.0 - (ox1 + ox2) / 2.0, (y1 + y2) / 2.0 - (oy1 + oy2) / 2.0)
+                    if dist_cen < max(bw, bh) * 1.8:
+                        near_person = True
+                        break
+            if hands_up and (near_person or all_persons is None or len(all_persons) > 1):
+                fight_cnt = trk.get('fight_frames', 0) + 1
+                trk['fight_frames'] = fight_cnt
+                if fight_cnt >= 2:
+                    return 'fighting_posture', 0.86, 'Raised Guard Stance / Proximal Combat'
+            else:
+                trk['fight_frames'] = max(0, trk.get('fight_frames', 0) - 1)
+
+    # 2. Smoking Gesture check (Critical fire hazard at fuel terminal)
+    if _is_enabled('smoking_gesture') and has_kp:
+        nose = kp_data[0]
+        l_wr = kp_data[9]
+        r_wr = kp_data[10]
+        face_x, face_y = nose[0], nose[1]
+        face_conf = nose[2]
+        if face_conf < 0.25:
+            l_sh, r_sh = kp_data[5], kp_data[6]
+            if l_sh[2] > 0.2 and r_sh[2] > 0.2:
+                face_x = (l_sh[0] + r_sh[0]) / 2.0
+                face_y = min(l_sh[1], r_sh[1]) - bh * 0.18
+                face_conf = 0.5
+
+        if face_conf >= 0.25:
+            d_l = math.hypot(l_wr[0] - face_x, l_wr[1] - face_y) if l_wr[2] > 0.25 else 9999.0
+            d_r = math.hypot(r_wr[0] - face_x, r_wr[1] - face_y) if r_wr[2] > 0.25 else 9999.0
+            min_hand_dist = min(d_l, d_r)
+            if min_hand_dist < min(bh * 0.32, bw * 0.70):
+                smoke_cnt = trk.get('smoke_frames', 0) + 1
+                trk['smoke_frames'] = smoke_cnt
+                if smoke_cnt >= 2:
+                    return 'smoking_gesture', 0.84, 'Hand-to-Mouth Gesture'
+            else:
+                trk['smoke_frames'] = max(0, trk.get('smoke_frames', 0) - 1)
+
+    # 3. Lying Down check
+    if _is_enabled('lying_down'):
+        is_lying = False
+        if aspect_ratio >= 1.15:
+            is_lying = True
+        elif has_kp:
+            l_sh, r_sh = kp_data[5], kp_data[6]
+            l_hip, r_hip = kp_data[11], kp_data[12]
+            if (l_sh[2] > 0.25 or r_sh[2] > 0.25) and (l_hip[2] > 0.25 or r_hip[2] > 0.25):
+                sh_y = (l_sh[1] + r_sh[1]) / 2.0
+                hip_y = (l_hip[1] + r_hip[1]) / 2.0
+                sh_x = (l_sh[0] + r_sh[0]) / 2.0
+                hip_x = (l_hip[0] + r_hip[0]) / 2.0
+                dx = abs(hip_x - sh_x)
+                dy = abs(hip_y - sh_y)
+                if dx > dy * 1.2:
+                    is_lying = True
+        if is_lying:
+            return 'lying_down', 0.88, 'Horizontal Body Orientation'
+
+    # 4. Sitting check
+    if _is_enabled('sitting'):
+        is_sitting = False
+        if has_kp:
+            l_hip, r_hip = kp_data[11], kp_data[12]
+            l_knee, r_knee = kp_data[13], kp_data[14]
+            if (l_hip[2] > 0.2 or r_hip[2] > 0.2) and (l_knee[2] > 0.2 or r_knee[2] > 0.2):
+                hip_y = (l_hip[1] + r_hip[1]) / 2.0
+                knee_y = (l_knee[1] + r_knee[1]) / 2.0
+                hip_knee_dy = abs(knee_y - hip_y)
+                if hip_knee_dy < bh * 0.18:
+                    is_sitting = True
+        if not is_sitting and 0.68 <= aspect_ratio <= 1.10:
+            is_sitting = True
+        if is_sitting:
+            return 'sitting', 0.82, 'Seated Posture in Parking Bay'
+
+    # 5. Loitering check (dwell time >= 30.0s)
+    if _is_enabled('loitering'):
+        if dwell_time >= 30.0:
+            return 'loitering', 0.85, f'Dwell Time {int(dwell_time)}s >= 30s'
+
+    return None, 0.0, None
 
 INFERENCE_LOCK = threading.RLock()
 
@@ -941,6 +1065,7 @@ class DetectorWorker:
         cur_cls, now = set(), time.time()
         raw_boxes = []   # list of (xyxy_in_output_res, color, conf, cls_name)
         detected_persons_raw = []  # list of (rx1, ry1, rx2, ry2, conf) for dual near/far zoom
+        detected_pose_keypoints = []  # list of (box_xyxy, kp_scaled) for pose activity classification
 
         # Collect all classes the user explicitly enabled for this camera
         camera_selected_classes = []
@@ -967,6 +1092,7 @@ class DetectorWorker:
             enabled_classes = None
             class_configs   = {}
             is_veh_model    = ("vehicle" in m_name.lower() or "speed" in m_name.lower())
+            is_unauth_mod   = ("unauthorized" in m_name.lower())
             default_imgsz   = 320 if is_veh_model else int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz         = default_imgsz
             cfg             = get_config_for_model(self.model_configs, m_name)
@@ -1001,7 +1127,9 @@ class DetectorWorker:
             if m_imgsz % 32 != 0:
                 m_imgsz = int(math.ceil(m_imgsz / 32.0) * 32)
 
-            if enabled_classes is not None:
+            if is_unauth_mod:
+                filter_classes = ["person"]
+            elif enabled_classes is not None:
                 filter_classes = list(enabled_classes)
             elif camera_selected_classes:
                 filter_classes = list(camera_selected_classes)
@@ -1041,7 +1169,10 @@ class DetectorWorker:
                             cls_name = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
                             conf_val = float(b.conf[0].item())
                             all_raw_dets.append(f"{cls_name} {conf_val:.2f}")
-                            if filter_classes is None or any(match_class(cls_name, e) for e in filter_classes):
+                            if is_unauth_mod:
+                                if cls_name.lower() == "person":
+                                    mod_dets.append(f"person(pose) {conf_val:.2f}")
+                            elif filter_classes is None or any(match_class(cls_name, e) for e in filter_classes):
                                 mod_dets.append(f"{cls_name} {conf_val:.2f}")
 
                 print(f"[TIMER-INFERENCE] Camera {self.cam_id} model {m_name} (imgsz={m_imgsz}) -> Pure: {infer_ms}ms | Selected: {filter_classes if filter_classes is not None else 'ALL'} | Filtered Match: {mod_dets if mod_dets else 'None'} | Raw YOLO Output: {all_raw_dets if all_raw_dets else 'None'} ({datetime.now().strftime('%H:%M:%S.%f')[:-3]})", flush=True)
@@ -1051,7 +1182,7 @@ class DetectorWorker:
 
             for r in results:
                 if r.boxes:
-                    for b in r.boxes:
+                    for b_idx, b in enumerate(r.boxes):
                         cls_id   = int(b.cls[0].item())
                         cls      = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
                         conf_val = float(b.conf[0].item())
@@ -1063,13 +1194,17 @@ class DetectorWorker:
                         if cls.lower() == "person" and conf_val >= 0.25:
                             detected_persons_raw.append((rx1, ry1, rx2, ry2, conf_val))
 
-                        if filter_classes is not None:
-                            if not any(match_class(cls, e) for e in filter_classes):
+                        if is_unauth_mod:
+                            if cls.lower() != "person":
                                 continue
+                        else:
+                            if filter_classes is not None:
+                                if not any(match_class(cls, e) for e in filter_classes):
+                                    continue
 
-                        if camera_selected_classes:
-                            if not any(match_class(cls, sc) for sc in camera_selected_classes):
-                                continue
+                            if camera_selected_classes:
+                                if not any(match_class(cls, sc) for sc in camera_selected_classes):
+                                    continue
 
                         # Per-class confidence gate (hard reject)
                         req_conf = effective_conf
@@ -1087,6 +1222,17 @@ class DetectorWorker:
                         x2 = max(0, min(self.width  - 1, rx2 * scale_x))
                         y2 = max(0, min(self.height - 1, ry2 * scale_y))
                         box_xyxy = [x1, y1, x2, y2]
+
+                        if is_unauth_mod and hasattr(r, 'keypoints') and r.keypoints is not None:
+                            try:
+                                if len(r.keypoints.data) > b_idx:
+                                    kp_raw = r.keypoints.data[b_idx].cpu().numpy()
+                                    kp_scaled = []
+                                    for pt in kp_raw:
+                                        kp_scaled.append([float(pt[0]) * scale_x, float(pt[1]) * scale_y, float(pt[2])])
+                                    detected_pose_keypoints.append((box_xyxy, kp_scaled))
+                            except Exception as e_kp:
+                                pass
                         
                         bw = max(0, x2 - x1)
                         bh = max(0, y2 - y1)
@@ -1365,7 +1511,16 @@ class DetectorWorker:
                 if len(pos_hist) > 25:
                     pos_hist = pos_hist[-25:]
 
-                self._ema_tracks[best_id].update({
+                # Associate latest pose keypoints if person track
+                matched_kp = None
+                if detected_pose_keypoints and 'person' in str(assigned_cls).lower():
+                    for p_box, p_kp in detected_pose_keypoints:
+                        iou, _ = DetectorWorker._box_iou_and_io_min(smoothed, p_box)
+                        if iou > 0.35:
+                            matched_kp = p_kp
+                            break
+
+                trk_upd = {
                     'box':         smoothed,
                     'color':       color_val,
                     'conf':        conf_val,
@@ -1374,12 +1529,25 @@ class DetectorWorker:
                     'hit_count':   self._ema_tracks[best_id].get('hit_count', 0) + 1,
                     'history':     hist,
                     'pos_history': pos_hist,
-                })
+                }
+                if matched_kp is not None:
+                    trk_upd['keypoints'] = matched_kp
+                    trk_upd['last_pose_time'] = now_t
+                self._ema_tracks[best_id].update(trk_upd)
                 matched_ids.add(best_id)
             else:
                 new_id = self._ema_next_id
                 self._ema_next_id += 1
                 b_init = list(b_xyxy)
+
+                matched_kp = None
+                if detected_pose_keypoints and 'person' in str(cls_name).lower():
+                    for p_box, p_kp in detected_pose_keypoints:
+                        iou, _ = DetectorWorker._box_iou_and_io_min(b_init, p_box)
+                        if iou > 0.35:
+                            matched_kp = p_kp
+                            break
+
                 self._ema_tracks[new_id] = {
                     'box':             b_init,
                     'color':           color_val,
@@ -1396,6 +1564,8 @@ class DetectorWorker:
                     'disp_speed':      None,
                     'is_over_speed':   False,
                     'last_alert_time': 0.0,
+                    'keypoints':       matched_kp,
+                    'last_pose_time':  now_t if matched_kp is not None else 0.0,
                 }
                 matched_ids.add(new_id)
 
@@ -1538,19 +1708,71 @@ class DetectorWorker:
                                 trk['color'] = (0, 255, 100)  # Green Normal
                                 print(f"[SPEED-NORMAL] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h", flush=True)
 
+        # -- Pre-classify Unauthorized Activity for Person Tracks in Parking Area / Terminal --
+        is_unauth_assigned = any("unauthorized" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
+        unauth_classes = None
+        if is_unauth_assigned and not is_speed_camera:
+            unauth_cfg = get_config_for_model(self.model_configs, "unauthorized_activity.pt") or get_config_for_model(self.model_configs, "unauthorized_activity") or {}
+            unauth_classes = unauth_cfg.get("enabled_classes") if isinstance(unauth_cfg, dict) else None
+            if unauth_classes is None:
+                unauth_classes = ["sitting", "lying_down", "loitering", "smoking_gesture", "fighting_posture"]
+
+            has_roi = bool(self.roi_polygon and len(self.roi_polygon) == 2)
+            if has_roi:
+                r_min_x = min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
+                r_max_x = max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * self.width
+                r_min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
+                r_max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
+
+            all_person_boxes = [trk['box'] for trk in self._ema_tracks.values() if 'person' in str(trk.get('cls', '')).lower()]
+
+            for tid, trk in self._ema_tracks.items():
+                if 'person' in str(trk.get('cls', '')).lower():
+                    bx = trk.get('box', [])
+                    if len(bx) != 4:
+                        continue
+                    cx = (bx[0] + bx[2]) / 2.0
+                    cy = (bx[1] + bx[3]) / 2.0
+                    gx, gy = cx, bx[3]
+                    in_zone = True
+                    if has_roi:
+                        in_zone = ((r_min_x <= cx <= r_max_x and r_min_y <= cy <= r_max_y) or
+                                   (r_min_x <= gx <= r_max_x and r_min_y <= gy <= r_max_y))
+
+                    if in_zone and unauth_classes:
+                        dwell_time = now_t - trk.get('first_seen', now_t)
+                        act, act_conf, act_sub = classify_pose_activity(
+                            trk, trk.get('keypoints'), bx, dwell_time, unauth_classes, all_person_boxes
+                        )
+                        trk['unauth_activity'] = act
+                        trk['unauth_conf'] = act_conf
+                        trk['unauth_sub'] = act_sub
+                    else:
+                        trk['unauth_activity'] = None
+
         # Build display list from live EMA tracks
         display_boxes = []
         for tid, trk in self._ema_tracks.items():
             trk_cls = trk.get('cls', '')
-            if camera_selected_classes and not any(match_class(trk_cls, sc) for sc in camera_selected_classes):
-                continue
+            unauth_act = trk.get('unauth_activity')
 
             disp_cls = trk_cls
+            is_matched = False
             if camera_selected_classes:
                 for sc in camera_selected_classes:
                     if match_class(trk_cls, sc):
                         disp_cls = sc
+                        is_matched = True
                         break
+                    if unauth_act and match_class(unauth_act, sc):
+                        disp_cls = unauth_act
+                        is_matched = True
+                        break
+                if not is_matched:
+                    continue
+            else:
+                if unauth_act:
+                    disp_cls = unauth_act
 
             is_veh = any(vk in trk_cls.lower() for vk in vehicle_keywords)
             max_age = 1.2 if is_veh else TRACK_MAX_AGE_S
@@ -1583,16 +1805,21 @@ class DetectorWorker:
                 else:
                     box_col = trk.get('color', (0, 255, 100))
             else:
-                is_neg = is_negative_violation_class(disp_cls)
-                if is_neg:
-                    box_header = f"VIOLATION: {disp_cls} {conf_pct:.2f}"
+                if unauth_act and (disp_cls == unauth_act or match_class(disp_cls, unauth_act)):
+                    box_header = f"VIOLATION: UNAUTHORIZED ACTIVITY ({unauth_act.replace('_', ' ').upper()}) {trk.get('unauth_conf', conf_pct):.2f}"
+                    sub_lbl = f"PARKING AREA: {trk.get('unauth_sub', unauth_act.upper())}"
                     box_col = (20, 20, 237)  # Reliance Bold Alert Red (BGR)
                 else:
-                    box_header = f"{disp_cls} {conf_pct:.2f}"
-                    if str(disp_cls).lower() == 'person':
-                        box_col = (0, 255, 0)  # Compliant Green by default for normal person
+                    is_neg = is_negative_violation_class(disp_cls)
+                    if is_neg:
+                        box_header = f"VIOLATION: {disp_cls} {conf_pct:.2f}"
+                        box_col = (20, 20, 237)  # Reliance Bold Alert Red (BGR)
                     else:
-                        box_col = trk.get('color', (0, 255, 100))
+                        box_header = f"{disp_cls} {conf_pct:.2f}"
+                        if str(disp_cls).lower() == 'person':
+                            box_col = (0, 255, 0)  # Compliant Green by default for normal person
+                        else:
+                            box_col = trk.get('color', (0, 255, 100))
 
             display_boxes.append({
                 'box':    trk['box'],
@@ -2098,6 +2325,34 @@ class DetectorWorker:
                             alert_msg = f"VIOLATION: Vehicle Intrusion Detected ({c_trk.capitalize()}{' in ROI' if has_roi else ''})"
                             print(f"[ALERT-TRIGGER-VEH-INTRUSION] Camera {self.cam_id}: {alert_msg}", flush=True)
                             self._save_alert(alert_msg, frame_snapshot)
+
+            # -- Unauthorized Activity (Parking Area) Alert Triggering --
+            if is_unauth_assigned and not is_speed_camera:
+                for tid, trk in list(self._ema_tracks.items()):
+                    act = trk.get('unauth_activity')
+                    if not act:
+                        continue
+                    if (now_t - trk.get('last_seen', 0.0)) > 0.40:
+                        continue
+                    bx = trk.get('box', [])
+                    if len(bx) != 4:
+                        continue
+
+                    # Ensure display box is highlighted in Reliance Alert Red with clear label
+                    for b in display_boxes:
+                        ob = b.get('box', [0, 0, 0, 0])
+                        if b.get('trk_id') == tid or (abs(ob[0] - bx[0]) < 15 and abs(ob[1] - bx[1]) < 15):
+                            b['color'] = (20, 20, 237)
+                            b['label'] = f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()}) {trk.get('unauth_conf', trk.get('conf', 0.8)):.2f}"
+                            b['sub'] = f"PARKING AREA: {trk.get('unauth_sub', act.upper())}"
+
+                    # Trigger alert with global 30-second cooldown
+                    cd_key = f"unauth_{act}_{self.cam_id}"
+                    if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
+                        has_roi = bool(self.roi_polygon and len(self.roi_polygon) == 2)
+                        alert_msg = f"VIOLATION: Unauthorized Activity in Parking Area Detected ({act.replace('_', ' ').title()}{' in ROI' if has_roi else ''})"
+                        print(f"[ALERT-TRIGGER-UNAUTH] Camera {self.cam_id}: {alert_msg}", flush=True)
+                        self._save_alert(alert_msg, frame_snapshot)
 
             with self._box_lock:
                 self._tracked_boxes = display_boxes
