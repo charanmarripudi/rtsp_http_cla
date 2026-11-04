@@ -348,7 +348,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                             if (cleanName.toLowerCase() === "yolov8n" || cleanName.toLowerCase() === "crowd_detection") {
                                 displayModelName = "Crowd Detection";
                             } else if (cleanName.toLowerCase() === "intrusion") {
-                                displayModelName = "Intrusion Detection";
+                                displayModelName = "Intrusion Detection / Perimeter Intrusion";
                             }
 
                             const card = document.createElement("div");
@@ -480,7 +480,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                     if (cleanName.toLowerCase() === "yolov8n" || cleanName.toLowerCase() === "crowd_detection") {
                         displayM = "Crowd Detection";
                     } else if (cleanName.toLowerCase() === "intrusion") {
-                        displayM = "Intrusion Detection";
+                        displayM = "Intrusion Detection / Perimeter Intrusion";
                     }
 
                     const card = document.createElement("div");

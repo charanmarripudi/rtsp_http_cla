@@ -1960,12 +1960,12 @@ class DetectorWorker:
                                 if b.get('trk_id') == tid or (abs(ob[0] - bx[0]) < 15 and abs(ob[1] - bx[1]) < 15):
                                     b['color'] = (20, 20, 237)
                                     b['label'] = f"VIOLATION: INTRUSION ({c_trk}) {trk.get('conf', 0.8):.2f}"
-                                    b['sub'] = f"INTRUSION IN RESTRICTED ROI"
+                                    b['sub'] = f"PERIMETER / INTRUSION IN ROI"
 
                             # Trigger alert with global 30-second cooldown
                             cd_key = f"intrusion_{c_trk}"
                             if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
-                                alert_msg = f"VIOLATION: Intrusion Detected ({c_trk.capitalize()} in ROI)"
+                                alert_msg = f"VIOLATION: Intrusion / Perimeter Intrusion Detected ({c_trk.capitalize()} in ROI)"
                                 print(f"[ALERT-TRIGGER-INTRUSION] Camera {self.cam_id}: {alert_msg}", flush=True)
                                 self._save_alert(alert_msg, frame_snapshot)
 

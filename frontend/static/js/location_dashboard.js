@@ -871,8 +871,8 @@ class LocationDashboard {
                 badgeBg = "rgba(56, 189, 248, 0.12)";
                 badgeBorder = "rgba(56, 189, 248, 0.35)";
             } else if (cleanM.toLowerCase() === "intrusion") {
-                displayTitle = "Intrusion Detection";
-                badgeText = "INTRUSION ROI";
+                displayTitle = "Intrusion Detection / Perimeter Intrusion";
+                badgeText = "INTRUSION / PERIMETER";
                 badgeColor = "#f59e0b";
                 badgeBg = "rgba(245, 158, 11, 0.12)";
                 badgeBorder = "rgba(245, 158, 11, 0.35)";
