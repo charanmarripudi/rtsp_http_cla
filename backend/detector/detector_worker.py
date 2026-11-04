@@ -341,10 +341,10 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
     Designed for real-time edge CCTV deployments at petroleum terminals (OISD standards).
     
     Activities evaluated:
-    - fighting_posture: Multi-person proximity + guard stance held >= 1.5s
-    - smoking_gesture: Hand-to-mouth proximity + bent elbow held >= 1.8s
-    - lying_down: Torso axis strictly horizontal on ground held >= 2.0s (not upright)
-    - sitting: Knee angle 65-125 deg + hip flexion held >= 2.0s
+    - fighting_posture: Multi-person proximity + combat guard stance (wrists at shoulder/head height)
+    - smoking_gesture: Tight mouth proximity (dist < 0.15*bh) + wrist above elbow + acute angle (<105 deg)
+    - lying_down: Torso axis horizontal on ground (not upright portrait crop, bh >= 14)
+    - sitting: Knee angle 60-135 deg / wide cross-legged floor sitting / seated hip flexion
     - loitering: Dwell time inside restricted parking bay ROI >= 30.0s
     """
     if not enabled_activities:
@@ -359,7 +359,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
     bw = max(1.0, x2 - x1)
     bh = max(1.0, y2 - y1)
     aspect_ratio = bw / bh
-    is_bottom_cropped = (y2 >= frame_height * 0.88)
+    is_bottom_cropped = (y2 >= frame_height * 0.90)
 
     has_kp = (kp_data is not None and len(kp_data) >= 17)
 
@@ -367,34 +367,116 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
     is_upright = False
     if has_kp:
         nose = kp_data[0]
+        eyes_ears = [kp_data[i] for i in range(1, 5) if kp_data[i][2] > 0.20]
+        head_y = nose[1] if nose[2] > 0.20 else (sum(p[1] for p in eyes_ears)/len(eyes_ears) if eyes_ears else None)
         l_sh, r_sh = kp_data[5], kp_data[6]
         l_hip, r_hip = kp_data[11], kp_data[12]
-        sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
-        if nose[2] > 0.20 and sh_y > 0 and nose[1] < sh_y:
+
+        sh_valid = (l_sh[2] > 0.20 and r_sh[2] > 0.20)
+        sh_y = min(l_sh[1], r_sh[1]) if sh_valid else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
+
+        # If head keypoint is above shoulders, person is definitely upright
+        if head_y is not None and sh_y > 0 and head_y < sh_y:
             is_upright = True
+        # If shoulders are aligned and hips are below shoulders
         elif (l_sh[2] > 0.20 or r_sh[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20):
             sh_mid_y = (l_sh[1] + r_sh[1]) / 2.0
             hip_mid_y = (l_hip[1] + r_hip[1]) / 2.0
             sh_mid_x = (l_sh[0] + r_sh[0]) / 2.0
             hip_mid_x = (l_hip[0] + r_hip[0]) / 2.0
-            if (hip_mid_y - sh_mid_y) > abs(hip_mid_x - sh_mid_x) * 1.3:
+            if (hip_mid_y - sh_mid_y) > abs(hip_mid_x - sh_mid_x) * 1.1:
                 is_upright = True
+        # If both shoulders detected horizontally with no hips (upper body portrait crop)
+        elif sh_valid and abs(l_sh[0] - r_sh[0]) > bw * 0.30 and abs(l_sh[1] - r_sh[1]) < abs(l_sh[0] - r_sh[0]) * 0.45:
+            is_upright = True
 
-    # 2. Fighting Posture (Guard Stance / Raised Fists / Combat)
-    if _is_enabled('fighting_posture') and has_kp:
+    # 2. Biomechanical Sitting Detection
+    is_sitting = False
+    if _is_enabled('sitting') and has_kp:
+        l_sh, r_sh = kp_data[5], kp_data[6]
+        l_hip, r_hip = kp_data[11], kp_data[12]
+        l_knee, r_knee = kp_data[13], kp_data[14]
+        l_ank, r_ank = kp_data[15], kp_data[16]
+
+        # Left leg knee flexion (sitting on chair / curb / ground)
+        if l_hip[2] > 0.20 and l_knee[2] > 0.20 and l_ank[2] > 0.15:
+            l_knee_ang = calculate_joint_angle(l_hip, l_knee, l_ank)
+            l_thigh_dy = abs(l_knee[1] - l_hip[1])
+            l_thigh_dx = abs(l_knee[0] - l_hip[0])
+            if 60.0 <= l_knee_ang <= 135.0 and (l_thigh_dy < l_thigh_dx * 0.85 or l_thigh_dy < bh * 0.25):
+                is_sitting = True
+
+        # Right leg knee flexion
+        if not is_sitting and r_hip[2] > 0.20 and r_knee[2] > 0.20 and r_ank[2] > 0.15:
+            r_knee_ang = calculate_joint_angle(r_hip, r_knee, r_ank)
+            r_thigh_dy = abs(r_knee[1] - r_hip[1])
+            r_thigh_dx = abs(r_knee[0] - r_hip[0])
+            if 60.0 <= r_knee_ang <= 135.0 and (r_thigh_dy < r_thigh_dx * 0.85 or r_thigh_dy < bh * 0.25):
+                is_sitting = True
+
+        # Cross-legged floor sitting (e.g. Indian style sitting)
+        if not is_sitting and (l_knee[2] > 0.20 or r_knee[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20):
+            if l_knee[2] > 0.20 and r_knee[2] > 0.20:
+                knee_spread = abs(l_knee[0] - r_knee[0])
+                if knee_spread > bw * 0.40:
+                    hip_y = (l_hip[1] + r_hip[1]) / 2.0 if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1])
+                    knee_y = (l_knee[1] + r_knee[1]) / 2.0
+                    if abs(hip_y - knee_y) < bh * 0.28:
+                        is_sitting = True
+
+        # Torso-thigh angle (hip flexion) when seated on chair/bench
+        if not is_sitting and (l_sh[2] > 0.20 or r_sh[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20) and (l_knee[2] > 0.20 or r_knee[2] > 0.20):
+            sh_pt = l_sh if l_sh[2] > 0.20 else r_sh
+            hip_pt = l_hip if l_hip[2] > 0.20 else r_hip
+            knee_pt = l_knee if l_knee[2] > 0.20 else r_knee
+            hip_ang = calculate_joint_angle(sh_pt, hip_pt, knee_pt)
+            if 65.0 <= hip_ang <= 130.0:
+                is_sitting = True
+
+    # Aspect ratio / squat fallback for full body sitting (not bottom cropped)
+    if not is_sitting and _is_enabled('sitting') and not is_bottom_cropped and 0.70 <= aspect_ratio <= 1.25 and bh > 35:
+        if has_kp:
+            l_hip, r_hip = kp_data[11], kp_data[12]
+            if max(l_hip[2], r_hip[2]) > 0.20:
+                hip_y = l_hip[1] if l_hip[2] > 0.20 else r_hip[1]
+                if (hip_y - y1) > bh * 0.38:
+                    is_sitting = True
+
+    # 3. Lying Down (Torso Strictly Horizontal on Ground, NOT Upright)
+    if _is_enabled('lying_down') and not is_upright:
+        is_lying = False
+        if has_kp:
+            l_sh, r_sh = kp_data[5], kp_data[6]
+            l_hip, r_hip = kp_data[11], kp_data[12]
+            if (l_sh[2] > 0.15 or r_sh[2] > 0.15) and (l_hip[2] > 0.15 or r_hip[2] > 0.15):
+                sh_x = (l_sh[0] + r_sh[0]) / 2.0 if (l_sh[2] > 0.15 and r_sh[2] > 0.15) else (l_sh[0] if l_sh[2] > 0.15 else r_sh[0])
+                sh_y = (l_sh[1] + r_sh[1]) / 2.0 if (l_sh[2] > 0.15 and r_sh[2] > 0.15) else (l_sh[1] if l_sh[2] > 0.15 else r_sh[1])
+                hip_x = (l_hip[0] + r_hip[0]) / 2.0 if (l_hip[2] > 0.15 and r_hip[2] > 0.15) else (l_hip[0] if l_hip[2] > 0.15 else r_hip[0])
+                hip_y = (l_hip[1] + r_hip[1]) / 2.0 if (l_hip[2] > 0.15 and r_hip[2] > 0.15) else (l_hip[1] if l_hip[2] > 0.15 else r_hip[1])
+                dx = abs(hip_x - sh_x)
+                dy = abs(hip_y - sh_y)
+                if dx > dy * 1.15 and dx > bw * 0.20:
+                    is_lying = True
+
+        # Fallback for small / distant figure lying down (e.g. mud video)
+        if not is_lying and not is_bottom_cropped and aspect_ratio >= 1.25 and bh >= 14:
+            is_lying = True
+
+        if is_lying:
+            l_start = trk.get('lie_start_t') or now_t
+            trk['lie_start_t'] = l_start
+            if (now_t - l_start) >= 0.8:
+                return 'lying_down', 0.89, 'Horizontal Torso Orientation on Ground'
+        else:
+            trk['lie_start_t'] = None
+
+    # 4. Fighting Posture (Multi-Person Combat Guard Stance / Physical Altercation)
+    if _is_enabled('fighting_posture') and has_kp and not is_sitting:
         l_sh, r_sh = kp_data[5], kp_data[6]
         l_wr, r_wr = kp_data[9], kp_data[10]
         l_el, r_el = kp_data[7], kp_data[8]
+        nose = kp_data[0]
         sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
-
-        l_raised = (l_wr[2] > 0.20 and sh_y > 0 and l_wr[1] <= sh_y + bh * 0.22)
-        r_raised = (r_wr[2] > 0.20 and sh_y > 0 and r_wr[1] <= sh_y + bh * 0.22)
-
-        # Elbow flexion in guard stance
-        l_bent = (l_el[2] > 0.20 and calculate_joint_angle(l_sh, l_el, l_wr) < 135.0) if l_raised else False
-        r_bent = (r_el[2] > 0.20 and calculate_joint_angle(r_sh, r_el, r_wr) < 135.0) if r_raised else False
-
-        hands_guard = (l_raised and r_raised) or (l_raised and l_bent) or (r_raised and r_bent)
 
         near_combatant = False
         if all_persons and len(all_persons) > 1:
@@ -407,114 +489,86 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                     near_combatant = True
                     break
 
-        if hands_guard and (near_combatant or all_persons is None or len(all_persons) <= 1):
+        # A true fighting guard stance requires fists/wrists raised to SHOULDER OR HEAD LEVEL:
+        # Fists protect the chin/face (y_wrist <= sh_y + bh * 0.04)
+        l_fist_raised = (l_wr[2] > 0.20 and sh_y > 0 and l_wr[1] <= sh_y + bh * 0.04)
+        r_fist_raised = (r_wr[2] > 0.20 and sh_y > 0 and r_wr[1] <= sh_y + bh * 0.04)
+
+        l_guard_bent = (l_el[2] > 0.20 and calculate_joint_angle(l_sh, l_el, l_wr) < 125.0) if l_fist_raised else False
+        r_guard_bent = (r_el[2] > 0.20 and calculate_joint_angle(r_sh, r_el, r_wr) < 125.0) if r_fist_raised else False
+
+        both_hands_guard = (l_fist_raised and r_fist_raised and (l_guard_bent or r_guard_bent))
+
+        one_punch_extended = False
+        if near_combatant:
+            if l_fist_raised and l_el[2] > 0.20 and calculate_joint_angle(l_sh, l_el, l_wr) > 140.0:
+                one_punch_extended = True
+            elif r_fist_raised and r_el[2] > 0.20 and calculate_joint_angle(r_sh, r_el, r_wr) > 140.0:
+                one_punch_extended = True
+
+        is_fighting = False
+        if near_combatant and (both_hands_guard or one_punch_extended or (l_fist_raised and r_fist_raised)):
+            is_fighting = True
+        elif not near_combatant and both_hands_guard and (nose[2] > 0.20 and (l_wr[1] < nose[1] + bh * 0.10 and r_wr[1] < nose[1] + bh * 0.10)):
+            is_fighting = True
+
+        if is_fighting:
             f_start = trk.get('fight_start_t') or now_t
             trk['fight_start_t'] = f_start
             if (now_t - f_start) >= 0.8:
-                return 'fighting_posture', 0.88, 'Raised Guard Stance / Combat Posture'
+                return 'fighting_posture', 0.88, 'Combat Guard Stance / Physical Altercation'
         else:
             trk['fight_start_t'] = None
 
-    # 3. Smoking Gesture (Hand-to-Mouth + Bent Elbow + Temporal Hold >= 1.8s)
+    # 5. Smoking Gesture (Hand-to-Mouth + Bent Elbow + Forearm Raised)
     if _is_enabled('smoking_gesture') and has_kp:
         nose = kp_data[0]
         l_wr, r_wr = kp_data[9], kp_data[10]
         l_el, r_el = kp_data[7], kp_data[8]
         l_sh, r_sh = kp_data[5], kp_data[6]
 
+        sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
         face_x, face_y = nose[0], nose[1]
         face_conf = nose[2]
-        if face_conf < 0.25 and (l_sh[2] > 0.2 and r_sh[2] > 0.2):
+        if face_conf < 0.25 and (l_sh[2] > 0.20 and r_sh[2] > 0.20):
             face_x = (l_sh[0] + r_sh[0]) / 2.0
-            face_y = min(l_sh[1], r_sh[1]) - bh * 0.18
+            face_y = min(l_sh[1], r_sh[1]) - bh * 0.16
             face_conf = 0.5
 
         if face_conf >= 0.25:
-            l_smoking = False
-            if l_wr[2] > 0.25 and l_el[2] > 0.20 and l_sh[2] > 0.20:
-                l_dist = math.hypot(l_wr[0] - face_x, l_wr[1] - face_y)
-                l_elbow_ang = calculate_joint_angle(l_sh, l_el, l_wr)
-                if l_dist < min(bh * 0.26, bw * 0.55) and l_elbow_ang < 115.0 and l_wr[1] <= l_el[1] + bh * 0.10:
-                    l_smoking = True
+            mouth_y = face_y + bh * 0.05
+            is_smoking = False
 
-            r_smoking = False
-            if r_wr[2] > 0.25 and r_el[2] > 0.20 and r_sh[2] > 0.20:
-                r_dist = math.hypot(r_wr[0] - face_x, r_wr[1] - face_y)
-                r_elbow_ang = calculate_joint_angle(r_sh, r_el, r_wr)
-                if r_dist < min(bh * 0.26, bw * 0.55) and r_elbow_ang < 115.0 and r_wr[1] <= r_el[1] + bh * 0.10:
-                    r_smoking = True
+            for wr, el, sh in [(l_wr, l_el, l_sh), (r_wr, r_el, r_sh)]:
+                if wr[2] > 0.25 and el[2] > 0.20 and sh[2] > 0.20:
+                    dist = math.hypot(wr[0] - face_x, wr[1] - mouth_y)
+                    is_at_mouth_height = (face_y - bh * 0.06 <= wr[1] <= sh_y + bh * 0.02)
+                    wrist_above_elbow = (wr[1] < el[1] + bh * 0.03)
+                    elbow_ang = calculate_joint_angle(sh, el, wr)
+                    is_chin_prop = (is_sitting and wr[1] > mouth_y and abs(wr[0] - face_x) < bw * 0.15)
 
-            if l_smoking or r_smoking:
+                    if dist < min(bh * 0.15, bw * 0.32) and is_at_mouth_height and wrist_above_elbow and elbow_ang < 105.0 and not is_chin_prop:
+                        is_smoking = True
+                        break
+
+            if is_smoking:
                 s_start = trk.get('smoke_start_t') or now_t
                 trk['smoke_start_t'] = s_start
-                if (now_t - s_start) >= 1.8:
-                    return 'smoking_gesture', 0.86, 'Persistent Hand-to-Mouth Gesture'
+                if (now_t - s_start) >= 1.5:
+                    return 'smoking_gesture', 0.88, 'Persistent Hand-to-Mouth Smoking Gesture'
             else:
                 trk['smoke_start_t'] = None
 
-    # 4. Lying Down (Torso Strictly Horizontal + Temporal Hold >= 2.0s, NOT Upright)
-    if _is_enabled('lying_down') and not is_upright:
-        is_lying = False
-        if has_kp:
-            l_sh, r_sh = kp_data[5], kp_data[6]
-            l_hip, r_hip = kp_data[11], kp_data[12]
-            if (l_sh[2] > 0.25 or r_sh[2] > 0.25) and (l_hip[2] > 0.25 or r_hip[2] > 0.25):
-                sh_x, sh_y = (l_sh[0] + r_sh[0]) / 2.0, (l_sh[1] + r_sh[1]) / 2.0
-                hip_x, hip_y = (l_hip[0] + r_hip[0]) / 2.0, (l_hip[1] + r_hip[1]) / 2.0
-                dx = abs(hip_x - sh_x)
-                dy = abs(hip_y - sh_y)
-                if dx > dy * 1.5:
-                    is_lying = True
+    # 6. Sitting Confirmation
+    if is_sitting:
+        sit_start = trk.get('sit_start_t') or now_t
+        trk['sit_start_t'] = sit_start
+        if (now_t - sit_start) >= 0.8:
+            return 'sitting', 0.85, 'Seated Posture with Bent Knee Angles'
+    else:
+        trk['sit_start_t'] = None
 
-        if not is_lying and not is_bottom_cropped and aspect_ratio >= 1.40 and bh > 30:
-            is_lying = True
-
-        if is_lying:
-            l_start = trk.get('lie_start_t') or now_t
-            trk['lie_start_t'] = l_start
-            if (now_t - l_start) >= 2.0:
-                return 'lying_down', 0.89, 'Horizontal Torso Orientation on Ground'
-        else:
-            trk['lie_start_t'] = None
-
-    # 5. Sitting (Knee Angle 65-125 deg + Bent Hip + Temporal Hold >= 2.0s)
-    if _is_enabled('sitting'):
-        is_sitting = False
-        if has_kp:
-            l_sh, r_sh = kp_data[5], kp_data[6]
-            l_hip, r_hip = kp_data[11], kp_data[12]
-            l_knee, r_knee = kp_data[13], kp_data[14]
-            l_ank, r_ank = kp_data[15], kp_data[16]
-
-            # Check left leg biomechanics
-            if l_hip[2] > 0.25 and l_knee[2] > 0.25 and l_ank[2] > 0.20:
-                l_knee_ang = calculate_joint_angle(l_hip, l_knee, l_ank)
-                l_thigh_dy = abs(l_knee[1] - l_hip[1])
-                l_thigh_dx = abs(l_knee[0] - l_hip[0])
-                if 65.0 <= l_knee_ang <= 125.0 and (l_thigh_dy < l_thigh_dx * 0.75 or l_thigh_dy < bh * 0.20):
-                    is_sitting = True
-
-            # Check right leg biomechanics
-            if not is_sitting and r_hip[2] > 0.25 and r_knee[2] > 0.25 and r_ank[2] > 0.20:
-                r_knee_ang = calculate_joint_angle(r_hip, r_knee, r_ank)
-                r_thigh_dy = abs(r_knee[1] - r_hip[1])
-                r_thigh_dx = abs(r_knee[0] - r_hip[0])
-                if 65.0 <= r_knee_ang <= 125.0 and (r_thigh_dy < r_thigh_dx * 0.75 or r_thigh_dy < bh * 0.20):
-                    is_sitting = True
-
-        # Squat fallback only when full body is in scene
-        if not is_sitting and not is_bottom_cropped and 0.72 <= aspect_ratio <= 1.05 and bh > 45:
-            is_sitting = True
-
-        if is_sitting:
-            sit_start = trk.get('sit_start_t') or now_t
-            trk['sit_start_t'] = sit_start
-            if (now_t - sit_start) >= 2.0:
-                return 'sitting', 0.85, 'Seated Posture with Bent Knee Angles'
-        else:
-            trk['sit_start_t'] = None
-
-    # 6. Loitering (Track dwell time in parking area >= 30.0s)
+    # 7. Loitering (Track dwell time in parking area >= 30.0s)
     if _is_enabled('loitering'):
         if dwell_time >= 30.0:
             return 'loitering', 0.88, f'Dwell Time {int(dwell_time)}s >= 30s'
@@ -1593,11 +1647,22 @@ class DetectorWorker:
                 # Associate latest pose keypoints if person track
                 matched_kp = None
                 if detected_pose_keypoints and 'person' in str(assigned_cls).lower():
+                    best_kp_match = None
+                    best_kp_score = 0.0
+                    s_cx = (smoothed[0] + smoothed[2]) / 2.0
+                    s_cy = (smoothed[1] + smoothed[3]) / 2.0
+                    diag = max(1.0, math.hypot(smoothed[2] - smoothed[0], smoothed[3] - smoothed[1]))
                     for p_box, p_kp in detected_pose_keypoints:
-                        iou, _ = DetectorWorker._box_iou_and_io_min(smoothed, p_box)
-                        if iou > 0.35:
-                            matched_kp = p_kp
-                            break
+                        iou, io_min = DetectorWorker._box_iou_and_io_min(smoothed, p_box)
+                        p_cx = (p_box[0] + p_box[2]) / 2.0
+                        p_cy = (p_box[1] + p_box[3]) / 2.0
+                        c_dist = math.hypot(s_cx - p_cx, s_cy - p_cy)
+                        dist_score = max(0.0, 1.0 - c_dist / diag)
+                        score = max(iou, io_min * 0.85, dist_score * 0.75)
+                        if score > best_kp_score and score >= 0.25:
+                            best_kp_score = score
+                            best_kp_match = p_kp
+                    matched_kp = best_kp_match
 
                 trk_upd = {
                     'box':         smoothed,
@@ -1612,6 +1677,8 @@ class DetectorWorker:
                 if matched_kp is not None:
                     trk_upd['keypoints'] = matched_kp
                     trk_upd['last_pose_time'] = now_t
+                elif (now_t - self._ema_tracks[best_id].get('last_pose_time', 0.0)) < 0.6:
+                    trk_upd['keypoints'] = self._ema_tracks[best_id].get('keypoints')
                 self._ema_tracks[best_id].update(trk_upd)
                 matched_ids.add(best_id)
             else:
@@ -1621,11 +1688,22 @@ class DetectorWorker:
 
                 matched_kp = None
                 if detected_pose_keypoints and 'person' in str(cls_name).lower():
+                    best_kp_match = None
+                    best_kp_score = 0.0
+                    b_cx = (b_init[0] + b_init[2]) / 2.0
+                    b_cy = (b_init[1] + b_init[3]) / 2.0
+                    diag = max(1.0, math.hypot(b_init[2] - b_init[0], b_init[3] - b_init[1]))
                     for p_box, p_kp in detected_pose_keypoints:
-                        iou, _ = DetectorWorker._box_iou_and_io_min(b_init, p_box)
-                        if iou > 0.35:
-                            matched_kp = p_kp
-                            break
+                        iou, io_min = DetectorWorker._box_iou_and_io_min(b_init, p_box)
+                        p_cx = (p_box[0] + p_box[2]) / 2.0
+                        p_cy = (p_box[1] + p_box[3]) / 2.0
+                        c_dist = math.hypot(b_cx - p_cx, b_cy - p_cy)
+                        dist_score = max(0.0, 1.0 - c_dist / diag)
+                        score = max(iou, io_min * 0.85, dist_score * 0.75)
+                        if score > best_kp_score and score >= 0.25:
+                            best_kp_score = score
+                            best_kp_match = p_kp
+                    matched_kp = best_kp_match
 
                 self._ema_tracks[new_id] = {
                     'box':             b_init,
@@ -1793,6 +1871,10 @@ class DetectorWorker:
         if is_unauth_assigned and not is_speed_camera:
             unauth_cfg = get_config_for_model(self.model_configs, "unauthorized_activity.pt") or get_config_for_model(self.model_configs, "unauthorized_activity") or {}
             unauth_classes = unauth_cfg.get("enabled_classes") if isinstance(unauth_cfg, dict) else None
+            if unauth_classes is None and camera_selected_classes:
+                sub = [c for c in camera_selected_classes if any(k in c.lower() for k in ("sitting", "lying", "loiter", "smok", "fight"))]
+                if sub:
+                    unauth_classes = sub
             if unauth_classes is None:
                 unauth_classes = ["sitting", "lying_down", "loitering", "smoking_gesture", "fighting_posture"]
 
@@ -2422,6 +2504,10 @@ class DetectorWorker:
                         continue
                     bx = trk.get('box', [])
                     if len(bx) != 4:
+                        continue
+
+                    # Respect enabled/selected classes
+                    if camera_selected_classes and not any(match_class(act, sc) for sc in camera_selected_classes):
                         continue
 
                     # Ensure display box is highlighted in Reliance Alert Red with clear label
