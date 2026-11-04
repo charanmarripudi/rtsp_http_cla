@@ -380,14 +380,22 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             if (hip_mid_y - sh_mid_y) > abs(hip_mid_x - sh_mid_x) * 1.3:
                 is_upright = True
 
-    # 2. Fighting Posture (Multi-Person Proximity + Guard Stance + Temporal Hold >= 1.5s)
+    # 2. Fighting Posture (Guard Stance / Raised Fists / Combat)
     if _is_enabled('fighting_posture') and has_kp:
         l_sh, r_sh = kp_data[5], kp_data[6]
         l_wr, r_wr = kp_data[9], kp_data[10]
+        l_el, r_el = kp_data[7], kp_data[8]
         sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
-        
-        hands_guard = sh_y > 0 and ((l_wr[2] > 0.25 and l_wr[1] <= sh_y + bh * 0.15) and (r_wr[2] > 0.25 and r_wr[1] <= sh_y + bh * 0.15))
-        
+
+        l_raised = (l_wr[2] > 0.20 and sh_y > 0 and l_wr[1] <= sh_y + bh * 0.22)
+        r_raised = (r_wr[2] > 0.20 and sh_y > 0 and r_wr[1] <= sh_y + bh * 0.22)
+
+        # Elbow flexion in guard stance
+        l_bent = (l_el[2] > 0.20 and calculate_joint_angle(l_sh, l_el, l_wr) < 135.0) if l_raised else False
+        r_bent = (r_el[2] > 0.20 and calculate_joint_angle(r_sh, r_el, r_wr) < 135.0) if r_raised else False
+
+        hands_guard = (l_raised and r_raised) or (l_raised and l_bent) or (r_raised and r_bent)
+
         near_combatant = False
         if all_persons and len(all_persons) > 1:
             for ob in all_persons:
@@ -395,15 +403,15 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                     continue
                 ox1, oy1, ox2, oy2 = ob
                 dist_cen = math.hypot((x1 + x2)/2.0 - (ox1 + ox2)/2.0, (y1 + y2)/2.0 - (oy1 + oy2)/2.0)
-                if dist_cen < max(bw, bh) * 1.5:
+                if dist_cen < max(bw, bh) * 1.8:
                     near_combatant = True
                     break
 
-        if hands_guard and near_combatant:
+        if hands_guard and (near_combatant or all_persons is None or len(all_persons) <= 1):
             f_start = trk.get('fight_start_t') or now_t
             trk['fight_start_t'] = f_start
-            if (now_t - f_start) >= 1.5:
-                return 'fighting_posture', 0.88, 'Aggressive Guard Stance in Close Proximity'
+            if (now_t - f_start) >= 0.8:
+                return 'fighting_posture', 0.88, 'Raised Guard Stance / Combat Posture'
         else:
             trk['fight_start_t'] = None
 
@@ -1216,7 +1224,7 @@ class DetectorWorker:
 
             predict_kwargs = {
                 "source": f,
-                "conf":   max(PREDICT_CONF_FLOOR, min(min_class_conf, effective_conf)),
+                "conf":   max(PREDICT_CONF_FLOOR, min(0.25, min_class_conf, effective_conf) if is_unauth_mod else min(min_class_conf, effective_conf)),
                 "iou":    m_iou,
                 "imgsz":  m_imgsz,
                 "verbose": False
@@ -1278,8 +1286,8 @@ class DetectorWorker:
                                     continue
 
                         # Per-class confidence gate (hard reject)
-                        req_conf = effective_conf
-                        if class_configs:
+                        req_conf = min(0.25, effective_conf) if is_unauth_mod else effective_conf
+                        if class_configs and not is_unauth_mod:
                             for cc_name, cc_val in class_configs.items():
                                 if match_class(cls, cc_name) and isinstance(cc_val, dict) and "conf" in cc_val:
                                     req_conf = float(cc_val["conf"])
@@ -1839,6 +1847,13 @@ class DetectorWorker:
                         disp_cls = unauth_act
                         is_matched = True
                         break
+
+                # If unauthorized activity model is assigned, display the person track
+                # (Green compliant if no violation, Red if an unauthorized activity triggered)
+                if not is_matched and is_unauth_assigned and 'person' in trk_cls.lower():
+                    disp_cls = unauth_act if unauth_act else "person"
+                    is_matched = True
+
                 if not is_matched:
                     continue
             else:
