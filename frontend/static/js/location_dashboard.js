@@ -192,7 +192,7 @@ class LocationDashboardStore {
         this.locations = JSON.parse(localStorage.getItem("offline_locations") || "[]");
         this.streams = JSON.parse(localStorage.getItem("offline_streams") || "[]").map((item, idx) => this.streamView(item, idx));
         this.cameraModels = JSON.parse(localStorage.getItem("offline_camera_models") || "{}");
-        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "intrusion.pt", "non_working_hours.pt"];
+        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "intrusion.pt", "non_working_hours.pt", "vehicle_intrusion.pt"];
     }
 
     seedLocationsFromStreams() {
@@ -798,7 +798,8 @@ class LocationDashboard {
             "yolov8n": ["person"],
             "crowd_detection": ["person"],
             "intrusion": ["person", "truck"],
-            "non_working_hours": ["person", "truck"]
+            "non_working_hours": ["person", "truck"],
+            "vehicle_intrusion": ["car", "truck", "bus", "motorcycle"]
         };
         if (map[norm]) return map[norm];
         const loaded = this.modelClasses[modelName] || this.modelClasses[norm] || [];
@@ -883,6 +884,12 @@ class LocationDashboard {
                 badgeColor = "#e11d48";
                 badgeBg = "rgba(225, 29, 72, 0.12)";
                 badgeBorder = "rgba(225, 29, 72, 0.35)";
+            } else if (cleanM.toLowerCase() === "vehicle_intrusion") {
+                displayTitle = "Vehicle Intrusion Detection";
+                badgeText = "VEHICLE RESTRICTION";
+                badgeColor = "#3b82f6";
+                badgeBg = "rgba(59, 130, 246, 0.12)";
+                badgeBorder = "rgba(59, 130, 246, 0.35)";
             }
 
             html += `

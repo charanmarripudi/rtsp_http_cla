@@ -2290,7 +2290,8 @@
           "dome_open_closed_best.pt",
           "yolov8n.pt",
           "intrusion.pt",
-          "non_working_hours.pt"
+          "non_working_hours.pt",
+          "vehicle_intrusion.pt"
         ];
       }
 
@@ -2693,7 +2694,8 @@
               { file: "dome_open_closed_best.pt", label: "DOME OPEN/CLOSED CLASSES", color: "#14b8a6", classes: ["Dome_Closed", "Dome_Opened"] },
               { file: "yolov8n.pt", label: "CROWD DETECTION CLASSES", color: "#38bdf8", classes: ["person"] },
               { file: "intrusion.pt", label: "INTRUSION DETECTION / PERIMETER INTRUSION CLASSES", color: "#f43f5e", classes: ["person", "truck"] },
-              { file: "non_working_hours.pt", label: "INTRUSION IN NON-WORKING HOURS CLASSES", color: "#e11d48", classes: ["person", "truck"] }
+              { file: "non_working_hours.pt", label: "INTRUSION IN NON-WORKING HOURS CLASSES", color: "#e11d48", classes: ["person", "truck"] },
+              { file: "vehicle_intrusion.pt", label: "VEHICLE INTRUSION CLASSES", color: "#3b82f6", classes: ["car", "truck", "bus", "motorcycle"] }
             ];
 
             const specFileNames = specializedModels.map(s => s.file);

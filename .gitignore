@@ -48,6 +48,7 @@ models_backup/
 !models/yolov8n.pt
 !models/intrusion.pt
 !models/non_working_hours.pt
+!models/vehicle_intrusion.pt
 
 # Database credentials
 .env

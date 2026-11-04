@@ -32,11 +32,11 @@
             "iou": 0.45
           }
         },
-        "off_hours_start": "18:00",
+        "off_hours_start": "15:00",
         "off_hours_end": "06:00"
       },
       "non_working_hours": {
-        "off_hours_start": "18:00",
+        "off_hours_start": "15:00",
         "off_hours_end": "06:00",
         "class_configs": {
           "person": {
