@@ -1417,116 +1417,120 @@ class DetectorWorker:
                 if hasattr(self, '_last_side_b') and tid in self._last_side_b:
                     del self._last_side_b[tid]
 
-        # -- Vehicle Speed Estimation & Dual-Line Timing --
+        # Check whether this camera is configured as a dedicated speed camera
+        active_mods = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
+        is_speed_camera = (getattr(self, 'is_speed_worker', False) or str(self.cam_id) == "speed" or any("speed" in str(mp).lower() for mp in active_mods))
+
+        # -- Vehicle Speed Estimation & Dual-Line Timing (ONLY for dedicated speed cameras) --
+        speed_limit = float(getattr(self, 'speed_limit_kmh', 10.0))
+        dist_m = float(getattr(self, 'road_distance_meters', 20.0))
         la_y = int(self.height * getattr(self, 'line_a_ratio', 0.40))
         lb_y = int(self.height * getattr(self, 'line_b_ratio', 0.75))
 
-        speed_limit = float(getattr(self, 'speed_limit_kmh', 10.0))
-        dist_m = float(getattr(self, 'road_distance_meters', 20.0))
+        if is_speed_camera:
+            for tid, trk in self._ema_tracks.items():
+                cls_lower = str(trk.get('cls', '')).lower()
+                if any(vk in cls_lower for vk in vehicle_keywords):
+                    bx = trk['box']
+                    cx = (bx[0] + bx[2]) / 2.0
+                    cy = bx[3]  # Tyre contact point at bottom edge of bounding box
 
-        for tid, trk in self._ema_tracks.items():
-            cls_lower = str(trk.get('cls', '')).lower()
-            if any(vk in cls_lower for vk in vehicle_keywords):
-                bx = trk['box']
-                cx = (bx[0] + bx[2]) / 2.0
-                cy = bx[3]  # Tyre contact point at bottom edge of bounding box
+                    # Reset stale timing if a vehicle took > 10.0s (e.g. stopped or turned around)
+                    if trk.get('time_a') is not None and (now_t - trk['time_a'] > 10.0) and trk.get('time_b') is None:
+                        trk['time_a'] = None
+                    if trk.get('time_b') is not None and (now_t - trk['time_b'] > 10.0) and trk.get('time_a') is None:
+                        trk['time_b'] = None
 
-                # Reset stale timing if a vehicle took > 10.0s (e.g. stopped or turned around)
-                if trk.get('time_a') is not None and (now_t - trk['time_a'] > 10.0) and trk.get('time_b') is None:
-                    trk['time_a'] = None
-                if trk.get('time_b') is not None and (now_t - trk['time_b'] > 10.0) and trk.get('time_a') is None:
-                    trk['time_b'] = None
+                    # Check Line A (Gate Entry Line)
+                    side_a = cy - la_y
+                    if not hasattr(self, '_last_side_a'): self._last_side_a = {}
+                    if tid in self._last_side_a:
+                        if (self._last_side_a[tid] < 0 and side_a >= 0) or (self._last_side_a[tid] > 0 and side_a <= 0):
+                            if trk.get('time_a') is None:
+                                trk['time_a'] = now_t
+                                print(f"[GATE-LINE-A] Vehicle #{tid} ({trk['cls']}) passed Line A at {now_t:.2f}s", flush=True)
+                    self._last_side_a[tid] = side_a
 
-                # Check Line A (Gate Entry Line)
-                side_a = cy - la_y
-                if not hasattr(self, '_last_side_a'): self._last_side_a = {}
-                if tid in self._last_side_a:
-                    if (self._last_side_a[tid] < 0 and side_a >= 0) or (self._last_side_a[tid] > 0 and side_a <= 0):
-                        if trk.get('time_a') is None:
-                            trk['time_a'] = now_t
-                            print(f"[GATE-LINE-A] Vehicle #{tid} ({trk['cls']}) passed Line A at {now_t:.2f}s", flush=True)
-                self._last_side_a[tid] = side_a
+                    # Check Line B (Gantry Road Line)
+                    side_b = cy - lb_y
+                    if not hasattr(self, '_last_side_b'): self._last_side_b = {}
+                    if tid in self._last_side_b:
+                        if (self._last_side_b[tid] < 0 and side_b >= 0) or (self._last_side_b[tid] > 0 and side_b <= 0):
+                            if trk.get('time_b') is None:
+                                trk['time_b'] = now_t
+                                print(f"[GANTRY-LINE-B] Vehicle #{tid} ({trk['cls']}) passed Line B at {now_t:.2f}s", flush=True)
+                                if not hasattr(self, 'vehicle_counts'): self.vehicle_counts = Counter()
+                                if not hasattr(self, 'counted_ids'): self.counted_ids = set()
+                                if tid not in self.counted_ids:
+                                    self.vehicle_counts[trk['cls']] += 1
+                                    self.counted_ids.add(tid)
+                    self._last_side_b[tid] = side_b
 
-                # Check Line B (Gantry Road Line)
-                side_b = cy - lb_y
-                if not hasattr(self, '_last_side_b'): self._last_side_b = {}
-                if tid in self._last_side_b:
-                    if (self._last_side_b[tid] < 0 and side_b >= 0) or (self._last_side_b[tid] > 0 and side_b <= 0):
-                        if trk.get('time_b') is None:
-                            trk['time_b'] = now_t
-                            print(f"[GANTRY-LINE-B] Vehicle #{tid} ({trk['cls']}) passed Line B at {now_t:.2f}s", flush=True)
-                            if not hasattr(self, 'vehicle_counts'): self.vehicle_counts = Counter()
-                            if not hasattr(self, 'counted_ids'): self.counted_ids = set()
-                            if tid not in self.counted_ids:
-                                self.vehicle_counts[trk['cls']] += 1
-                                self.counted_ids.add(tid)
-                self._last_side_b[tid] = side_b
+                    # Continuous displacement speed estimation
+                    pos_hist = trk.get('pos_history', [])
+                    if len(pos_hist) >= 2:
+                        curr_cx, curr_cy, curr_t = pos_hist[-1]
+                        ref_cx, ref_cy, ref_t = pos_hist[0]
+                        for h_cx, h_cy, h_t in reversed(pos_hist[:-1]):
+                            if 0.10 <= (curr_t - h_t) <= 0.85:
+                                ref_cx, ref_cy, ref_t = h_cx, h_cy, h_t
+                                break
+                        dt_h = max(0.001, curr_t - ref_t)
+                        dy_h = curr_cy - ref_cy
+                        if dt_h >= 0.08 and dy_h > 2:
+                            dist_px = max(20, lb_y - la_y)
+                            meters_per_px = dist_m / float(dist_px)
+                            calc_v = (dy_h * meters_per_px / dt_h) * 3.6
+                            if 3.0 <= calc_v <= 150.0:
+                                old_disp = trk.get('disp_speed')
+                                if old_disp is not None:
+                                    trk['disp_speed'] = old_disp * 0.35 + calc_v * 0.65
+                                else:
+                                    trk['disp_speed'] = calc_v
 
-                # Continuous displacement speed estimation
-                pos_hist = trk.get('pos_history', [])
-                if len(pos_hist) >= 2:
-                    curr_cx, curr_cy, curr_t = pos_hist[-1]
-                    ref_cx, ref_cy, ref_t = pos_hist[0]
-                    for h_cx, h_cy, h_t in reversed(pos_hist[:-1]):
-                        if 0.10 <= (curr_t - h_t) <= 0.85:
-                            ref_cx, ref_cy, ref_t = h_cx, h_cy, h_t
-                            break
-                    dt_h = max(0.001, curr_t - ref_t)
-                    dy_h = curr_cy - ref_cy
-                    if dt_h >= 0.08 and dy_h > 2:
-                        dist_px = max(20, lb_y - la_y)
-                        meters_per_px = dist_m / float(dist_px)
-                        calc_v = (dy_h * meters_per_px / dt_h) * 3.6
-                        if 3.0 <= calc_v <= 150.0:
-                            old_disp = trk.get('disp_speed')
-                            if old_disp is not None:
-                                trk['disp_speed'] = old_disp * 0.35 + calc_v * 0.65
+                    # Compute Speed when both lines crossed (Gate -> Gantry or Gantry -> Gate)
+                    if trk.get('time_b') is not None and trk.get('speed_kmh') is None:
+                        if trk.get('time_a') is not None:
+                            delta_t = abs(trk['time_b'] - trk['time_a'])
+                            if 0.1 <= delta_t <= 10.0:
+                                trk['speed_kmh'] = (dist_m / delta_t) * 3.6
+                        elif trk.get('disp_speed') is not None:
+                            trk['speed_kmh'] = trk['disp_speed']
+
+                        v = trk.get('speed_kmh')
+                        if v is not None:
+                            if not hasattr(self, 'speed_records'): self.speed_records = []
+                            self.speed_records.append({
+                                "vehicle_id": tid,
+                                "cls": trk['cls'],
+                                "speed_kmh": round(v, 1),
+                                "is_over_speed": bool(v > speed_limit),
+                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            })
+                            if len(self.speed_records) > 200:
+                                self.speed_records = self.speed_records[-200:]
+
+                            if v > speed_limit:
+                                trk['is_over_speed'] = True
+                                trk['color'] = (0, 0, 255)  # Pure Red Alert
+                                if not hasattr(self, 'overspeed_count'): self.overspeed_count = 0
+                                self.overspeed_count += 1
+                                print(f"[ALERT] [SPEED-VIOLATION] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Limit: {speed_limit:.0f} km/h)!", flush=True)
+                                trk['should_alert_overspeed'] = True
+
+                                # Save alert snapshot
+                                try:
+                                    alerts_dir = os.path.join(BASE_DIR, "alerts")
+                                    os.makedirs(alerts_dir, exist_ok=True)
+                                    snap_name = f"speed_violation_cam{self.cam_id}_id{tid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{int(v)}kmh.jpg"
+                                    snap_path = os.path.join(alerts_dir, snap_name)
+                                    cv2.imwrite(snap_path, pf if 'pf' in locals() else f)
+                                    print(f"[ALERT-SAVED] Saved speed violation snapshot: {snap_path}", flush=True)
+                                except Exception as e_snap:
+                                    print(f"[ALERT-SNAP-ERR] Failed to save speed snapshot: {e_snap}", flush=True)
                             else:
-                                trk['disp_speed'] = calc_v
-
-                # Compute Speed when both lines crossed (Gate -> Gantry or Gantry -> Gate)
-                if trk.get('time_b') is not None and trk.get('speed_kmh') is None:
-                    if trk.get('time_a') is not None:
-                        delta_t = abs(trk['time_b'] - trk['time_a'])
-                        if 0.1 <= delta_t <= 10.0:
-                            trk['speed_kmh'] = (dist_m / delta_t) * 3.6
-                    elif trk.get('disp_speed') is not None:
-                        trk['speed_kmh'] = trk['disp_speed']
-
-                    v = trk.get('speed_kmh')
-                    if v is not None:
-                        if not hasattr(self, 'speed_records'): self.speed_records = []
-                        self.speed_records.append({
-                            "vehicle_id": tid,
-                            "cls": trk['cls'],
-                            "speed_kmh": round(v, 1),
-                            "is_over_speed": bool(v > speed_limit),
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        })
-                        if len(self.speed_records) > 200:
-                            self.speed_records = self.speed_records[-200:]
-
-                        if v > speed_limit:
-                            trk['is_over_speed'] = True
-                            trk['color'] = (0, 0, 255)  # Pure Red Alert
-                            if not hasattr(self, 'overspeed_count'): self.overspeed_count = 0
-                            self.overspeed_count += 1
-                            print(f"[ALERT] [SPEED-VIOLATION] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h (Limit: {speed_limit:.0f} km/h)!", flush=True)
-                            trk['should_alert_overspeed'] = True
-
-                            # Save alert snapshot
-                            try:
-                                alerts_dir = os.path.join(BASE_DIR, "alerts")
-                                os.makedirs(alerts_dir, exist_ok=True)
-                                snap_name = f"speed_violation_cam{self.cam_id}_id{tid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{int(v)}kmh.jpg"
-                                snap_path = os.path.join(alerts_dir, snap_name)
-                                cv2.imwrite(snap_path, pf if 'pf' in locals() else f)
-                                print(f"[ALERT-SAVED] Saved speed violation snapshot: {snap_path}", flush=True)
-                            except Exception as e_snap:
-                                print(f"[ALERT-SNAP-ERR] Failed to save speed snapshot: {e_snap}", flush=True)
-                        else:
-                            trk['color'] = (0, 255, 100)  # Green Normal
-                            print(f"[SPEED-NORMAL] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h", flush=True)
+                                trk['color'] = (0, 255, 100)  # Green Normal
+                                print(f"[SPEED-NORMAL] Camera {self.cam_id}: Vehicle #{tid} ({trk['cls']}) {v:.1f} km/h", flush=True)
 
         # Build display list from live EMA tracks
         display_boxes = []
@@ -1549,27 +1553,29 @@ class DetectorWorker:
                 continue
             cur_cls.add(disp_cls)
             
-            # Format speed label
-            speed_val = trk.get('speed_kmh') or trk.get('disp_speed')
             conf_pct = trk.get('conf', 0.8)
-            box_header = f"{disp_cls.upper()} #{tid} ({conf_pct:.0%})"
-            sub_lbl = None
             bx = trk.get('box', [0, 0, 0, 0])
             by2 = bx[3]
+            sub_lbl = None
 
-            if trk.get('is_over_speed') or (speed_val is not None and speed_val > speed_limit):
-                sub_lbl = f"OVER SPEED: {speed_val:.1f} km/h (LIMIT: {speed_limit:.0f})"
-                box_col = (0, 0, 255)  # Bright Red
-            elif speed_val is not None:
-                sub_lbl = f"SPEED: {speed_val:.1f} km/h"
-                box_col = (0, 255, 100)  # Bright Green
-            elif is_veh:
-                if by2 >= lb_y:
-                    sub_lbl = "PAST LINE B"
-                    box_col = (180, 180, 180)
+            if is_speed_camera:
+                speed_val = trk.get('speed_kmh') or trk.get('disp_speed')
+                box_header = f"{disp_cls.upper()} #{tid} ({conf_pct:.0%})"
+                if trk.get('is_over_speed') or (speed_val is not None and speed_val > speed_limit):
+                    sub_lbl = f"OVER SPEED: {speed_val:.1f} km/h (LIMIT: {speed_limit:.0f})"
+                    box_col = (0, 0, 255)  # Bright Red
+                elif speed_val is not None:
+                    sub_lbl = f"SPEED: {speed_val:.1f} km/h"
+                    box_col = (0, 255, 100)  # Bright Green
+                elif is_veh:
+                    if by2 >= lb_y:
+                        sub_lbl = "PAST LINE B"
+                        box_col = (180, 180, 180)
+                    else:
+                        sub_lbl = "APPROACHING LINE A"
+                        box_col = (0, 220, 255)
                 else:
-                    sub_lbl = "APPROACHING LINE A"
-                    box_col = (0, 220, 255)
+                    box_col = trk.get('color', (0, 255, 100))
             else:
                 is_neg = is_negative_violation_class(disp_cls)
                 if is_neg:
@@ -1580,22 +1586,23 @@ class DetectorWorker:
                     if str(disp_cls).lower() == 'person':
                         box_col = (0, 255, 0)  # Compliant Green by default for normal person
                     else:
-                        box_col = trk.get('color', (0, 255, 0))
+                        box_col = trk.get('color', (0, 255, 100))
 
             display_boxes.append({
-                'box':   trk['box'],
-                'label': box_header,
-                'sub':   sub_lbl,
+                'box':    trk['box'],
+                'label':  box_header,
+                'sub':    sub_lbl,
                 'is_veh': is_veh,
-                'color': box_col,
-                'cls':   disp_cls,
-                'conf':  trk.get('conf', conf_pct),
+                'color':  box_col,
+                'cls':    disp_cls,
+                'conf':   trk.get('conf', conf_pct),
+                'trk_id': tid,
             })
 
         # -- Absence Detection for Safety Equipment and Wheel Chocks (sand_ext_chocks) --
         has_sand_ext = any("sand_ext_chocks" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
         absence_alerts_to_trigger = []
-        if has_sand_ext and not is_speed_model:
+        if has_sand_ext and not is_speed_camera:
             cfg = get_config_for_model(self.model_configs, "sand_ext_chocks.pt")
             sand_enabled = cfg.get("enabled_classes") if (cfg and isinstance(cfg, dict)) else None
 
@@ -1756,10 +1763,7 @@ class DetectorWorker:
         frame_snapshot = cv2.resize(f, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
         snap_h, snap_w = frame_snapshot.shape[:2]
 
-        active_mods = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
-        is_speed_model = (str(self.cam_id) == "speed" or any("speed" in str(mp).lower() or "vehicle" in str(mp).lower() for mp in active_mods))
-
-        if is_speed_model:
+        if is_speed_camera:
             # Draw timing lines onto alert snapshot
             la_y = int(snap_h * getattr(self, 'line_a_ratio', 0.40))
             lb_y = int(snap_h * getattr(self, 'line_b_ratio', 0.75))
@@ -1792,7 +1796,7 @@ class DetectorWorker:
         DetectorWorker._draw_boxes(frame_snapshot, display_boxes)
 
         # -- Negative Safety Alert Processing (Exclusively alerts on violations) --
-        if not is_speed_model:
+        if not is_speed_camera:
             # Absence alerts for safety equipment & wheel chocks
             for a_cls in absence_alerts_to_trigger:
                 self.alert_cooldowns[a_cls] = now_t
@@ -1947,7 +1951,7 @@ class DetectorWorker:
                             # Highlight box in Alert Red with INTRUSION label on video
                             for b in display_boxes:
                                 ob = b.get('box', [0, 0, 0, 0])
-                                if abs(ob[0] - bx[0]) < 10 and abs(ob[1] - bx[1]) < 10:
+                                if b.get('trk_id') == tid or (abs(ob[0] - bx[0]) < 15 and abs(ob[1] - bx[1]) < 15):
                                     b['color'] = (20, 20, 237)
                                     b['label'] = f"VIOLATION: INTRUSION ({c_trk}) {trk.get('conf', 0.8):.2f}"
                                     b['sub'] = f"INTRUSION IN RESTRICTED ROI"
@@ -1962,14 +1966,15 @@ class DetectorWorker:
             with self._box_lock:
                 self._tracked_boxes = display_boxes
 
-        # -- Over Speed Alert Trigger (ONLY triggers when measured speed > limit) --
-        for tid, trk in list(self._ema_tracks.items()):
-            if trk.get('should_alert_overspeed') and not trk.get('overspeed_alerted'):
-                trk['overspeed_alerted'] = True
-                spd = trk.get('speed_kmh', 0.0)
-                alert_cls = f"OVER SPEED: {spd:.1f} km/h (Limit: {speed_limit:.0f} km/h)"
-                print(f"[ALERT-TRIGGER-SPEED] Over speed alert generated: cam={self.cam_id}, vehicle_id={tid}, class={trk.get('cls')}, speed={spd:.1f} km/h", flush=True)
-                self._save_alert(alert_cls, frame_snapshot)
+        # -- Over Speed Alert Trigger (ONLY triggers on dedicated speed cameras when measured speed > limit) --
+        if is_speed_camera:
+            for tid, trk in list(self._ema_tracks.items()):
+                if trk.get('should_alert_overspeed') and not trk.get('overspeed_alerted'):
+                    trk['overspeed_alerted'] = True
+                    spd = trk.get('speed_kmh', 0.0)
+                    alert_cls = f"OVER SPEED: {spd:.1f} km/h (Limit: {speed_limit:.0f} km/h)"
+                    print(f"[ALERT-TRIGGER-SPEED] Over speed alert generated: cam={self.cam_id}, vehicle_id={tid}, class={trk.get('cls')}, speed={spd:.1f} km/h", flush=True)
+                    self._save_alert(alert_cls, frame_snapshot)
 
     def _save_alert(self, class_name, frame, vehicle_label=None):
         try:
