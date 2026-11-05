@@ -1935,7 +1935,7 @@
   </div>
 
   <script src="/static/js/detection.js?v=13.0"></script>
-  <script src="/static/js/location_dashboard.js?v=13.0"></script>
+  <script src="/static/js/location_dashboard.js?v=16.0"></script>
   <script src="/static/js/ptz_controller.js?v=11.0"></script>
   <script src="/static/js/speed_dashboard.js?v=11.0"></script>
 
@@ -2243,6 +2243,10 @@
       }
 
       window.openAlertEvidenceModal = function(a) {
+        if (window.locationDashboard && typeof window.locationDashboard.openEvidenceModal === "function") {
+          window.locationDashboard.openEvidenceModal(a);
+          return;
+        }
         const modal = document.getElementById("alertEvidenceModal");
         if (!modal) return;
         const imgEl = document.getElementById("evidenceImage");

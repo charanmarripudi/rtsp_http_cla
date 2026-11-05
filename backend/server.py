@@ -4027,8 +4027,8 @@ def get_alerts_json():
             img_path = a.get("image") or a.get("image_path") or ""
             filename = img_path.split("/")[-1] if img_path else ""
             if filename:
-                base_url = os.getenv("LOCAL_BASE_URL", "http://localhost:8080").rstrip("/")
-                a["image"] = f"{base_url}/hls/alerts/{filename}"
+                base_url = os.getenv("LOCAL_BASE_URL", "").rstrip("/")
+                a["image"] = f"{base_url}/hls/alerts/{filename}" if base_url else f"/hls/alerts/{filename}"
                 a["image_path"] = a["image"]
             a["camera"] = a.get("camera") or a.get("camera_id") or "0"
             a["camera_id"] = a["camera"]
@@ -4065,8 +4065,8 @@ def get_alerts_db():
             img_path = r.get("image_path") or ""
             filename = img_path.split("/")[-1] if img_path else ""
             if filename:
-                base_url = os.getenv("LOCAL_BASE_URL", "http://localhost:8080").rstrip("/")
-                r["image_path"] = f"{base_url}/hls/alerts/{filename}"
+                base_url = os.getenv("LOCAL_BASE_URL", "").rstrip("/")
+                r["image_path"] = f"{base_url}/hls/alerts/{filename}" if base_url else f"/hls/alerts/{filename}"
                 r["image"] = r["image_path"]
             results.append(r)
         cur.close()
@@ -4078,10 +4078,10 @@ def get_alerts_db():
 def get_alert_images():
     if not os.path.exists(ALERTS_DIR): return {"images": [], "total": 0}
     imgs = []
-    base_url = os.getenv("LOCAL_BASE_URL", "http://localhost:8080").rstrip("/")
+    base_url = os.getenv("LOCAL_BASE_URL", "").rstrip("/")
     for f in sorted(os.listdir(ALERTS_DIR), reverse=True):
         if f.lower().endswith((".jpg", ".jpeg", ".png")):
-            img_url = f"{base_url}/hls/alerts/{f}"
+            img_url = f"{base_url}/hls/alerts/{f}" if base_url else f"/hls/alerts/{f}"
             imgs.append({"filename": f, "url": img_url, "size_kb": round(os.path.getsize(os.path.join(ALERTS_DIR, f))/1024, 1)})
     data = get_alerts_json(); amap = {a.get("image").split("/")[-1] if a.get("image") else "": a for a in data}
     for img in imgs:

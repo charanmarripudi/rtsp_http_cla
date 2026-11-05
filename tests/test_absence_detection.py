@@ -37,3 +37,4 @@ def test_absence_rules():
 
 if __name__ == '__main__':
     test_absence_rules()
+

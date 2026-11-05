@@ -101,6 +101,14 @@ except ImportError:
     except ImportError:
         CrowdMonitoring = None
 
+try:
+    from backend.detector.byte_tracker import EdgeByteTracker
+except ImportError:
+    try:
+        from byte_tracker import EdgeByteTracker
+    except ImportError:
+        EdgeByteTracker = None
+
 YOLO_CACHE = {}
 
 # ------------------------------------------------------------------------------
@@ -1241,6 +1249,13 @@ class DetectorWorker:
         self._first_box_logged = False
         self._ema_tracks = {}
         self._ema_next_id = 0
+        self.byte_tracker = EdgeByteTracker(
+            track_thresh=float(os.getenv("BYTETRACK_THRESH", "0.35")),
+            low_thresh=float(os.getenv("BYTETRACK_LOW_THRESH", "0.12")),
+            match_thresh=float(os.getenv("BYTETRACK_MATCH_THRESH", "0.65")),
+            track_buffer=int(os.getenv("BYTETRACK_BUFFER", "45")),
+            frame_rate=30
+        ) if EdgeByteTracker is not None else None
 
         # Standalone VehicleSpeedTracker Engine (Low-CPU imgsz=320, skip=2)
         if self.is_speed_worker and VehicleSpeedTracker is not None:
@@ -1343,6 +1358,8 @@ class DetectorWorker:
         # Reset EMA tracks when models change so stale boxes from old model don't linger
         self._ema_tracks = {}
         self._ema_next_id = 0
+        if getattr(self, 'byte_tracker', None) is not None:
+            self.byte_tracker.reset()
         self._needs_immediate_inference = True
 
         self.is_crowd_worker = (str(self.cam_id) == "crowd")
@@ -1869,183 +1886,216 @@ class DetectorWorker:
         # -- Multi-Model NMS ---------------------------------------------------
         kept_items = self._apply_nms(raw_boxes)
 
-        # -- Robust Vehicle Centroid & Ground Tracking Engine ------------------
+        # -- ByteTrack Tracking Engine (Kalman + Occlusion Recovery + Ground Physics) --
         now_t = time.time()
         if not hasattr(self, '_ema_tracks'):
             self._ema_tracks = {}
             self._ema_next_id = 1
 
-        matched_ids = set()
         vehicle_keywords = ("truck", "car", "pickup", "bike", "tank", "vehicle", "bus", "motorcycle", "van")
 
-        for b_xyxy, color_val, conf_val, cls_name in kept_items:
-            bx1, by1, bx2, by2 = b_xyxy
-            b_cx = (bx1 + bx2) / 2.0
-            b_cy = (by1 + by2) / 2.0
-            b_w  = max(1.0, bx2 - bx1)
-            b_h  = max(1.0, by2 - by1)
-            is_veh = any(vk in cls_name.lower() for vk in vehicle_keywords)
+        if getattr(self, 'byte_tracker', None) is not None:
+            byte_tracks = self.byte_tracker.update(kept_items, detected_pose_keypoints, img_w=float(self.width))
+            active_byte_ids = set()
+            for tid, trk_data in byte_tracks.items():
+                active_byte_ids.add(tid)
+                if tid in self._ema_tracks:
+                    # Preserve continuous timing, behavioral tracking timestamps, and speed records
+                    for state_key in (
+                        'time_a', 'time_b', 'speed_kmh', 'disp_speed', 'is_over_speed',
+                        'first_seen', 'last_alert_time', 'cook_start_t', 'smoke_start_t',
+                        'fight_start_t', 'sit_start_t', 'loiter_start_t', 'park_start_t'
+                    ):
+                        if state_key in self._ema_tracks[tid]:
+                            trk_data[state_key] = self._ema_tracks[tid][state_key]
+                    self._ema_tracks[tid].update(trk_data)
+                else:
+                    self._ema_tracks[tid] = trk_data
 
-            best_id, best_score = None, 0.0
-            for tid, trk in self._ema_tracks.items():
-                if tid in matched_ids:
-                    continue
-                trk_cls_lower = str(trk.get('cls', '')).lower()
-                trk_is_veh = any(vk in trk_cls_lower for vk in vehicle_keywords)
+            # Expire tracks no longer active in ByteTrack
+            for tid in list(self._ema_tracks.keys()):
+                if tid not in active_byte_ids:
+                    del self._ema_tracks[tid]
+                    if hasattr(self, '_last_side_a') and tid in self._last_side_a:
+                        del self._last_side_a[tid]
+                    if hasattr(self, '_last_side_b') and tid in self._last_side_b:
+                        del self._last_side_b[tid]
+        else:
+            # Fallback Centroid & Ground Tracking Engine
+            matched_ids = set()
 
-                if is_veh:
-                    if not trk_is_veh:
+            for b_xyxy, color_val, conf_val, cls_name in kept_items:
+                bx1, by1, bx2, by2 = b_xyxy
+                b_cx = (bx1 + bx2) / 2.0
+                b_cy = (by1 + by2) / 2.0
+                b_w  = max(1.0, bx2 - bx1)
+                b_h  = max(1.0, by2 - by1)
+                is_veh = any(vk in cls_name.lower() for vk in vehicle_keywords)
+
+                best_id, best_score = None, 0.0
+                for tid, trk in self._ema_tracks.items():
+                    if tid in matched_ids:
                         continue
-                    # Vehicle ground contact centroid matching (bottom-center tyre contact)
-                    tx1, ty1, tx2, ty2 = trk['box']
-                    t_cx = (tx1 + tx2) / 2.0
-                    t_cy = ty2  # Tyre contact
-                    curr_cx = b_cx
-                    curr_cy = by2
-                    dist = math.hypot(curr_cx - t_cx, curr_cy - t_cy)
-                    max_veh_dist = min(110.0, max(60.0, float(self.width) * 0.16))
-                    if dist <= max_veh_dist:  # Tight distance threshold prevents swapping between different cars
-                        score = max(0.01, 1.0 - (dist / max_veh_dist))
-                        if score > best_score:
+                    trk_cls_lower = str(trk.get('cls', '')).lower()
+                    trk_is_veh = any(vk in trk_cls_lower for vk in vehicle_keywords)
+
+                    if is_veh:
+                        if not trk_is_veh:
+                            continue
+                        # Vehicle ground contact centroid matching (bottom-center tyre contact)
+                        tx1, ty1, tx2, ty2 = trk['box']
+                        t_cx = (tx1 + tx2) / 2.0
+                        t_cy = ty2  # Tyre contact
+                        curr_cx = b_cx
+                        curr_cy = by2
+                        dist = math.hypot(curr_cx - t_cx, curr_cy - t_cy)
+                        max_veh_dist = min(110.0, max(60.0, float(self.width) * 0.16))
+                        if dist <= max_veh_dist:  # Tight distance threshold prevents swapping between different cars
+                            score = max(0.01, 1.0 - (dist / max_veh_dist))
+                            if score > best_score:
+                                best_score = score
+                                best_id = tid
+                    else:
+                        if not match_class(trk['cls'], cls_name):
+                            continue
+                        iou_v, io_min_v = DetectorWorker._box_iou_and_io_min(trk['box'], b_xyxy)
+                        tx1, ty1, tx2, ty2 = trk['box']
+                        t_cx = (tx1 + tx2) / 2.0
+                        t_cy = (ty1 + ty2) / 2.0
+                        dist_x = abs(b_cx - t_cx) / max(b_w, (tx2 - tx1), 1.0)
+                        dist_y = abs(b_cy - t_cy) / max(b_h, (ty2 - ty1), 1.0)
+                        dist_score = max(0.0, 1.0 - (dist_x**2 + dist_y**2) ** 0.5)
+                        score = max(iou_v * 1.2, io_min_v * 0.8, dist_score * 0.5)
+                        if score > best_score and score >= 0.10:
                             best_score = score
                             best_id = tid
+
+                if best_id is not None:
+                    old_b = self._ema_tracks[best_id]['box']
+                    a = 0.35 if is_veh else BOX_EMA_ALPHA
+                    smoothed = [
+                        old_b[0] * a + b_xyxy[0] * (1 - a),
+                        old_b[1] * a + b_xyxy[1] * (1 - a),
+                        old_b[2] * a + b_xyxy[2] * (1 - a),
+                        old_b[3] * a + b_xyxy[3] * (1 - a),
+                    ]
+                    
+                    hist = self._ema_tracks[best_id].get('history', [])
+                    hist.append(1)
+                    if len(hist) > 5:
+                        hist = hist[-5:]
+
+                    assigned_cls = cls_name
+                    if 'truck' in str(self._ema_tracks[best_id]['cls']).lower() and 'car' in cls_name.lower():
+                        assigned_cls = self._ema_tracks[best_id]['cls']
+
+                    pos_hist = self._ema_tracks[best_id].get('pos_history', [])
+                    pos_hist.append(((smoothed[0] + smoothed[2]) / 2.0, smoothed[3], now_t))
+                    if len(pos_hist) > 25:
+                        pos_hist = pos_hist[-25:]
+
+                    # Associate latest pose keypoints if person track
+                    matched_kp = None
+                    if detected_pose_keypoints and 'person' in str(assigned_cls).lower():
+                        best_kp_match = None
+                        best_kp_score = 0.0
+                        s_cx = (smoothed[0] + smoothed[2]) / 2.0
+                        s_cy = (smoothed[1] + smoothed[3]) / 2.0
+                        diag = max(1.0, math.hypot(smoothed[2] - smoothed[0], smoothed[3] - smoothed[1]))
+                        for p_box, p_kp in detected_pose_keypoints:
+                            iou, io_min = DetectorWorker._box_iou_and_io_min(smoothed, p_box)
+                            p_cx = (p_box[0] + p_box[2]) / 2.0
+                            p_cy = (p_box[1] + p_box[3]) / 2.0
+                            c_dist = math.hypot(s_cx - p_cx, s_cy - p_cy)
+                            dist_score = max(0.0, 1.0 - c_dist / diag)
+                            score = max(iou, io_min * 0.85, dist_score * 0.75)
+                            if score > best_kp_score and score >= 0.25:
+                                best_kp_score = score
+                                best_kp_match = p_kp
+                        matched_kp = best_kp_match
+
+                    trk_upd = {
+                        'box':         smoothed,
+                        'color':       color_val,
+                        'conf':        conf_val,
+                        'cls':         assigned_cls,
+                        'last_seen':   now_t,
+                        'hit_count':   self._ema_tracks[best_id].get('hit_count', 0) + 1,
+                        'history':     hist,
+                        'pos_history': pos_hist,
+                    }
+                    if matched_kp is not None:
+                        trk_upd['keypoints'] = matched_kp
+                        trk_upd['last_pose_time'] = now_t
+                    elif (now_t - self._ema_tracks[best_id].get('last_pose_time', 0.0)) < 0.6:
+                        trk_upd['keypoints'] = self._ema_tracks[best_id].get('keypoints')
+                    self._ema_tracks[best_id].update(trk_upd)
+                    matched_ids.add(best_id)
                 else:
-                    if not match_class(trk['cls'], cls_name):
-                        continue
-                    iou_v, io_min_v = DetectorWorker._box_iou_and_io_min(trk['box'], b_xyxy)
-                    tx1, ty1, tx2, ty2 = trk['box']
-                    t_cx = (tx1 + tx2) / 2.0
-                    t_cy = (ty1 + ty2) / 2.0
-                    dist_x = abs(b_cx - t_cx) / max(b_w, (tx2 - tx1), 1.0)
-                    dist_y = abs(b_cy - t_cy) / max(b_h, (ty2 - ty1), 1.0)
-                    dist_score = max(0.0, 1.0 - (dist_x**2 + dist_y**2) ** 0.5)
-                    score = max(iou_v * 1.2, io_min_v * 0.8, dist_score * 0.5)
-                    if score > best_score and score >= 0.10:
-                        best_score = score
-                        best_id = tid
+                    new_id = self._ema_next_id
+                    self._ema_next_id += 1
+                    b_init = list(b_xyxy)
 
-            if best_id is not None:
-                old_b = self._ema_tracks[best_id]['box']
-                a = 0.35 if is_veh else BOX_EMA_ALPHA
-                smoothed = [
-                    old_b[0] * a + b_xyxy[0] * (1 - a),
-                    old_b[1] * a + b_xyxy[1] * (1 - a),
-                    old_b[2] * a + b_xyxy[2] * (1 - a),
-                    old_b[3] * a + b_xyxy[3] * (1 - a),
-                ]
-                
-                hist = self._ema_tracks[best_id].get('history', [])
-                hist.append(1)
-                if len(hist) > 5:
-                    hist = hist[-5:]
+                    matched_kp = None
+                    if detected_pose_keypoints and 'person' in str(cls_name).lower():
+                        best_kp_match = None
+                        best_kp_score = 0.0
+                        b_cx = (b_init[0] + b_init[2]) / 2.0
+                        b_cy = (b_init[1] + b_init[3]) / 2.0
+                        diag = max(1.0, math.hypot(b_init[2] - b_init[0], b_init[3] - b_init[1]))
+                        for p_box, p_kp in detected_pose_keypoints:
+                            iou, io_min = DetectorWorker._box_iou_and_io_min(b_init, p_box)
+                            p_cx = (p_box[0] + p_box[2]) / 2.0
+                            p_cy = (p_box[1] + p_box[3]) / 2.0
+                            c_dist = math.hypot(b_cx - p_cx, b_cy - p_cy)
+                            dist_score = max(0.0, 1.0 - c_dist / diag)
+                            score = max(iou, io_min * 0.85, dist_score * 0.75)
+                            if score > best_kp_score and score >= 0.25:
+                                best_kp_score = score
+                                best_kp_match = p_kp
+                        matched_kp = best_kp_match
 
-                assigned_cls = cls_name
-                if 'truck' in str(self._ema_tracks[best_id]['cls']).lower() and 'car' in cls_name.lower():
-                    assigned_cls = self._ema_tracks[best_id]['cls']
+                    self._ema_tracks[new_id] = {
+                        'box':             b_init,
+                        'color':           color_val,
+                        'conf':            conf_val,
+                        'cls':             cls_name,
+                        'last_seen':       now_t,
+                        'first_seen':      now_t,
+                        'hit_count':       1,
+                        'history':         [1],
+                        'pos_history':     [((b_init[0] + b_init[2]) / 2.0, b_init[3], now_t)],
+                        'time_a':          None,
+                        'time_b':          None,
+                        'speed_kmh':       None,
+                        'disp_speed':      None,
+                        'is_over_speed':   False,
+                        'last_alert_time': 0.0,
+                        'keypoints':       matched_kp,
+                        'last_pose_time':  now_t if matched_kp is not None else 0.0,
+                    }
+                    matched_ids.add(new_id)
 
-                pos_hist = self._ema_tracks[best_id].get('pos_history', [])
-                pos_hist.append(((smoothed[0] + smoothed[2]) / 2.0, smoothed[3], now_t))
-                if len(pos_hist) > 25:
-                    pos_hist = pos_hist[-25:]
+            # Record a 0 (miss) in history for active tracks not detected in this cycle
+            for tid, trk in self._ema_tracks.items():
+                if tid not in matched_ids:
+                    hist = trk.get('history', [])
+                    hist.append(0)
+                    if len(hist) > 5:
+                        hist = hist[-5:]
+                    trk['history'] = hist
 
-                # Associate latest pose keypoints if person track
-                matched_kp = None
-                if detected_pose_keypoints and 'person' in str(assigned_cls).lower():
-                    best_kp_match = None
-                    best_kp_score = 0.0
-                    s_cx = (smoothed[0] + smoothed[2]) / 2.0
-                    s_cy = (smoothed[1] + smoothed[3]) / 2.0
-                    diag = max(1.0, math.hypot(smoothed[2] - smoothed[0], smoothed[3] - smoothed[1]))
-                    for p_box, p_kp in detected_pose_keypoints:
-                        iou, io_min = DetectorWorker._box_iou_and_io_min(smoothed, p_box)
-                        p_cx = (p_box[0] + p_box[2]) / 2.0
-                        p_cy = (p_box[1] + p_box[3]) / 2.0
-                        c_dist = math.hypot(s_cx - p_cx, s_cy - p_cy)
-                        dist_score = max(0.0, 1.0 - c_dist / diag)
-                        score = max(iou, io_min * 0.85, dist_score * 0.75)
-                        if score > best_kp_score and score >= 0.25:
-                            best_kp_score = score
-                            best_kp_match = p_kp
-                    matched_kp = best_kp_match
-
-                trk_upd = {
-                    'box':         smoothed,
-                    'color':       color_val,
-                    'conf':        conf_val,
-                    'cls':         assigned_cls,
-                    'last_seen':   now_t,
-                    'hit_count':   self._ema_tracks[best_id].get('hit_count', 0) + 1,
-                    'history':     hist,
-                    'pos_history': pos_hist,
-                }
-                if matched_kp is not None:
-                    trk_upd['keypoints'] = matched_kp
-                    trk_upd['last_pose_time'] = now_t
-                elif (now_t - self._ema_tracks[best_id].get('last_pose_time', 0.0)) < 0.6:
-                    trk_upd['keypoints'] = self._ema_tracks[best_id].get('keypoints')
-                self._ema_tracks[best_id].update(trk_upd)
-                matched_ids.add(best_id)
-            else:
-                new_id = self._ema_next_id
-                self._ema_next_id += 1
-                b_init = list(b_xyxy)
-
-                matched_kp = None
-                if detected_pose_keypoints and 'person' in str(cls_name).lower():
-                    best_kp_match = None
-                    best_kp_score = 0.0
-                    b_cx = (b_init[0] + b_init[2]) / 2.0
-                    b_cy = (b_init[1] + b_init[3]) / 2.0
-                    diag = max(1.0, math.hypot(b_init[2] - b_init[0], b_init[3] - b_init[1]))
-                    for p_box, p_kp in detected_pose_keypoints:
-                        iou, io_min = DetectorWorker._box_iou_and_io_min(b_init, p_box)
-                        p_cx = (p_box[0] + p_box[2]) / 2.0
-                        p_cy = (p_box[1] + p_box[3]) / 2.0
-                        c_dist = math.hypot(b_cx - p_cx, b_cy - p_cy)
-                        dist_score = max(0.0, 1.0 - c_dist / diag)
-                        score = max(iou, io_min * 0.85, dist_score * 0.75)
-                        if score > best_kp_score and score >= 0.25:
-                            best_kp_score = score
-                            best_kp_match = p_kp
-                    matched_kp = best_kp_match
-
-                self._ema_tracks[new_id] = {
-                    'box':             b_init,
-                    'color':           color_val,
-                    'conf':            conf_val,
-                    'cls':             cls_name,
-                    'last_seen':       now_t,
-                    'first_seen':      now_t,
-                    'hit_count':       1,
-                    'history':         [1],
-                    'pos_history':     [((b_init[0] + b_init[2]) / 2.0, b_init[3], now_t)],
-                    'time_a':          None,
-                    'time_b':          None,
-                    'speed_kmh':       None,
-                    'disp_speed':      None,
-                    'is_over_speed':   False,
-                    'last_alert_time': 0.0,
-                    'keypoints':       matched_kp,
-                    'last_pose_time':  now_t if matched_kp is not None else 0.0,
-                }
-                matched_ids.add(new_id)
-
-        # Record a 0 (miss) in history for active tracks not detected in this cycle
-        for tid, trk in self._ema_tracks.items():
-            if tid not in matched_ids:
-                hist = trk.get('history', [])
-                hist.append(0)
-                if len(hist) > 5:
-                    hist = hist[-5:]
-                trk['history'] = hist
-
-        # Expire stale tracks (1.2s persistence for vehicles so new cars never inherit old timestamps)
-        for tid in list(self._ema_tracks.keys()):
-            trk_cls = self._ema_tracks[tid].get('cls', '').lower()
-            is_veh = any(vk in trk_cls for vk in vehicle_keywords)
-            max_age = 1.2 if is_veh else TRACK_MAX_AGE_S
-            if now_t - self._ema_tracks[tid].get('last_seen', 0.0) > max_age:
-                del self._ema_tracks[tid]
+            # Expire stale tracks (1.2s persistence for vehicles so new cars never inherit old timestamps)
+            for tid in list(self._ema_tracks.keys()):
+                trk_cls = self._ema_tracks[tid].get('cls', '').lower()
+                is_veh = any(vk in trk_cls for vk in vehicle_keywords)
+                max_age = 1.2 if is_veh else TRACK_MAX_AGE_S
+                if now_t - self._ema_tracks[tid].get('last_seen', 0.0) > max_age:
+                    del self._ema_tracks[tid]
+                    if hasattr(self, '_last_side_a') and tid in self._last_side_a:
+                        del self._last_side_a[tid]
+                    if hasattr(self, '_last_side_b') and tid in self._last_side_b:
+                        del self._last_side_b[tid]
                 if hasattr(self, '_last_side_a') and tid in self._last_side_a:
                     del self._last_side_a[tid]
                 if hasattr(self, '_last_side_b') and tid in self._last_side_b:
@@ -3211,9 +3261,9 @@ class DetectorWorker:
             img_saved = cv2.imwrite(os.path.join(adir, filename), alert_img, [cv2.IMWRITE_JPEG_QUALITY, 92])
             print(f"[ALERT-IMG] Saved snapshot {filename}, ok={img_saved}", flush=True)
 
-            # Full local HTTP URL (Option 2)
-            base_url = os.getenv("LOCAL_BASE_URL", "http://localhost:8080").rstrip("/")
-            image_path = f"{base_url}/hls/alerts/{filename}"
+            # Local or relative HTTP URL for cross-port browser compatibility
+            base_url = os.getenv("LOCAL_BASE_URL", "").rstrip("/")
+            image_path = f"{base_url}/hls/alerts/{filename}" if base_url else f"/hls/alerts/{filename}"
 
             lbl = vehicle_label or class_name
             lbl_str = str(lbl).strip()
