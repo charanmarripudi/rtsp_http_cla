@@ -578,6 +578,10 @@ class LiveVideoTestStreamer:
                                     xyxy[3] * scale_y
                                 ])
                             kp = kps_data[b_idx] if b_idx < len(kps_data) else None
+                            if kp is not None and (scale_x != 1.0 or scale_y != 1.0):
+                                kp = kp.copy()
+                                kp[:, 0] *= scale_x
+                                kp[:, 1] *= scale_y
                             raw_dets.append((xyxy, cls_name, conf_val, kp))
 
                         # Determine if vehicle model
@@ -653,9 +657,13 @@ class LiveVideoTestStreamer:
                                 trk_obj['last_seen'] = now_ts
                                 dwell = now_ts - trk_obj.get('first_seen', now_ts)
 
+                                pose_activities = [c for c in (c_classes or []) if any(k in c.lower() for k in ("cook", "crowd", "lying", "smok", "fight", "sitting", "loiter"))]
+                                if not pose_activities:
+                                    pose_activities = ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"]
+                                all_person_records = [{'box': d[0].tolist(), 'keypoints': d[3]} for d in raw_dets if 'person' in str(d[1]).lower()]
                                 act, act_conf, act_sub = classify_pose_activity(
-                                    trk_obj, kp, xyxy.tolist(), dwell, c_classes or ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"],
-                                    all_persons=all_person_boxes, frame_height=h_orig, now_t=now_ts, is_video_test=True
+                                    trk_obj, kp, xyxy.tolist(), dwell, pose_activities,
+                                    all_persons=all_person_records, frame_height=h_orig, now_t=now_ts, is_video_test=True
                                 )
                                 if act:
                                     label_name = f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()})"
@@ -1067,9 +1075,13 @@ def _process_video_worker(job: VideoTestJob):
                                 trk_obj['last_seen'] = current_time_sec
                                 dwell = current_time_sec - trk_obj.get('first_seen', current_time_sec)
 
+                                pose_activities = [c for c in (filter_classes or []) if any(k in c.lower() for k in ("cook", "crowd", "lying", "smok", "fight", "sitting", "loiter"))]
+                                if not pose_activities:
+                                    pose_activities = ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"]
+                                all_person_records = [{'box': d[0].tolist(), 'keypoints': d[3]} for d in raw_boxes if 'person' in str(d[1]).lower()]
                                 act, act_conf, act_sub = classify_pose_activity(
-                                    trk_obj, kp, xyxy.tolist(), dwell, filter_classes or ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"],
-                                    all_persons=all_person_boxes, frame_height=height, now_t=current_time_sec, is_video_test=True
+                                    trk_obj, kp, xyxy.tolist(), dwell, pose_activities,
+                                    all_persons=all_person_records, frame_height=height, now_t=current_time_sec, is_video_test=True
                                 )
                                 if act:
                                     label_name = f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()})"

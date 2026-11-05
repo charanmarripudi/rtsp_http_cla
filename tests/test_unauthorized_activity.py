@@ -308,7 +308,43 @@ def run_tests():
     assert is_negative_violation_class("no-tape")
     print(f"Test 21 PASSED: Positive vs negative class violation gating verified 100%!")
 
-    print("\nALL 21 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 22: User Pairwise Fighting Logic - Heavy Bounding Box Overlap & Wrist Proximity
+    trk22_a = {'first_seen': 100.0}
+    trk22_b = {'first_seen': 100.0}
+    b22_a = [100, 100, 160, 260] # h = 160, center = (130, 180)
+    b22_b = [130, 100, 190, 260] # heavy overlap with b22_a (x: 130..160)
+    # Wrists extended forward towards opponent (not to own face)
+    kp22_a = [[130, 120, 0.9]] + [[0, 0, 0]]*4 + [[120, 140, 0.8], [140, 140, 0.8], [120, 160, 0.8], [140, 160, 0.8], [130, 180, 0.8], [155, 130, 0.8]] + [[0, 0, 0]]*6
+    kp22_b = [[160, 120, 0.9]] + [[0, 0, 0]]*4 + [[150, 140, 0.8], [170, 140, 0.8], [150, 160, 0.8], [170, 160, 0.8], [135, 130, 0.8], [160, 180, 0.8]] + [[0, 0, 0]]*6
+    person_records = [
+        {'box': b22_a, 'keypoints': kp22_a, 'behavior': None},
+        {'box': b22_b, 'keypoints': kp22_b, 'behavior': None}
+    ]
+    act22, conf22, sub22 = classify_pose_activity(trk22_a, kp22_a, b22_a, 5.0, enabled, all_persons=person_records, is_video_test=True)
+    assert act22 == 'fighting_posture', f"Test 22 FAILED: Expected fighting_posture, got {act22}"
+    print(f"Test 22 PASSED: Pairwise fighting with heavy overlap and wrist proximity -> fighting_posture")
+
+    # Test 23: User Lying Down Logic - Horizontal Spine Profile (nose and ankle near same Y)
+    trk23 = {'first_seen': 100.0}
+    b23 = [100, 200, 280, 250] # bw = 180, bh = 50 -> is_horizontal_box is TRUE (180 > 50*1.3)
+    kp23 = [[110, 220, 0.9]] + [[0, 0, 0]]*14 + [[270, 225, 0.9], [270, 225, 0.9]] # nose y=220, ankle y=225 (abs diff 5px < 50*0.35)
+    act23, conf23, sub23 = classify_pose_activity(trk23, kp23, b23, 5.0, enabled, is_video_test=True)
+    assert act23 == 'lying_down', f"Test 23 FAILED: Expected lying_down, got {act23}"
+    print(f"Test 23 PASSED: User lying down horizontal aspect ratio and spine profile -> lying_down")
+
+    # Test 24: Pairwise Fighting Interaction Skips if Opponent is Lying Down
+    trk24_a = {'first_seen': 100.0}
+    b24_stand = [100, 100, 160, 260] # standing person
+    b24_lie = [120, 240, 280, 290] # person lying on ground overlapping bottom of standing person
+    person_records_lie = [
+        {'box': b24_stand, 'keypoints': None, 'behavior': None},
+        {'box': b24_lie, 'keypoints': None, 'behavior': 'lying_down'}
+    ]
+    act24, _, _ = classify_pose_activity(trk24_a, None, b24_stand, 5.0, enabled, all_persons=person_records_lie, is_video_test=True)
+    assert act24 != 'fighting_posture', f"Test 24 FAILED: Standing person near lying person falsely flagged as fighting!"
+    print(f"Test 24 PASSED: Fighting skipped when interacting with a person who is lying down")
+
+    print("\nALL 24 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()

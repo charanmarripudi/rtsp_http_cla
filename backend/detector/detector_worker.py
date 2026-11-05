@@ -553,122 +553,172 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             else:
                 trk['smoke_start_t'] = None
 
-    # 5. Fighting Posture (Multi-Person Combat Guard Stance / Physical Altercation)
-    if _is_enabled('fighting_posture') and has_kp:
-        l_sh, r_sh = kp_data[5], kp_data[6]
-        l_wr, r_wr = kp_data[9], kp_data[10]
-        l_el, r_el = kp_data[7], kp_data[8]
-        sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.25 and r_sh[2] > 0.25) else (l_sh[1] if l_sh[2] > 0.25 else r_sh[1])
+    # 5. Fighting Detection (Proximity & Altercation Mapping from User's Logic)
+    if _is_enabled('fighting_posture'):
+        is_fighting = False
+        h1 = max(1.0, bh)
+        center1 = np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0])
+        
+        nose1 = kp_data[0] if (has_kp and len(kp_data) >= 17 and kp_data[0][2] > 0.15) else np.array([center1[0], y1 + h1 * 0.2, 0.0])
+        left_wrist1 = kp_data[9] if (has_kp and len(kp_data) >= 17 and kp_data[9][2] > 0.15) else None
+        right_wrist1 = kp_data[10] if (has_kp and len(kp_data) >= 17 and kp_data[10][2] > 0.15) else None
+        wrists1 = [w[:2] for w in [left_wrist1, right_wrist1] if w is not None]
 
-        near_combatant = False
-        if all_persons and len(all_persons) > 1:
-            for ob in all_persons:
-                if ob == box:
+        # Pairwise interaction check with all other persons (User's Exact Logic)
+        if all_persons:
+            for other in all_persons:
+                if other is box:
                     continue
-                ox1, oy1, ox2, oy2 = ob
-                # FIX: Correct distance formula between person centroids
-                dist_cen = math.hypot((x1 + x2)/2.0 - (ox1 + ox2)/2.0, (y1 + y2)/2.0 - (oy1 + oy2)/2.0)
-                ix1, iy1 = max(x1, ox1), max(y1, oy1)
-                ix2, iy2 = min(x2, ox2), min(y2, oy2)
-                has_overlap = (ix1 < ix2 and iy1 < iy2)
-                if has_overlap or dist_cen < max(bw, bh) * 2.2:
-                    near_combatant = True
+                
+                if isinstance(other, dict):
+                    o_box = other.get('box', other.get('bbox'))
+                    o_kp = other.get('keypoints')
+                    o_beh = other.get('behavior', other.get('unauth_activity'))
+                else:
+                    o_box = other
+                    o_kp = None
+                    o_beh = None
+                
+                if not o_box or len(o_box) != 4 or o_box == box:
+                    continue
+                # Skip interaction processing if one target is already verified lying flat on floor
+                if o_beh == 'lying_down':
+                    continue
+                
+                ox1, oy1, ox2, oy2 = o_box
+                h2 = max(1.0, oy2 - oy1)
+                center2 = np.array([(ox1 + ox2) / 2.0, (oy1 + oy2) / 2.0])
+                
+                # Measure structural gap metrics between separate individuals
+                dist_centers = math.hypot(center1[0] - center2[0], center1[1] - center2[1])
+                avg_height = (h1 + h2) / 2.0
+                
+                dynamic_center_thresh = avg_height * 1.3
+                dynamic_contact_thresh = avg_height * 0.45
+                
+                # Check metrics mapping closest hand positions relative to opponent's face area
+                o_nose = o_kp[0][:2] if (o_kp is not None and len(o_kp) >= 17 and o_kp[0][2] > 0.15) else [center2[0], oy1 + h2 * 0.2]
+                o_wrists = [w[:2] for w in [o_kp[9], o_kp[10]] if (w is not None and len(w) >= 3 and w[2] > 0.15)] if (o_kp is not None and len(o_kp) >= 17) else []
+                
+                min_wrist_gap = float('inf')
+                if wrists1:
+                    for w1 in wrists1:
+                        min_wrist_gap = min(min_wrist_gap, math.hypot(w1[0] - o_nose[0], w1[1] - o_nose[1]))
+                if o_wrists:
+                    for w2 in o_wrists:
+                        min_wrist_gap = min(min_wrist_gap, math.hypot(w2[0] - nose1[0], w2[1] - nose1[1]))
+                
+                # Alternative grappling check: Bounding Box intersection fallback
+                x_overlap = max(0.0, min(x2, ox2) - max(x1, ox1))
+                y_overlap = max(0.0, min(y2, oy2) - max(y1, oy1))
+                has_heavy_overlap = (x_overlap > 0) and (y_overlap > 0)
+                
+                wrists_valid = bool(wrists1 or o_wrists)
+                is_close = dist_centers < dynamic_center_thresh
+                is_touching = (min_wrist_gap < dynamic_contact_thresh) and wrists_valid
+                
+                if (is_close and is_touching) or has_heavy_overlap:
+                    is_fighting = True
                     break
 
-        if not near_combatant:
-            trk['fight_start_t'] = None
-        else:
-            l_fist_raised = (l_wr[2] > 0.25 and sh_y > 0 and l_wr[1] <= sh_y + bh * 0.08)
-            r_fist_raised = (r_wr[2] > 0.25 and sh_y > 0 and r_wr[1] <= sh_y + bh * 0.08)
-
-            l_guard_bent = (l_el[2] > 0.25 and calculate_joint_angle(l_sh, l_el, l_wr) < 125.0) if l_fist_raised else False
-            r_guard_bent = (r_el[2] > 0.25 and calculate_joint_angle(r_sh, r_el, r_wr) < 125.0) if r_fist_raised else False
-
-            both_hands_guard = (l_fist_raised and r_fist_raised and (l_guard_bent or r_guard_bent))
-            wrists_together = (l_fist_raised and r_fist_raised and abs(l_wr[0] - r_wr[0]) < bw * 0.25 and abs(l_wr[1] - r_wr[1]) < bh * 0.10)
-
-            one_punch_extended = False
-            if l_fist_raised and l_el[2] > 0.25 and calculate_joint_angle(l_sh, l_el, l_wr) > 135.0:
-                one_punch_extended = True
-            elif r_fist_raised and r_el[2] > 0.25 and calculate_joint_angle(r_sh, r_el, r_wr) > 135.0:
-                one_punch_extended = True
-
-            # Martial arts kicking / high chambered leg (Screenshot 3)
-            l_hip, r_hip = kp_data[11], kp_data[12]
-            l_knee, r_knee = kp_data[13], kp_data[14]
-            l_ank, r_ank = kp_data[15], kp_data[16]
-            is_kicking = False
-            if (l_ank[2] > 0.25 and l_hip[2] > 0.20 and l_ank[1] < l_hip[1] + bh * 0.12):
-                is_kicking = True
-            elif (r_ank[2] > 0.25 and r_hip[2] > 0.20 and r_ank[1] < r_hip[1] + bh * 0.12):
-                is_kicking = True
-            elif (l_knee[2] > 0.25 and l_hip[2] > 0.20 and l_knee[1] < l_hip[1] + bh * 0.05):
-                is_kicking = True
-            elif (r_knee[2] > 0.25 and r_hip[2] > 0.20 and r_knee[1] < r_hip[1] + bh * 0.05):
-                is_kicking = True
-
-            is_fighting = (both_hands_guard or one_punch_extended or is_kicking or (l_fist_raised and r_fist_raised and not wrists_together))
-
-            if is_fighting:
-                f_start = _get_start_t('fight_start_t')
-                trk['fight_start_t'] = f_start
-                wait_time = 0.0 if is_video_test else 1.0
-                if (now_t - f_start) >= wait_time:
-                    return 'fighting_posture', 0.88, 'Combat Guard Stance / Physical Altercation'
-            else:
-                trk['fight_start_t'] = None
-
-    # 6. Lying Down (Torso Strictly Horizontal on Ground for >= 2.0s, NOT Jumping/Backflips/Desk Upper Crops)
-    if _is_enabled('lying_down'):
-        is_lying = False
-        if has_kp:
-            nose = kp_data[0]
-            head_y = nose[1] if nose[2] > 0.20 else None
+        # Solitary / Sparring Combat Stance Fallback
+        if not is_fighting and has_kp and len(kp_data) >= 17:
             l_sh, r_sh = kp_data[5], kp_data[6]
-            l_hip, r_hip = kp_data[11], kp_data[12]
+            l_wr, r_wr = kp_data[9], kp_data[10]
+            l_el, r_el = kp_data[7], kp_data[8]
+            sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.25 and r_sh[2] > 0.25) else (l_sh[1] if l_sh[2] > 0.25 else r_sh[1])
+            
+            near_combatant = False
+            if all_persons and len(all_persons) > 1:
+                for ob in all_persons:
+                    o_b = ob.get('box', ob.get('bbox')) if isinstance(ob, dict) else ob
+                    if not o_b or o_b == box: continue
+                    d_c = math.hypot((x1 + x2)/2.0 - (o_b[0] + o_b[2])/2.0, (y1 + y2)/2.0 - (o_b[1] + o_b[3])/2.0)
+                    if d_c < max(bw, bh) * 2.2:
+                        near_combatant = True
+                        break
+            
+            if near_combatant:
+                l_fist_raised = (l_wr[2] > 0.25 and sh_y > 0 and l_wr[1] <= sh_y + bh * 0.08)
+                r_fist_raised = (r_wr[2] > 0.25 and sh_y > 0 and r_wr[1] <= sh_y + bh * 0.08)
+                l_guard_bent = (l_el[2] > 0.25 and calculate_joint_angle(l_sh, l_el, l_wr) < 125.0) if l_fist_raised else False
+                r_guard_bent = (r_el[2] > 0.25 and calculate_joint_angle(r_sh, r_el, r_wr) < 125.0) if r_fist_raised else False
+                both_hands_guard = (l_fist_raised and r_fist_raised and (l_guard_bent or r_guard_bent))
+                wrists_together = (l_fist_raised and r_fist_raised and abs(l_wr[0] - r_wr[0]) < bw * 0.25 and abs(l_wr[1] - r_wr[1]) < bh * 0.10)
+                
+                one_punch_extended = False
+                if l_fist_raised and l_el[2] > 0.25 and calculate_joint_angle(l_sh, l_el, l_wr) > 135.0:
+                    one_punch_extended = True
+                elif r_fist_raised and r_el[2] > 0.25 and calculate_joint_angle(r_sh, r_el, r_wr) > 135.0:
+                    one_punch_extended = True
+                
+                l_hip, r_hip = kp_data[11], kp_data[12]
+                l_knee, r_knee = kp_data[13], kp_data[14]
+                l_ank, r_ank = kp_data[15], kp_data[16]
+                is_kicking = False
+                if (l_ank[2] > 0.25 and l_hip[2] > 0.20 and l_ank[1] < l_hip[1] + bh * 0.12):
+                    is_kicking = True
+                elif (r_ank[2] > 0.25 and r_hip[2] > 0.20 and r_ank[1] < r_hip[1] + bh * 0.12):
+                    is_kicking = True
+                elif (l_knee[2] > 0.25 and l_hip[2] > 0.20 and l_knee[1] < l_hip[1] + bh * 0.05):
+                    is_kicking = True
+                elif (r_knee[2] > 0.25 and r_hip[2] > 0.20 and r_knee[1] < r_hip[1] + bh * 0.05):
+                    is_kicking = True
+                
+                if both_hands_guard or one_punch_extended or is_kicking or (l_fist_raised and r_fist_raised and not wrists_together):
+                    is_fighting = True
 
-            sh_valid = (l_sh[2] > 0.20 or r_sh[2] > 0.20)
-            hip_valid = (l_hip[2] > 0.20 or r_hip[2] > 0.20)
+        if is_fighting:
+            f_start = _get_start_t('fight_start_t')
+            trk['fight_start_t'] = f_start
+            wait_time = 0.0 if is_video_test else 0.5
+            if (now_t - f_start) >= wait_time:
+                return 'fighting_posture', 0.90, 'Combat Guard Stance / Physical Altercation'
+        else:
+            trk['fight_start_t'] = None
 
-            if sh_valid and hip_valid:
-                sh_x = (l_sh[0] + r_sh[0]) / 2.0 if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[0] if l_sh[2] > 0.20 else r_sh[0])
-                sh_y = (l_sh[1] + r_sh[1]) / 2.0 if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
-                hip_x = (l_hip[0] + r_hip[0]) / 2.0 if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[0] if l_hip[2] > 0.20 else r_hip[0])
-                hip_y = (l_hip[1] + r_hip[1]) / 2.0 if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1])
-                dx = abs(hip_x - sh_x)
-                dy = abs(hip_y - sh_y)
+    # 6. Lying Down Detection (Aspect ratio check + spine profile from User's Logic)
+    if _is_enabled('lying_down'):
+        # 1. Aspect ratio check: If bounding box is significantly wider than it is tall
+        is_horizontal_box = bw > (bh * 1.3)
+        
+        # 2. Check if nose and ankles share similar vertical positions
+        is_horizontal_spine = False
+        if has_kp and len(kp_data) >= 17:
+            nose = kp_data[0]
+            l_ank = kp_data[15]
+            r_ank = kp_data[16]
+            
+            if nose[2] > 0.15 and l_ank[2] > 0.15:
+                if abs(nose[1] - l_ank[1]) < (bh * 0.35):
+                    is_horizontal_spine = True
+            if not is_horizontal_spine and nose[2] > 0.15 and r_ank[2] > 0.15:
+                if abs(nose[1] - r_ank[1]) < (bh * 0.35):
+                    is_horizontal_spine = True
 
-                # Must have strictly horizontal torso axis (dx > dy * 1.35) AND not upright
-                if dx > dy * 1.35 and dx > bw * 0.25 and not is_upright:
-                    # If head is centered directly vertically above shoulders, spine is vertical -> NOT lying down!
-                    if head_y is not None and (sh_y - head_y) > abs(sh_x - (nose[0] if nose[2] > 0.20 else sh_x)) * 0.80 and (sh_y - head_y) > bh * 0.15:
-                        is_lying = False
-                    # Must be positioned on or near ground/floor plane (not mid-air backflip / jumping flip)
-                    elif y2 > frame_height * 0.35:
-                        is_lying = True
+        is_lying = (is_horizontal_box or is_horizontal_spine) and not is_upright and not is_definitely_standing
+        
+        # Ground plane fallback for fallen/passed-out person flat on floor
+        if not is_lying and aspect_ratio >= 1.8 and bh >= 14 and not is_upright and not is_definitely_standing:
+            is_lying = True
 
-        # Fallback for fallen/passed-out person flat on the ground plane where keypoints are occluded by mud/debris
-        if not is_lying and not has_kp and aspect_ratio >= 2.0 and bh >= 16 and bh <= frame_height * 0.30:
-            if y1 >= frame_height * 0.50 and y2 >= frame_height * 0.70 and not is_upright and not is_definitely_standing:
-                is_lying = True
-
-        # Check centroid stationarity across frames to reject mid-air acrobatics (Screenshot 7)
+        # Centroid stationarity across frames (reject mid-air jumping flips)
         if is_lying:
             prev_cen = trk.get('last_lying_cen')
             cur_cen = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
             trk['last_lying_cen'] = cur_cen
             if prev_cen:
                 disp = math.hypot(cur_cen[0] - prev_cen[0], cur_cen[1] - prev_cen[1])
-                if disp > max(bw, bh) * 0.18:
+                if disp > max(bw, bh) * 0.25:
                     trk['lie_start_t'] = now_t
                     is_lying = False
 
         if is_lying:
             l_start = _get_start_t('lie_start_t')
             trk['lie_start_t'] = l_start
-            wait_time = 0.8 if is_video_test else 2.5
+            wait_time = 0.0 if is_video_test else 0.8
             if (now_t - l_start) >= wait_time:
-                return 'lying_down', 0.89, 'Horizontal Torso Orientation on Ground'
+                return 'lying_down', 0.90, 'Horizontal Torso Orientation on Ground'
         else:
             trk['lie_start_t'] = None
 
@@ -715,7 +765,10 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
     # STRICT DEDUPLICATION: Merges overlapping boxes of the same person or phone screen
     if _is_enabled('crowd'):
         dedup_persons = []
-        for pbox in (all_persons or []):
+        for p_item in (all_persons or []):
+            pbox = p_item.get('box', p_item.get('bbox')) if isinstance(p_item, dict) else p_item
+            if not pbox or len(pbox) != 4:
+                continue
             px1, py1, px2, py2 = pbox
             p_area = max(1.0, px2 - px1) * max(1.0, py2 - py1)
             is_dup = False
@@ -1648,7 +1701,10 @@ class DetectorWorker:
                                     ix1, iy1 = max(x1, roi_x1), max(y1, roi_y1)
                                     ix2, iy2 = min(x2, roi_x2), min(y2, roi_y2)
                                     if ix2 > ix1 and iy2 > iy1:
-                                        in_roi = True
+                                        inter_area = (ix2 - ix1) * (iy2 - iy1)
+                                        box_area = max(1.0, (x2 - x1) * (y2 - y1))
+                                        if (inter_area / box_area) >= 0.35:
+                                            in_roi = True
                                 if not in_roi:
                                     continue
                             except Exception:
@@ -2133,7 +2189,15 @@ class DetectorWorker:
                 r_min_y = min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
                 r_max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
 
-            all_person_boxes = [trk['box'] for trk in self._ema_tracks.values() if 'person' in str(trk.get('cls', '')).lower()]
+            all_person_records = [
+                {
+                    'box': t['box'],
+                    'keypoints': t.get('keypoints'),
+                    'behavior': t.get('unauth_activity')
+                }
+                for t in self._ema_tracks.values()
+                if 'person' in str(t.get('cls', '')).lower()
+            ]
 
             has_fire_smoke = any(
                 any(fk in str(t.get('cls', '')).lower() for fk in ("fire", "smoke", "gas"))
@@ -2156,7 +2220,7 @@ class DetectorWorker:
                     if in_zone and unauth_classes:
                         dwell_time = now_t - trk.get('first_seen', now_t)
                         act, act_conf, act_sub = classify_pose_activity(
-                            trk, trk.get('keypoints'), bx, dwell_time, unauth_classes, all_person_boxes, frame_height=self.height, has_fire_smoke=has_fire_smoke
+                            trk, trk.get('keypoints'), bx, dwell_time, unauth_classes, all_person_records, frame_height=self.height, has_fire_smoke=has_fire_smoke
                         )
                         trk['unauth_activity'] = act
                         trk['unauth_conf'] = act_conf
@@ -2202,6 +2266,9 @@ class DetectorWorker:
                 if not is_matched:
                     continue
             else:
+                has_person_mod = any(m in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]) for m in ("intrusion", "unauth", "non_working", "off_hours", "crowd", "ppe", "hansung", "nik"))
+                if 'person' in trk_cls.lower() and not has_person_mod:
+                    continue
                 if unauth_act:
                     disp_cls = unauth_act
 
@@ -2271,8 +2338,8 @@ class DetectorWorker:
             sand_enabled = cfg.get("enabled_classes") if (cfg and isinstance(cfg, dict)) else None
 
             def is_sand_cls_enabled(target_name):
-                if sand_enabled is None:
-                    return True
+                if not sand_enabled:
+                    return any(match_class(target_name, sc) for sc in (camera_selected_classes or [])) or not camera_selected_classes
                 t_clean = target_name.lower().replace("-", "").replace("_", "")
                 return any(t_clean in str(e).lower().replace("-", "").replace("_", "") for e in sand_enabled)
 
@@ -2285,17 +2352,20 @@ class DetectorWorker:
                 self._absence_trackers = {
                     "fire_extinguisher_seen": now_t,
                     "sand_bucket_seen": now_t,
+                    "wheel_choke_seen": now_t,
                 }
+            if "wheel_choke_seen" not in self._absence_trackers:
+                self._absence_trackers["wheel_choke_seen"] = now_t
 
             stream_uptime = now_t - getattr(self, '_start_time', now_t)
 
-            # Absence check: Fire Extinguisher
+            # Absence check: Fire Extinguisher (Fast 2.5s response)
             if is_sand_cls_enabled("no-Fire_Extinguisher"):
                 if has_pos_extinguisher:
                     self._absence_trackers["fire_extinguisher_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("fire_extinguisher_seen", now_t)
-                    if stream_uptime >= 8.0 and time_missing >= 8.0:
+                    if stream_uptime >= 2.5 and time_missing >= 2.5:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                             ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
@@ -2321,13 +2391,13 @@ class DetectorWorker:
                             self.alert_cooldowns['no-Fire_Extinguisher'] = now_t
                             absence_alerts_to_trigger.append('no-Fire_Extinguisher')
 
-            # Absence check: Sand Bucket
+            # Absence check: Sand Bucket (Fast 2.5s response)
             if is_sand_cls_enabled("no-Sand-Bucket"):
                 if has_pos_sand_bucket:
                     self._absence_trackers["sand_bucket_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("sand_bucket_seen", now_t)
-                    if stream_uptime >= 8.0 and time_missing >= 8.0:
+                    if stream_uptime >= 2.5 and time_missing >= 2.5:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                             ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
@@ -2353,8 +2423,40 @@ class DetectorWorker:
                             self.alert_cooldowns['no-Sand-Bucket'] = now_t
                             absence_alerts_to_trigger.append('no-Sand-Bucket')
 
-            # Absence check: Wheel Choke on stationary vehicles / trucks
+            # Absence check: Wheel Choke (Standalone Equipment Bay / ROI check + stationary vehicle check)
+            has_pos_wheel_choke = len(pos_wheel_chocks) > 0
             if is_sand_cls_enabled("no-wheel-choke"):
+                if has_pos_wheel_choke:
+                    self._absence_trackers["wheel_choke_seen"] = now_t
+                else:
+                    time_missing = now_t - self._absence_trackers.get("wheel_choke_seen", now_t)
+                    if stream_uptime >= 2.5 and time_missing >= 2.5:
+                        if self.roi_polygon and len(self.roi_polygon) == 2:
+                            rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            abox = [rx1, ry1, rx2, ry2]
+                        else:
+                            abox = [int(f_w * 0.72), int(f_h * 0.10), int(f_w * 0.95), int(f_h * 0.35)]
+
+                        display_boxes.append({
+                            'box':   abox,
+                            'label': 'VIOLATION: no-wheel-choke 0.90',
+                            'sub':   'MISSING WHEEL CHOCK',
+                            'is_veh': False,
+                            'color': (20, 20, 237),
+                            'cls':   'no-wheel-choke',
+                            'conf':  0.90,
+                        })
+                        cur_cls.add('no-wheel-choke')
+
+                        if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
+                        if check_and_record_alert_cooldown(self.cam_id, 'no-wheel-choke', 30.0):
+                            self.alert_cooldowns['no-wheel-choke'] = now_t
+                            absence_alerts_to_trigger.append('no-wheel-choke')
+
+                # Additional check: stationary vehicles / trucks unchocked
                 for tid, trk in list(self._ema_tracks.items()):
                     trk_cls = str(trk.get('cls', '')).lower()
                     if not any(vk in trk_cls for vk in vehicle_keywords):
@@ -2376,7 +2478,7 @@ class DetectorWorker:
                             has_choke = True
                             break
                     
-                    if not has_choke and stationary_dur >= 8.0:
+                    if not has_choke and stationary_dur >= 3.0:
                         choke_box = [
                             int(vx1 + vw * 0.15),
                             int(vy2 - max(16.0, vh * 0.26)),
@@ -2408,8 +2510,8 @@ class DetectorWorker:
             hose_enabled = cfg.get("enabled_classes") if (cfg and isinstance(cfg, dict)) else None
 
             def is_hose_cls_enabled(target_name):
-                if hose_enabled is None:
-                    return any(match_class(target_name, sc) for sc in (camera_selected_classes or []))
+                if not hose_enabled:
+                    return any(match_class(target_name, sc) for sc in (camera_selected_classes or [])) or not camera_selected_classes
                 t_clean = target_name.lower().replace("-", "").replace("_", "")
                 return any(t_clean in str(e).lower().replace("-", "").replace("_", "") for e in hose_enabled)
 
@@ -2427,7 +2529,7 @@ class DetectorWorker:
                     self._absence_trackers["firehose_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("firehose_seen", now_t)
-                    if stream_uptime >= 8.0 and time_missing >= 8.0:
+                    if stream_uptime >= 2.5 and time_missing >= 2.5:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                             ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
@@ -2460,8 +2562,8 @@ class DetectorWorker:
             spark_enabled = cfg.get("enabled_classes") if (cfg and isinstance(cfg, dict)) else None
 
             def is_spark_cls_enabled(target_name):
-                if spark_enabled is None:
-                    return any(match_class(target_name, sc) for sc in (camera_selected_classes or []))
+                if not spark_enabled:
+                    return any(match_class(target_name, sc) for sc in (camera_selected_classes or [])) or not camera_selected_classes
                 t_clean = target_name.lower().replace("-", "").replace("_", "")
                 return any(t_clean in str(e).lower().replace("-", "").replace("_", "") for e in spark_enabled)
 
@@ -2479,7 +2581,7 @@ class DetectorWorker:
                     self._absence_trackers["spark_arrestor_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("spark_arrestor_seen", now_t)
-                    if stream_uptime >= 8.0 and time_missing >= 8.0:
+                    if stream_uptime >= 2.5 and time_missing >= 2.5:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                             ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
@@ -2512,8 +2614,8 @@ class DetectorWorker:
             tape_enabled = cfg.get("enabled_classes") if (cfg and isinstance(cfg, dict)) else None
 
             def is_tape_cls_enabled(target_name):
-                if tape_enabled is None:
-                    return any(match_class(target_name, sc) for sc in (camera_selected_classes or []))
+                if not tape_enabled:
+                    return any(match_class(target_name, sc) for sc in (camera_selected_classes or [])) or not camera_selected_classes
                 t_clean = target_name.lower().replace("-", "").replace("_", "")
                 return any(t_clean in str(e).lower().replace("-", "").replace("_", "") for e in tape_enabled)
 
@@ -2531,7 +2633,7 @@ class DetectorWorker:
                     self._absence_trackers["tape_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("tape_seen", now_t)
-                    if stream_uptime >= 8.0 and time_missing >= 8.0:
+                    if stream_uptime >= 2.5 and time_missing >= 2.5:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                             ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
