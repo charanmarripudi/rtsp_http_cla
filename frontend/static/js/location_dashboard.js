@@ -153,10 +153,15 @@ class LocationDashboardTabs {
         document.querySelectorAll(".tab-btn").forEach(btn => {
             btn.addEventListener("click", () => this.activate(btn));
         });
+        this.restoreActiveTab();
     }
 
     activate(btn) {
+        if (!btn) return;
         const tabId = btn.dataset.tab;
+        localStorage.setItem("active_dashboard_tab", tabId);
+        localStorage.setItem("active_tab", tabId);
+
         document.querySelectorAll(".tab-btn").forEach(item => item.classList.remove("active"));
         btn.classList.add("active");
         document.querySelectorAll(".tab-content").forEach(content => {
@@ -164,6 +169,16 @@ class LocationDashboardTabs {
         });
         if (tabId === "dashboard") this.onDashboardOpen();
         if (tabId === "speed" && window.initSpeedTab) window.initSpeedTab();
+        if (tabId === "ptz" && window.initPtzController) window.initPtzController();
+        if (tabId === "videolab" && window.vlabLoadModels) window.vlabLoadModels();
+    }
+
+    restoreActiveTab() {
+        const savedTab = localStorage.getItem("active_dashboard_tab") || localStorage.getItem("active_tab");
+        if (savedTab) {
+            const btn = document.querySelector(`.tab-btn[data-tab="${savedTab}"]`);
+            if (btn) this.activate(btn);
+        }
     }
 }
 
@@ -377,8 +392,16 @@ class LocationDashboard {
         }
     }
 
+    closeEvidenceModal() {
+        document.querySelectorAll("#alertEvidenceModal").forEach(m => {
+            m.style.display = "none";
+        });
+    }
+
     openEvidenceModal(alertData) {
         if (!alertData) return;
+        window.closeAlertEvidenceModal = () => this.closeEvidenceModal();
+
         let modal = document.getElementById("alertEvidenceModal");
         if (!modal) {
             modal = document.createElement("div");
@@ -392,7 +415,7 @@ class LocationDashboard {
                             <span id="evidenceCamId" style="font-family:var(--mono);font-weight:700;color:#fff;font-size:0.8rem;">CAM 0</span>
                             <span id="evidenceTime" style="color:var(--muted);font-size:0.75rem;">--:--:--</span>
                         </div>
-                        <button onclick="window.closeAlertEvidenceModal()" style="background:rgba(255,255,255,0.1);border:none;color:#fff;width:28px;height:28px;border-radius:50%;font-size:1.2rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;">&times;</button>
+                        <button class="modal-close-btn" style="background:rgba(255,255,255,0.12);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:1.3rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;transition:background 0.2s;" title="Close (Esc)">&times;</button>
                     </div>
                     <div style="position:relative;flex:1;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:360px;max-height:68vh;">
                         <img id="evidenceImage" src="" alt="Violation Evidence Snapshot" style="max-width:100%;max-height:100%;object-fit:contain;display:block;">
@@ -414,8 +437,30 @@ class LocationDashboard {
                 </div>
             `;
             document.body.appendChild(modal);
-            modal.addEventListener("click", (e) => {
-                if (e.target === modal) window.closeAlertEvidenceModal();
+        }
+
+        // Attach fail-safe close listeners to all buttons and backdrop
+        modal.querySelectorAll(".modal-close-btn, button").forEach(btn => {
+            const txt = (btn.textContent || "").trim();
+            if (txt === "×" || txt === "✕" || btn.classList.contains("modal-close-btn")) {
+                btn.onclick = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.closeEvidenceModal();
+                };
+            }
+        });
+
+        modal.onclick = (e) => {
+            if (e.target === modal) {
+                this.closeEvidenceModal();
+            }
+        };
+
+        if (!window._escEvidenceListenerAdded) {
+            window._escEvidenceListenerAdded = true;
+            document.addEventListener("keydown", (e) => {
+                if (e.key === "Escape") this.closeEvidenceModal();
             });
         }
 
@@ -696,10 +741,22 @@ class LocationDashboard {
             await this.api.saveCameras(payload, this.cameraModels);
             btns.forEach(b => {
                 b.textContent = "Saved!";
+                b.style.borderColor = "#00ffaa";
+                b.style.color = "#00ffaa";
             });
             setTimeout(() => {
-                if (shouldReload) window.location.reload();
-            }, 600);
+                btns.forEach(b => {
+                    b.disabled = false;
+                    b.textContent = "Save Cameras";
+                    b.style.borderColor = "";
+                    b.style.color = "";
+                });
+                if (shouldReload) {
+                    localStorage.setItem("active_dashboard_tab", "dashboard");
+                    localStorage.setItem("active_tab", "dashboard");
+                    window.location.reload();
+                }
+            }, 1200);
         } catch (err) {
             console.error("Camera save error:", err);
             alert("Error saving cameras: " + err.message);
@@ -864,7 +921,7 @@ class LocationDashboard {
             }
         });
 
-        card.querySelector(".save-cameras").addEventListener("click", () => this.saveCameras(true));
+        card.querySelector(".save-cameras").addEventListener("click", () => this.saveCameras(false));
         return card;
     }
 

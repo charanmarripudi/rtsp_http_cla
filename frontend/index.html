@@ -1883,7 +1883,7 @@
           <span id="evidenceCamId" style="font-family:var(--mono); font-weight:700; color:#fff; font-size:0.8rem;">CAM 0</span>
           <span id="evidenceTime" style="color:var(--muted); font-size:0.75rem;">16:25:27</span>
         </div>
-        <button onclick="window.closeAlertEvidenceModal()" style="background:rgba(255,255,255,0.1); border:none; color:#fff; width:28px; height:28px; border-radius:50%; font-size:1.1rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">&times;</button>
+        <button class="modal-close-btn" onclick="(this.closest('#alertEvidenceModal')||document.getElementById('alertEvidenceModal')).style.display='none'; if(window.closeAlertEvidenceModal) window.closeAlertEvidenceModal();" style="background:rgba(255,255,255,0.12); border:none; color:#fff; width:30px; height:30px; border-radius:50%; font-size:1.3rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1; transition:background 0.2s;" title="Close (Esc)">&times;</button>
       </div>
       <div style="position:relative; flex:1; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; min-height:360px; max-height:65vh;">
         <img id="evidenceImage" src="" alt="Violation Evidence Snapshot" style="max-width:100%; max-height:100%; object-fit:contain; display:block;">
@@ -1935,7 +1935,7 @@
   </div>
 
   <script src="/static/js/detection.js?v=13.0"></script>
-  <script src="/static/js/location_dashboard.js?v=17.0"></script>
+  <script src="/static/js/location_dashboard.js?v=18.0"></script>
   <script src="/static/js/ptz_controller.js?v=11.0"></script>
   <script src="/static/js/speed_dashboard.js?v=11.0"></script>
 
@@ -2284,17 +2284,17 @@
       };
 
       window.closeAlertEvidenceModal = function() {
-        const modal = document.getElementById("alertEvidenceModal");
-        if (modal) modal.style.display = "none";
+        document.querySelectorAll("#alertEvidenceModal").forEach(m => {
+          m.style.display = "none";
+        });
       };
 
       document.addEventListener("DOMContentLoaded", () => {
-        const modal = document.getElementById("alertEvidenceModal");
-        if (modal) {
+        document.querySelectorAll("#alertEvidenceModal").forEach(modal => {
           modal.addEventListener("click", (e) => {
             if (e.target === modal) window.closeAlertEvidenceModal();
           });
-        }
+        });
         document.addEventListener("keydown", (e) => {
           if (e.key === "Escape") window.closeAlertEvidenceModal();
         });
@@ -2309,6 +2309,7 @@
 
       window.switchTab = function(tabId) {
         localStorage.setItem("active_dashboard_tab", tabId);
+        localStorage.setItem("active_tab", tabId);
         document.querySelectorAll(".tab-btn").forEach(b => {
           if (b.getAttribute("data-tab") === tabId) b.classList.add("active");
           else b.classList.remove("active");
@@ -2349,8 +2350,8 @@
         });
       });
 
-      // Restore last active tab on load (default to 'locations')
-      const savedTab = localStorage.getItem("active_dashboard_tab") || "locations";
+      // Restore last active tab on load (default to 'dashboard')
+      const savedTab = localStorage.getItem("active_dashboard_tab") || "dashboard";
       switchTab(savedTab);
 
       // ── CAMERA LIST CONFIG LOGIC ──
