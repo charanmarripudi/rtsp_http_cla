@@ -464,7 +464,6 @@ class LocationDashboard {
         modal.style.display = "flex";
         window.activeEvidenceAlert = alertData;
     }
-    }
 
     escapeHtml(value) {
         return LocationDashboardTemplates.text(value);
