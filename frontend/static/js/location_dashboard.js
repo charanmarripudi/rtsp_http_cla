@@ -596,15 +596,24 @@ class LocationDashboard {
             const key = String(stream.id !== undefined ? stream.id : idx);
             this.cameraModels[key] = [];
 
-            const parentCbs = document.querySelectorAll(`.parent-model-checkbox[data-camera="${stream.id}"]:checked, .parent-model-checkbox[data-camera="${idx}"]:checked, .parent-model-checkbox[data-cam="${stream.id}"]:checked, .parent-model-checkbox[data-cam="${idx}"]:checked`);
+            const camBlock = document.querySelector(`.camera-edit-block[data-camera-id="${stream.id}"]`) || 
+                             document.querySelector(`.camera-edit-block[data-camera-id="${idx}"]`);
+
+            const parentCbs = new Set([
+                ...(camBlock ? camBlock.querySelectorAll('.parent-model-checkbox:checked') : []),
+                ...document.querySelectorAll(`.parent-model-checkbox[data-camera="${stream.id}"]:checked, .parent-model-checkbox[data-camera="${idx}"]:checked, .parent-model-checkbox[data-cam="${stream.id}"]:checked, .parent-model-checkbox[data-cam="${idx}"]:checked`)
+            ]);
             parentCbs.forEach(cb => {
                 const m = cb.value;
-                if (!this.cameraModels[key].includes(m)) {
+                if (m && !this.cameraModels[key].includes(m)) {
                     this.cameraModels[key].push(m);
                 }
             });
 
-            const classCbs = document.querySelectorAll(`.class-checkbox[data-camera="${stream.id}"]:checked, .class-checkbox[data-camera="${idx}"]:checked, .class-checkbox[data-cam="${stream.id}"]:checked, .class-checkbox[data-cam="${idx}"]:checked`);
+            const classCbs = new Set([
+                ...(camBlock ? camBlock.querySelectorAll('.class-checkbox:checked') : []),
+                ...document.querySelectorAll(`.class-checkbox[data-camera="${stream.id}"]:checked, .class-checkbox[data-camera="${idx}"]:checked, .class-checkbox[data-cam="${stream.id}"]:checked, .class-checkbox[data-cam="${idx}"]:checked`)
+            ]);
             const enabledClassesPerModel = {};
             classCbs.forEach(cb => {
                 const m = cb.getAttribute("data-model");
@@ -742,6 +751,19 @@ class LocationDashboard {
                 b.style.borderColor = "#00ffaa";
                 b.style.color = "#00ffaa";
             });
+
+            // Update in-memory stores immediately
+            this.store.cameraModels = this.cameraModels;
+            this.store.streams = payload;
+            window.cameraModelsMap = this.cameraModels;
+            window.streamsArray = payload;
+
+            // Trigger live refresh of detection controls and assigned models in DOM
+            if (window.RtspDetection && typeof window.RtspDetection.init === "function") {
+                await window.RtspDetection.init();
+            }
+            window.dispatchEvent(new CustomEvent("rtsp-dashboard-ready"));
+
             setTimeout(() => {
                 btns.forEach(b => {
                     b.disabled = false;
@@ -754,7 +776,7 @@ class LocationDashboard {
                     localStorage.setItem("active_tab", "dashboard");
                     window.location.reload();
                 }
-            }, 1200);
+            }, 500);
         } catch (err) {
             console.error("Camera save error:", err);
             alert("Error saving cameras: " + err.message);
@@ -919,7 +941,7 @@ class LocationDashboard {
             }
         });
 
-        card.querySelector(".save-cameras").addEventListener("click", () => this.saveCameras(false));
+        card.querySelector(".save-cameras").addEventListener("click", () => this.saveCameras(true));
         return card;
     }
 
