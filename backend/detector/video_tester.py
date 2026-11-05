@@ -652,7 +652,7 @@ class LiveVideoTestStreamer:
 
                                 act, act_conf, act_sub = classify_pose_activity(
                                     trk_obj, kp, xyxy.tolist(), dwell, c_classes or ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"],
-                                    all_persons=all_person_boxes, frame_height=h_orig
+                                    all_persons=all_person_boxes, frame_height=h_orig, now_t=now_ts, is_video_test=True
                                 )
                                 if act:
                                     label_name = f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()})"
@@ -1066,7 +1066,7 @@ def _process_video_worker(job: VideoTestJob):
 
                                 act, act_conf, act_sub = classify_pose_activity(
                                     trk_obj, kp, xyxy.tolist(), dwell, filter_classes or ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"],
-                                    all_persons=all_person_boxes, frame_height=height
+                                    all_persons=all_person_boxes, frame_height=height, now_t=current_time_sec, is_video_test=True
                                 )
                                 if act:
                                     label_name = f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()})"

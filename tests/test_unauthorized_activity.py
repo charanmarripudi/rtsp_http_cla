@@ -163,11 +163,11 @@ def run_tests():
     assert act11 is None, f"Test 11 FAILED: Expected None (Mid-air flip), got {act11}"
     print("Test 11 PASSED: Mid-air backflip / jumping flip (Image 8) -> None (NOT lying_down!)")
 
-    # Test 12: Crowd gathering in parking bay (3+ persons clustering together)
-    trk12 = {'crowd_start_t': time.time() - 2.0}
+    # Test 12: Crowd gathering in parking bay (3+ distinct persons clustering together)
+    trk12 = {'crowd_start_t': time.time() - 4.0}
     b12_a = [100.0, 100.0, 160.0, 260.0]
-    b12_b = [140.0, 100.0, 200.0, 260.0]
-    b12_c = [170.0, 110.0, 230.0, 270.0]
+    b12_b = [180.0, 100.0, 240.0, 260.0]
+    b12_c = [260.0, 100.0, 320.0, 260.0]
     act12, conf12, sub12 = classify_pose_activity(trk12, None, b12_a, 5.0, enabled, all_persons=[b12_a, b12_b, b12_c])
     assert act12 == 'crowd', f"Test 12 FAILED: Expected crowd, got {act12}"
     print(f"Test 12 PASSED: 3 persons gathering in bay -> {act12} ({sub12})")
@@ -194,7 +194,63 @@ def run_tests():
     assert act14 == 'cooking', f"Test 14 FAILED: Expected cooking, got {act14}"
     print(f"Test 14 PASSED: Cooking with open flame/smoke companion -> {act14} ({sub14})")
 
-    print("\nALL 14 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 15: User sitting in office chair / wide bust crop (Screenshot 2) -> None (NOT lying_down!)
+    trk15 = {'lie_start_t': time.time() - 5.0}
+    kp15 = [
+        [150, 60, 0.9], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [80, 110, 0.9], [220, 110, 0.9], # wide shoulders
+        [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,0,0] # no hips/legs visible
+    ]
+    box15 = [20, 40, 280, 170] # aspect ratio 260/130 = 2.0
+    act15, _, _ = classify_pose_activity(trk15, kp15, box15, 5.0, enabled)
+    assert act15 is None, f"Test 15 FAILED: Expected None for desk user, got {act15}"
+    print(f"Test 15 PASSED: Desk user in office chair (Screenshot 2) -> None (NOT lying_down!)")
+
+    # Test 16: Seated contemplation with hand resting under chin / elbow on knee (Screenshot 1)
+    trk16 = {'sit_start_t': time.time() - 3.0, 'smoke_start_t': time.time() - 3.0}
+    kp16 = [
+        [100, 60, 0.9], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [70, 95, 0.9], [130, 95, 0.9],      # shoulders
+        [60, 140, 0.8], [120, 140, 0.8],    # elbows resting on knees
+        [95, 75, 0.85], [130, 140, 0.85],   # left wrist under chin, right wrist on lap
+        [75, 150, 0.85], [125, 150, 0.85],  # hips
+        [60, 145, 0.85], [140, 145, 0.85],  # knees raised
+        [70, 185, 0.8], [130, 185, 0.8]     # ankles
+    ]
+    box16 = [40, 50, 160, 195]
+    act16, conf16, sub16 = classify_pose_activity(trk16, kp16, box16, 5.0, enabled)
+    assert act16 == 'sitting', f"Test 16 FAILED: Expected sitting (NOT smoking), got {act16}"
+    print(f"Test 16 PASSED: Seated thinker pose (Screenshot 1) -> {act16} (NOT smoking_gesture!)")
+
+    # Test 17: Martial arts high kick / karate sparring (Screenshot 3)
+    trk17 = {'fight_start_t': time.time() - 2.0}
+    kp17 = [
+        [100, 80, 0.9], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [80, 110, 0.9], [120, 110, 0.9],
+        [70, 130, 0.8], [130, 130, 0.8],
+        [85, 105, 0.8], [115, 105, 0.8],    # guard hands up
+        [85, 160, 0.85], [115, 160, 0.85],  # hips
+        [70, 180, 0.85], [150, 150, 0.85],  # right leg kicked up
+        [75, 230, 0.8], [180, 140, 0.8]     # right foot at chest/hip level
+    ]
+    box17_a = [60, 60, 190, 240]
+    box17_b = [170, 60, 260, 240] # adjacent sparring partner
+    act17, conf17, sub17 = classify_pose_activity(trk17, kp17, box17_a, 5.0, enabled, all_persons=[box17_a, box17_b])
+    assert act17 == 'fighting_posture', f"Test 17 FAILED: Expected fighting_posture, got {act17}"
+    print(f"Test 17 PASSED: Martial arts high kick / karate (Screenshot 3) -> {act17}")
+
+    # Test 18: Overlapping user torso + phone screen (Screenshots 8, 9, 10)
+    # Merges overlapping boxes and rejects false crowd alert
+    trk18 = {'crowd_start_t': time.time() - 3.0}
+    b18_user = [10, 50, 300, 320]
+    b18_phone = [100, 120, 200, 310] # phone held in front of chest (heavily overlapping)
+    b18_arm = [20, 100, 140, 300]   # arm overlapping torso
+    act18, conf18, sub18 = classify_pose_activity(trk18, None, b18_user, 5.0, enabled, all_persons=[b18_user, b18_phone, b18_arm])
+    assert act18 is None, f"Test 18 FAILED: Expected None (Deduplicated), got {act18}"
+    print(f"Test 18 PASSED: Overlapping phone screen + user (Screenshots 8, 9, 10) -> None (NOT crowd!)")
+
+    print("\nALL 18 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()

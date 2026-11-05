@@ -8,21 +8,8 @@
     "iou": 0.45,
     "model_configs": {
       "roi_polygon": [],
-      "intrusion.pt": {
-        "enabled_classes": [
-          "person",
-          "truck"
-        ],
-        "class_configs": {
-          "person": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "truck": {
-            "conf": 0.4,
-            "iou": 0.45
-          }
-        }
+      "spark_arrestor.pt": {
+        "enabled_classes": []
       }
     },
     "device_id": "RPI-001",

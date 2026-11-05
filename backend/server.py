@@ -1371,6 +1371,9 @@ MODEL_CLASSES_CACHE = {
     ],
     "dome_open_closed_best.pt": [
         "Dome_Closed", "Dome_Opened"
+    ],
+    "spark_arrestor.pt": [
+        "spark_arrestor"
     ]
 }
 
