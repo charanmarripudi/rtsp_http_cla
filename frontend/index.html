@@ -1935,15 +1935,30 @@
   </div>
 
   <script src="/static/js/detection.js?v=13.0"></script>
-  <script src="/static/js/location_dashboard.js?v=18.0"></script>
+  <script src="/static/js/location_dashboard.js?v=20.0"></script>
   <script src="/static/js/ptz_controller.js?v=11.0"></script>
   <script src="/static/js/speed_dashboard.js?v=11.0"></script>
 
   <script>
     var streamsArray = [];
+
+    // Instant loader dismissal fail-safe
+    const dismissPageLoader = () => {
+      const el = document.getElementById("loading");
+      if (el) el.classList.add("gone");
+    };
+    setTimeout(dismissPageLoader, 600);
+
     window.addEventListener("DOMContentLoaded", async () => {
+      dismissPageLoader();
       if (window.initLocationDashboard) {
-        await window.initLocationDashboard();
+        try {
+          await window.initLocationDashboard();
+        } catch (e) {
+          console.warn("initLocationDashboard error:", e);
+        } finally {
+          dismissPageLoader();
+        }
         return;
       }
 

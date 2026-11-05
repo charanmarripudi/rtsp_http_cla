@@ -84,28 +84,18 @@ class LocationDashboardTemplates {
 class LocationDashboardApi {
     async loadAll() {
         const t = Date.now();
-        const [locRes, streamRes, modelRes, cameraModelRes, modelClassesRes] = await Promise.all([
+        const [locRes, streamRes, modelRes, cameraModelRes] = await Promise.all([
             fetch(`/api/locations?t=${t}`, { cache: "no-store" }),
             fetch(`/api/streams?t=${t}`, { cache: "no-store" }),
             fetch(`/api/models?t=${t}`, { cache: "no-store" }),
-            fetch(`/api/camera-models?t=${t}`, { cache: "no-store" }),
-            fetch(`/api/model-classes?t=${t}`, { cache: "no-store" }).catch(() => null)
+            fetch(`/api/camera-models?t=${t}`, { cache: "no-store" })
         ]);
-        let modelClassesData = {};
-        if (modelClassesRes && modelClassesRes.ok) {
-            try {
-                const json = await modelClassesRes.json();
-                modelClassesData = json.models || json.classes || {};
-            } catch (e) {
-                console.warn("Failed to parse model-classes:", e);
-            }
-        }
         return {
             locations: locRes.ok ? (await locRes.json()).locations || [] : [],
             streams: streamRes.ok ? await streamRes.json() : [],
             models: modelRes.ok ? (await modelRes.json()).models || [] : [],
             cameraModels: cameraModelRes.ok ? await cameraModelRes.json() : {},
-            modelClasses: modelClassesData
+            modelClasses: {}
         };
     }
 
@@ -153,7 +143,6 @@ class LocationDashboardTabs {
         document.querySelectorAll(".tab-btn").forEach(btn => {
             btn.addEventListener("click", () => this.activate(btn));
         });
-        this.restoreActiveTab();
     }
 
     activate(btn) {
@@ -306,13 +295,22 @@ class LocationDashboard {
         window.cameraModelsMap = value;
     }
 
+    hideLoader() {
+        if (this.loader) this.loader.classList.add("gone");
+        const el = document.getElementById("loading");
+        if (el) el.classList.add("gone");
+    }
+
     async init() {
+        this.hideLoader();
         this.tabs.bind();
         this.bindTopActions();
         await this.loadState();
         this.renderLocationForm();
         this.renderLocationWidgets();
         this.renderDevices();
+        this.tabs.restoreActiveTab();
+        this.hideLoader();
         this.startAlertPolling();
     }
 
@@ -532,7 +530,7 @@ class LocationDashboard {
             this.dot.className = "err";
             this.label.textContent = "Offline Mode";
         } finally {
-            if (this.loader) this.loader.classList.add("gone");
+            this.hideLoader();
         }
     }
 
