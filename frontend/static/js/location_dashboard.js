@@ -192,7 +192,7 @@ class LocationDashboardStore {
         this.locations = JSON.parse(localStorage.getItem("offline_locations") || "[]");
         this.streams = JSON.parse(localStorage.getItem("offline_streams") || "[]").map((item, idx) => this.streamView(item, idx));
         this.cameraModels = JSON.parse(localStorage.getItem("offline_camera_models") || "{}");
-        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "intrusion.pt", "non_working_hours.pt", "vehicle_intrusion.pt", "unauthorized_activity.pt"];
+        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "intrusion.pt", "non_working_hours.pt", "vehicle_intrusion.pt", "unauthorized_activity.pt", "spark_arrestor.pt"];
     }
 
     seedLocationsFromStreams() {
@@ -792,15 +792,17 @@ class LocationDashboard {
             "tyre_final": ["Defective"],
             "valve_box_best": ["Valve_Box_Open"],
             "dome_open_closed_best": ["Dome_Opened"],
-            "150_firehose_best": ["fire_hose", "firehose_box"],
-            "sand_ext_chocks": ["no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"],
-            "best_tape": ["reflective_tape_floor", "reflective_tape_person", "reflective_tape_vehicles", "traffic_tape_bollards", "traffic_tape_cone"],
+            "150_firehose_best": ["fire_hose", "firehose_box", "no-fire_hose"],
+            "sand_ext_chocks": ["Fire_Extinguisher", "Sand-Bucket", "wheel-choke", "no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"],
+            "best_tape": ["reflective_tape_floor", "reflective_tape_person", "reflective_tape_vehicles", "traffic_tape_bollards", "traffic_tape_cone", "no-tape", "no-reflective_tape", "no-traffic_tape"],
             "yolov8n": ["person"],
             "crowd_detection": ["person"],
             "intrusion": ["person", "truck"],
             "non_working_hours": ["person", "truck"],
             "vehicle_intrusion": ["car", "truck", "bus", "motorcycle"],
-            "unauthorized_activity": ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"]
+            "unauthorized_activity": ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"],
+            "spark_arrestor": ["Spark_Arrestor", "no-Spark_Arrestor"],
+            "spark_arrested": ["Spark_Arrestor", "no-Spark_Arrestor"]
         };
         if (map[norm]) return map[norm];
         const loaded = this.modelClasses[modelName] || this.modelClasses[norm] || [];
@@ -897,6 +899,12 @@ class LocationDashboard {
                 badgeColor = "#f43f5e";
                 badgeBg = "rgba(244, 63, 94, 0.12)";
                 badgeBorder = "rgba(244, 63, 94, 0.35)";
+            } else if (cleanM.toLowerCase().includes("spark_arrest")) {
+                displayTitle = "Spark Arrestor Compliance";
+                badgeText = "VEHICLE SAFETY";
+                badgeColor = "#f59e0b";
+                badgeBg = "rgba(245, 158, 11, 0.12)";
+                badgeBorder = "rgba(245, 158, 11, 0.35)";
             }
 
             html += `

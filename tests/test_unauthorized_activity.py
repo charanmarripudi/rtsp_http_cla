@@ -250,7 +250,65 @@ def run_tests():
     assert act18 is None, f"Test 18 FAILED: Expected None (Deduplicated), got {act18}"
     print(f"Test 18 PASSED: Overlapping phone screen + user (Screenshots 8, 9, 10) -> None (NOT crowd!)")
 
-    print("\nALL 18 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 19: Walking actor outdoors in jacket/shirt with ankles cropped by frame bottom (Image 2)
+    # Must NEVER be detected as cooking!
+    trk19 = {'cook_start_t': time.time() - 3.0}
+    kp19 = [
+        [150, 60, 0.95],                     # nose
+        [155, 55, 0.9], [145, 55, 0.9], [165, 58, 0.8], [135, 58, 0.8], # eyes/ears
+        [110, 105, 0.95], [190, 105, 0.95], # shoulders (wide upright)
+        [95, 160, 0.85], [205, 160, 0.85],  # elbows
+        [85, 220, 0.85], [215, 220, 0.85],  # wrists hanging on left & right sides (separated)
+        [125, 210, 0.9], [175, 210, 0.9],   # hips (upright torso: hip_y - sh_y = 105px)
+        [120, 270, 0.7], [180, 270, 0.7],   # knees
+        [0, 0, 0.0], [0, 0, 0.0]            # ankles cropped by frame edge
+    ]
+    box19 = [80, 40, 220, 290] # bh = 250, bw = 140, aspect_ratio = 0.56
+    act19, conf19, sub19 = classify_pose_activity(trk19, kp19, box19, 5.0, enabled, is_video_test=True, has_fire_smoke=False)
+    assert act19 is None, f"Test 19 FAILED: Walking actor falsely detected as {act19}!"
+    print(f"Test 19 PASSED: Walking actor outdoors (Image 2) -> None (NOT cooking!)")
+
+    # Test 20: Opposite Safety Class Matching across all positive/negative pairs
+    from detector_worker import is_opposite_class, is_negative_violation_class
+    test_opposite_pairs = [
+        ("Fire_Extinguisher", "no-Fire_Extinguisher", True),
+        ("Sand-Bucket", "no-Sand-Bucket", True),
+        ("wheel-choke", "no-wheel-choke", True),
+        ("Spark_Arrestor", "no-Spark_Arrestor", True),
+        ("fire_hose", "no-fire_hose", True),
+        ("firehose_box", "no-fire_hose", True),
+        ("reflective_tape_floor", "no-tape", True),
+        ("reflective_tape_vehicles", "no-reflective_tape", True),
+        ("traffic_tape_cone", "no-traffic_tape", True),
+        ("Hardhat", "NO-Hardhat", True),
+        ("Safety Vest", "NO-Safety Vest", True),
+        ("Mask", "NO-Mask", True),
+        ("Fire_Extinguisher", "no-Sand-Bucket", False),
+        ("person", "no-Fire_Extinguisher", False),
+        ("car", "no-Spark_Arrestor", False),
+    ]
+    for p1, p2, expected in test_opposite_pairs:
+        res = is_opposite_class(p1, p2)
+        assert res == expected, f"is_opposite_class({p1}, {p2}) expected {expected}, got {res}"
+    print(f"Test 20 PASSED: Opposite class matching validated for all 15 safety pairs!")
+
+    # Test 21: Negative Violation vs Positive Compliant Equipment Classification
+    assert not is_negative_violation_class("Spark_Arrestor")
+    assert not is_negative_violation_class("Fire_Extinguisher")
+    assert not is_negative_violation_class("Sand-Bucket")
+    assert not is_negative_violation_class("wheel-choke")
+    assert not is_negative_violation_class("fire_hose")
+    assert not is_negative_violation_class("firehose_box")
+    assert not is_negative_violation_class("reflective_tape_floor")
+    assert is_negative_violation_class("no-Spark_Arrestor")
+    assert is_negative_violation_class("no-Fire_Extinguisher")
+    assert is_negative_violation_class("no-Sand-Bucket")
+    assert is_negative_violation_class("no-wheel-choke")
+    assert is_negative_violation_class("no-fire_hose")
+    assert is_negative_violation_class("no-tape")
+    print(f"Test 21 PASSED: Positive vs negative class violation gating verified 100%!")
+
+    print("\nALL 21 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()

@@ -261,7 +261,12 @@ def is_negative_violation_class(cls_name: str, model_name: str = "") -> bool:
         "dome-closed", "domeclosed",
         "valve-box-close", "valveboxclose", "valve-box-closed",
         "good-tyre", "goodtyre",
-        "fire-extinguisher", "sand-bucket", "wheel-choke"
+        "fire-extinguisher", "sand-bucket", "wheel-choke",
+        "spark-arrestor", "sparkarrestor", "spark-arrested", "sparkarrested",
+        "fire-hose", "firehose", "firehose-box", "firehosebox",
+        "reflective-tape", "traffic-tape", "tape",
+        "reflective-tape-floor", "reflective-tape-person", "reflective-tape-vehicles",
+        "traffic-tape-bollards", "traffic-tape-cone"
     }
     if c in positive_compliant:
         return False
@@ -425,6 +430,17 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             if aspect_ratio < 0.70 and (ank_y - hip_y) >= bh * 0.44:
                 is_definitely_standing = True
 
+        # Medium / upper-body standing crop: upright torso, head above shoulders, shoulders above hips
+        if not is_definitely_standing and is_upright:
+            l_sh, r_sh = kp_data[5], kp_data[6]
+            sh_valid = (l_sh[2] > 0.20 or r_sh[2] > 0.20)
+            sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
+            if sh_valid and hip_y is not None and (hip_y - sh_y) >= bh * 0.24:
+                if knee_y is not None and (knee_y - hip_y) >= bh * 0.18:
+                    is_definitely_standing = True
+                elif ank_y is None and aspect_ratio < 0.85:
+                    is_definitely_standing = True
+
     # 3. Unauthorized Cooking / Food Preparation in Parking Bay / Restricted Area
     # Evaluates:
     # A. Presence of open flame / smoke companion detection near person
@@ -443,28 +459,36 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             sh_valid = (l_sh[2] > 0.20 or r_sh[2] > 0.20)
             hip_valid = (l_hip[2] > 0.20 or r_hip[2] > 0.20)
             knee_valid = (l_knee[2] > 0.20 or r_knee[2] > 0.20)
-            wr_valid = (l_wr[2] > 0.20 or r_wr[2] > 0.20)
+            wr_valid = (l_wr[2] > 0.20 and r_wr[2] > 0.20)  # BOTH hands must be visible for food prep without fire
 
             sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
             hip_y = min(l_hip[1], r_hip[1]) if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1])
             knee_y = min(l_knee[1], r_knee[1]) if (l_knee[2] > 0.20 and r_knee[2] > 0.20) else (l_knee[1] if l_knee[2] > 0.20 else r_knee[1])
-            wr_y = max(l_wr[1], r_wr[1]) if wr_valid else None
+            wr_y = (l_wr[1] + r_wr[1]) / 2.0 if wr_valid else None
 
-            # Floor crouching / sitting with food or stove (Images 1 & 3)
-            hips_low = (hip_y - y1) > bh * 0.35 if hip_valid else True
-            hands_low = (wr_y is not None and wr_y >= hip_y - bh * 0.15) if (wr_valid and hip_valid) else True
-            hands_forward_tending = (wr_y is not None and wr_y > sh_y + bh * 0.25) if (wr_valid and sh_valid) else True
-
-            # Knee flexion check
-            knee_flexed = True
+            # Crouching / seated posture (hips low to ground or knees flexed or wide crouch)
+            hips_low_to_ground = ((y2 - hip_y) < bh * 0.45) if hip_valid else False
+            knee_flexed = False
             if hip_valid and knee_valid:
                 l_k_ang = calculate_joint_angle(l_hip, l_knee, kp_data[15]) if (l_hip[2] > 0.20 and l_knee[2] > 0.20 and kp_data[15][2] > 0.15) else None
                 r_k_ang = calculate_joint_angle(r_hip, r_knee, kp_data[16]) if (r_hip[2] > 0.20 and r_knee[2] > 0.20 and kp_data[16][2] > 0.15) else None
-                if l_k_ang is not None or r_k_ang is not None:
-                    knee_flexed = (l_k_ang is not None and l_k_ang < 125.0) or (r_k_ang is not None and r_k_ang < 125.0) or abs(knee_y - hip_y) < bh * 0.28
+                knee_flexed = (l_k_ang is not None and l_k_ang < 125.0) or (r_k_ang is not None and r_k_ang < 125.0) or abs(knee_y - hip_y) < bh * 0.25
 
-            if hips_low and (hands_low or hands_forward_tending) and knee_flexed and 0.45 <= aspect_ratio <= 1.6:
-                is_cooking = True
+            is_crouched_or_seated = hips_low_to_ground or knee_flexed or (aspect_ratio >= 0.85)
+
+            # REJECT: Upright walking or standing person
+            is_tall_standing = (is_definitely_standing or not is_crouched_or_seated) and is_upright and sh_valid and hip_valid and (hip_y - sh_y) >= bh * 0.26
+
+            # REJECT: Arms separated on sides of body (normal walking/standing posture)
+            arms_separated = wr_valid and abs(l_wr[0] - r_wr[0]) > bw * 0.35
+
+            if not is_tall_standing and not arms_separated and wr_valid and is_crouched_or_seated:
+                # Food prep requires both hands close together in front of lap/abdomen/ground
+                hands_clustered = abs(l_wr[0] - r_wr[0]) <= bw * 0.35
+                hands_at_lap_or_ground = (wr_y >= hip_y - bh * 0.20) if hip_valid else True
+
+                if hands_clustered and hands_at_lap_or_ground:
+                    is_cooking = True
 
         if is_cooking:
             c_start = _get_start_t('cook_start_t')
@@ -814,14 +838,43 @@ def is_opposite_class(cls1, cls2):
     try:
         b_neg, b_core, _ = extract_negation_and_core(cls1)
         e_neg, e_core, _ = extract_negation_and_core(cls2)
-        if b_neg != e_neg and b_core == e_core and len(b_core) >= 3:
-            return True
+        if b_neg != e_neg:
+            if b_core == e_core and len(b_core) >= 3:
+                return True
+            if (b_core in e_core or e_core in b_core) and len(min(b_core, e_core, key=len)) >= 4:
+                return True
+            pairs = [
+                ("tape", "tape"),
+                ("hose", "hose"),
+                ("spark", "spark"),
+                ("extinguisher", "extinguisher"),
+                ("chock", "chock"),
+                ("choke", "choke"),
+                ("sand", "sand"),
+                ("bucket", "bucket")
+            ]
+            for p1, p2 in pairs:
+                if (p1 in b_core and p2 in e_core) or (p2 in b_core and p1 in e_core):
+                    return True
     except Exception:
         pass
     return False
 
 DYNAMIC_CLASS_COLOR_MAP = {
-    # Violations (NO-PPE) -> Distinct Warning Colors (Red, Orange, Magenta, Pink)
+    # Violations (NO-PPE, Missing Safety Equipment) -> Distinct Warning Colors (Red, Orange, Magenta, Pink)
+    "no-spark-arrestor": (20, 20, 237),
+    "nosparkarrestor": (20, 20, 237),
+    "no-fire-extinguisher": (20, 20, 237),
+    "nofireextinguisher": (20, 20, 237),
+    "no-sand-bucket": (20, 20, 237),
+    "nosandbucket": (20, 20, 237),
+    "no-wheel-choke": (20, 20, 237),
+    "nowheelchoke": (20, 20, 237),
+    "no-fire-hose": (20, 20, 237),
+    "nofirehose": (20, 20, 237),
+    "no-tape": (20, 20, 237),
+    "notape": (20, 20, 237),
+
     "no-safety-vest": (0, 0, 255),        # Bright Crimson Alert Red (BGR)
     "no-vest": (0, 0, 255),
     "nosafetyvest": (0, 0, 255),
@@ -848,6 +901,24 @@ DYNAMIC_CLASS_COLOR_MAP = {
     "no-boots": (0, 140, 220),
 
     # Compliant Equipment -> Emerald Green, Cyan Sky-Blue, Lemon Yellow
+    "spark-arrestor": (0, 230, 80),
+    "sparkarrestor": (0, 230, 80),
+    "fire-extinguisher": (0, 230, 80),
+    "fireextinguisher": (0, 230, 80),
+    "sand-bucket": (0, 230, 80),
+    "sandbucket": (0, 230, 80),
+    "wheel-choke": (0, 230, 80),
+    "wheelchoke": (0, 230, 80),
+    "fire-hose": (0, 230, 80),
+    "firehose": (0, 230, 80),
+    "firehose-box": (0, 230, 80),
+    "firehosebox": (0, 230, 80),
+    "reflective-tape-floor": (0, 230, 80),
+    "reflective-tape-person": (0, 230, 80),
+    "reflective-tape-vehicles": (0, 230, 80),
+    "traffic-tape-bollards": (0, 230, 80),
+    "traffic-tape-cone": (0, 230, 80),
+
     "safety-vest": (255, 220, 0),        # Electric Sky Blue / Cyan (BGR)
     "vest": (255, 220, 0),
     "saftey-vest": (255, 220, 0),
@@ -1066,6 +1137,15 @@ class DetectorWorker:
         if has_unauth:
             for cd in companion_dirs:
                 cp = os.path.join(cd, "Final_Fire_smoke.pt")
+                if os.path.exists(cp) and cp not in seen:
+                    seen.append(cp)
+                    break
+
+        # Companion model expansion for spark_arrestor: yolov8n.pt to detect vehicles/trucks for compliance
+        has_spark = any("spark_arrest" in str(p).lower() for p in seen)
+        if has_spark:
+            for cd in companion_dirs:
+                cp = os.path.join(cd, "yolov8n.pt")
                 if os.path.exists(cp) and cp not in seen:
                     seen.append(cp)
                     break
@@ -1500,18 +1580,18 @@ class DetectorWorker:
                                 continue
                         else:
                             if filter_classes is not None:
-                                if not any(match_class(cls, e) for e in filter_classes):
+                                if not any(match_class(cls, e) or is_opposite_class(cls, e) for e in filter_classes):
                                     continue
 
                             if camera_selected_classes:
-                                if not any(match_class(cls, sc) for sc in camera_selected_classes):
+                                if not any(match_class(cls, sc) or is_opposite_class(cls, sc) for sc in camera_selected_classes):
                                     continue
 
                         # Per-class confidence gate (hard reject)
                         req_conf = min(0.20, effective_conf) if is_unauth_mod else effective_conf
                         if class_configs and not is_unauth_mod:
                             for cc_name, cc_val in class_configs.items():
-                                if match_class(cls, cc_name) and isinstance(cc_val, dict) and "conf" in cc_val:
+                                if (match_class(cls, cc_name) or is_opposite_class(cls, cc_name)) and isinstance(cc_val, dict) and "conf" in cc_val:
                                     req_conf = float(cc_val["conf"])
                                     break
                         if conf_val < req_conf:
@@ -1680,16 +1760,16 @@ class DetectorWorker:
                                         continue
 
                                     if p_filters is not None:
-                                        if not any(match_class(c_cls, e) for e in p_filters):
+                                        if not any(match_class(c_cls, e) or is_opposite_class(c_cls, e) for e in p_filters):
                                             continue
                                     if camera_selected_classes:
-                                        if not any(match_class(c_cls, sc) for sc in camera_selected_classes):
+                                        if not any(match_class(c_cls, sc) or is_opposite_class(c_cls, sc) for sc in camera_selected_classes):
                                             continue
 
                                     req_crop_conf = p_conf_val
                                     if p_class_configs:
                                         for cc_name, cc_val in p_class_configs.items():
-                                            if match_class(c_cls, cc_name) and isinstance(cc_val, dict) and "conf" in cc_val:
+                                            if (match_class(c_cls, cc_name) or is_opposite_class(c_cls, cc_name)) and isinstance(cc_val, dict) and "conf" in cc_val:
                                                 req_crop_conf = float(cc_val["conf"])
                                                 break
                                     if c_conf < req_crop_conf:
@@ -2098,6 +2178,10 @@ class DetectorWorker:
                         disp_cls = sc
                         is_matched = True
                         break
+                    if is_opposite_class(trk_cls, sc):
+                        disp_cls = trk_cls
+                        is_matched = True
+                        break
                     if unauth_act and match_class(unauth_act, sc):
                         disp_cls = unauth_act
                         is_matched = True
@@ -2316,6 +2400,162 @@ class DetectorWorker:
                             self.alert_cooldowns[cd_key] = now_t
                             self.alert_cooldowns['no-wheel-choke'] = now_t
                             absence_alerts_to_trigger.append('no-wheel-choke')
+
+        # -- Absence Detection for Fire Hose / Reel Station (150_firehose_best) --
+        has_firehose_mod = any("150_firehose_best" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
+        if has_firehose_mod and not is_speed_camera:
+            cfg = get_config_for_model(self.model_configs, "150_firehose_best.pt")
+            hose_enabled = cfg.get("enabled_classes") if (cfg and isinstance(cfg, dict)) else None
+
+            def is_hose_cls_enabled(target_name):
+                if hose_enabled is None:
+                    return any(match_class(target_name, sc) for sc in (camera_selected_classes or []))
+                t_clean = target_name.lower().replace("-", "").replace("_", "")
+                return any(t_clean in str(e).lower().replace("-", "").replace("_", "") for e in hose_enabled)
+
+            has_pos_firehose = any("hose" in str(b[3]).lower() for b in kept_items)
+
+            if not hasattr(self, '_absence_trackers'):
+                self._absence_trackers = {}
+            if "firehose_seen" not in self._absence_trackers:
+                self._absence_trackers["firehose_seen"] = now_t
+
+            stream_uptime = now_t - getattr(self, '_start_time', now_t)
+
+            if is_hose_cls_enabled("no-fire_hose") or is_hose_cls_enabled("no-firehose") or is_hose_cls_enabled("no-firehose_box"):
+                if has_pos_firehose:
+                    self._absence_trackers["firehose_seen"] = now_t
+                else:
+                    time_missing = now_t - self._absence_trackers.get("firehose_seen", now_t)
+                    if stream_uptime >= 8.0 and time_missing >= 8.0:
+                        if self.roi_polygon and len(self.roi_polygon) == 2:
+                            rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            abox = [rx1, ry1, rx2, ry2]
+                        else:
+                            abox = [int(f_w * 0.72), int(f_h * 0.10), int(f_w * 0.95), int(f_h * 0.35)]
+
+                        display_boxes.append({
+                            'box':   abox,
+                            'label': 'VIOLATION: no-fire_hose 0.90',
+                            'sub':   'MISSING FIRE HOSE / REEL',
+                            'is_veh': False,
+                            'color': (20, 20, 237),
+                            'cls':   'no-fire_hose',
+                            'conf':  0.90,
+                        })
+                        cur_cls.add('no-fire_hose')
+
+                        if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
+                        if check_and_record_alert_cooldown(self.cam_id, 'no-fire_hose', 30.0):
+                            self.alert_cooldowns['no-fire_hose'] = now_t
+                            absence_alerts_to_trigger.append('no-fire_hose')
+
+        # -- Absence Detection for Spark Arrestor Compliance (spark_arrestor) --
+        has_spark_mod = any("spark_arrest" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
+        if has_spark_mod and not is_speed_camera:
+            cfg = get_config_for_model(self.model_configs, "spark_arrestor.pt") or get_config_for_model(self.model_configs, "spark_arrested.pt")
+            spark_enabled = cfg.get("enabled_classes") if (cfg and isinstance(cfg, dict)) else None
+
+            def is_spark_cls_enabled(target_name):
+                if spark_enabled is None:
+                    return any(match_class(target_name, sc) for sc in (camera_selected_classes or []))
+                t_clean = target_name.lower().replace("-", "").replace("_", "")
+                return any(t_clean in str(e).lower().replace("-", "").replace("_", "") for e in spark_enabled)
+
+            has_pos_spark = any("spark" in str(b[3]).lower() for b in kept_items)
+
+            if not hasattr(self, '_absence_trackers'):
+                self._absence_trackers = {}
+            if "spark_arrestor_seen" not in self._absence_trackers:
+                self._absence_trackers["spark_arrestor_seen"] = now_t
+
+            stream_uptime = now_t - getattr(self, '_start_time', now_t)
+
+            if is_spark_cls_enabled("no-Spark_Arrestor") or is_spark_cls_enabled("no-spark_arrestor"):
+                if has_pos_spark:
+                    self._absence_trackers["spark_arrestor_seen"] = now_t
+                else:
+                    time_missing = now_t - self._absence_trackers.get("spark_arrestor_seen", now_t)
+                    if stream_uptime >= 8.0 and time_missing >= 8.0:
+                        if self.roi_polygon and len(self.roi_polygon) == 2:
+                            rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            abox = [rx1, ry1, rx2, ry2]
+                        else:
+                            abox = [int(f_w * 0.05), int(f_h * 0.65), int(f_w * 0.35), int(f_h * 0.92)]
+
+                        display_boxes.append({
+                            'box':   abox,
+                            'label': 'VIOLATION: no-Spark_Arrestor 0.90',
+                            'sub':   'MISSING SPARK ARRESTOR ON VEHICLE',
+                            'is_veh': False,
+                            'color': (20, 20, 237),
+                            'cls':   'no-Spark_Arrestor',
+                            'conf':  0.90,
+                        })
+                        cur_cls.add('no-Spark_Arrestor')
+
+                        if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
+                        if check_and_record_alert_cooldown(self.cam_id, 'no-Spark_Arrestor', 30.0):
+                            self.alert_cooldowns['no-Spark_Arrestor'] = now_t
+                            absence_alerts_to_trigger.append('no-Spark_Arrestor')
+
+        # -- Absence Detection for Safety / Barricade Tape (best_tape) --
+        has_tape_mod = any("best_tape" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
+        if has_tape_mod and not is_speed_camera:
+            cfg = get_config_for_model(self.model_configs, "best_tape.pt")
+            tape_enabled = cfg.get("enabled_classes") if (cfg and isinstance(cfg, dict)) else None
+
+            def is_tape_cls_enabled(target_name):
+                if tape_enabled is None:
+                    return any(match_class(target_name, sc) for sc in (camera_selected_classes or []))
+                t_clean = target_name.lower().replace("-", "").replace("_", "")
+                return any(t_clean in str(e).lower().replace("-", "").replace("_", "") for e in tape_enabled)
+
+            has_pos_tape = any("tape" in str(b[3]).lower() for b in kept_items)
+
+            if not hasattr(self, '_absence_trackers'):
+                self._absence_trackers = {}
+            if "tape_seen" not in self._absence_trackers:
+                self._absence_trackers["tape_seen"] = now_t
+
+            stream_uptime = now_t - getattr(self, '_start_time', now_t)
+
+            if is_tape_cls_enabled("no-tape") or is_tape_cls_enabled("no-reflective_tape") or is_tape_cls_enabled("no-traffic_tape"):
+                if has_pos_tape:
+                    self._absence_trackers["tape_seen"] = now_t
+                else:
+                    time_missing = now_t - self._absence_trackers.get("tape_seen", now_t)
+                    if stream_uptime >= 8.0 and time_missing >= 8.0:
+                        if self.roi_polygon and len(self.roi_polygon) == 2:
+                            rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                            ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                            abox = [rx1, ry1, rx2, ry2]
+                        else:
+                            abox = [int(f_w * 0.05), int(f_h * 0.08), int(f_w * 0.35), int(f_h * 0.38)]
+
+                        display_boxes.append({
+                            'box':   abox,
+                            'label': 'VIOLATION: no-tape 0.90',
+                            'sub':   'MISSING SAFETY BARRICADE TAPE',
+                            'is_veh': False,
+                            'color': (20, 20, 237),
+                            'cls':   'no-tape',
+                            'conf':  0.90,
+                        })
+                        cur_cls.add('no-tape')
+
+                        if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
+                        if check_and_record_alert_cooldown(self.cam_id, 'no-tape', 30.0):
+                            self.alert_cooldowns['no-tape'] = now_t
+                            absence_alerts_to_trigger.append('no-tape')
 
         with self._box_lock:
             self._tracked_boxes = display_boxes

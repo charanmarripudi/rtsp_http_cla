@@ -55,7 +55,8 @@ try:
         match_class,
         clean_str,
         extract_negation_and_core,
-        classify_pose_activity
+        classify_pose_activity,
+        is_opposite_class
     )
 except ImportError:
     try:
@@ -65,10 +66,12 @@ except ImportError:
             match_class,
             clean_str,
             extract_negation_and_core,
-            classify_pose_activity
+            classify_pose_activity,
+            is_opposite_class
         )
     except ImportError:
         classify_pose_activity = None
+        is_opposite_class = None
         YOLO_CACHE = {}
         def get_yolo_model(model_path):
             if model_path not in YOLO_CACHE:
@@ -562,7 +565,7 @@ class LiveVideoTestStreamer:
 
                             if is_unauth_mod and cls_name.lower() == "person":
                                 pass  # Allow person through to evaluate activity pose
-                            elif c_classes and not any(match_class(cls_name, fc) for fc in c_classes):
+                            elif c_classes and not any(match_class(cls_name, fc) or (is_opposite_class and is_opposite_class(cls_name, fc)) for fc in c_classes):
                                 continue
 
                             xyxy = b.xyxy[0].cpu().numpy()
@@ -973,7 +976,7 @@ def _process_video_worker(job: VideoTestJob):
             if filter_classes and not is_unauth_mod:
                 for cid, cname in model.names.items():
                     for fc in filter_classes:
-                        if match_class(cname, fc):
+                        if match_class(cname, fc) or (is_opposite_class and is_opposite_class(cname, fc)):
                             target_class_ids.append(cid)
                             break
         
@@ -1026,7 +1029,7 @@ def _process_video_worker(job: VideoTestJob):
                             if is_unauth_mod and cls_name.lower() == "person":
                                 pass
                             elif filter_classes:
-                                matched = any(match_class(cls_name, fc) for fc in filter_classes)
+                                matched = any(match_class(cls_name, fc) or (is_opposite_class and is_opposite_class(cls_name, fc)) for fc in filter_classes)
                                 if not matched:
                                     continue
                                     
