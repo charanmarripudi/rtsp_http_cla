@@ -349,12 +349,17 @@ class LocationDashboard {
                 const timeStr = rawTime.includes(" ") ? rawTime.split(" ")[1] : rawTime;
                 const locStr = a.location || `Camera ${camId}`;
 
-                let imgUrl = a.image || a.image_path || "";
-                if (imgUrl && !imgUrl.startsWith("http://") && !imgUrl.startsWith("https://")) {
-                    imgUrl = `${BASE}${imgUrl.startsWith("/") ? "" : "/"}${imgUrl}`;
-                }
+                let rawImg = a.image || a.image_path || "";
+                const fname = (rawImg.split("/").pop() || "").split("?")[0];
+                const imgUrl = fname ? `/hls/alerts/${fname}` : rawImg;
 
-                card.onclick = () => { if (imgUrl) window.open(imgUrl, "_blank"); };
+                card.onclick = () => {
+                    if (window.openAlertEvidenceModal) {
+                        window.openAlertEvidenceModal(a);
+                    } else if (imgUrl) {
+                        window.open(imgUrl, "_blank");
+                    }
+                };
 
                 card.innerHTML = `
                     <div class="alert-info" style="flex:1;min-width:0;padding-right:8px;">
@@ -366,7 +371,7 @@ class LocationDashboard {
                         <div class="alert-event-title" style="font-size:0.75rem;font-weight:600;color:#f87171;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${this.escapeHtml(eventStr)}</div>
                         <div class="alert-loc-label" style="font-size:0.65rem;color:var(--muted);">${this.escapeHtml(locStr)}</div>
                     </div>
-                    ${imgUrl ? `<img src="${imgUrl}" class="alert-thumb" style="width:72px;height:45px;object-fit:cover;border-radius:4px;border:1px solid rgba(255,255,255,0.15);" loading="lazy">` : ""}
+                    ${imgUrl ? `<img src="${imgUrl}" onerror="this.src='/alerts/${fname}'" class="alert-thumb" style="width:72px;height:45px;object-fit:cover;border-radius:4px;border:1px solid rgba(255,255,255,0.15);" loading="lazy">` : ""}
                 `;
                 alertList.appendChild(card);
             });

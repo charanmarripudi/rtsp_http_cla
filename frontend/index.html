@@ -1874,6 +1874,37 @@
 
     </div>
   </div>
+  <!-- Alert Evidence Snapshot Modal Lightbox -->
+  <div id="alertEvidenceModal" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); display:none; align-items:center; justify-content:center; z-index:999999; backdrop-filter:blur(8px);">
+    <div style="background:#0d121f; border:1px solid rgba(237,28,36,0.6); border-radius:12px; width:880px; max-width:94vw; max-height:92vh; overflow:hidden; position:relative; box-shadow:0 12px 48px rgba(0,0,0,0.8), 0 0 20px rgba(237,28,36,0.25); display:flex; flex-direction:column;">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 18px; border-bottom:1px solid rgba(255,255,255,0.1); background:rgba(237,28,36,0.08);">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="background:#ed1c24; color:#fff; font-size:0.65rem; font-weight:800; padding:3px 8px; border-radius:4px; letter-spacing:0.5px;">SAFETY VIOLATION EVIDENCE</span>
+          <span id="evidenceCamId" style="font-family:var(--mono); font-weight:700; color:#fff; font-size:0.8rem;">CAM 0</span>
+          <span id="evidenceTime" style="color:var(--muted); font-size:0.75rem;">16:25:27</span>
+        </div>
+        <button onclick="window.closeAlertEvidenceModal()" style="background:rgba(255,255,255,0.1); border:none; color:#fff; width:28px; height:28px; border-radius:50%; font-size:1.1rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">&times;</button>
+      </div>
+      <div style="position:relative; flex:1; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; min-height:360px; max-height:65vh;">
+        <img id="evidenceImage" src="" alt="Violation Evidence Snapshot" style="max-width:100%; max-height:100%; object-fit:contain; display:block;">
+      </div>
+      <div style="padding:12px 18px; background:rgba(0,0,0,0.4); border-top:1px solid rgba(255,255,255,0.08); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div>
+          <div id="evidenceTitle" style="color:#f87171; font-weight:700; font-size:0.85rem; margin-bottom:2px;">VIOLATION: Missing Equipment</div>
+          <div id="evidenceLocation" style="color:var(--muted); font-size:0.72rem;">Location 20</div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <a id="evidenceDownloadBtn" href="#" download="violation_evidence.jpg" class="btn-secondary" style="padding:6px 14px; font-size:0.75rem; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+            ⬇ Download Snapshot
+          </a>
+          <a id="evidenceOpenTabBtn" href="#" target="_blank" class="btn-secondary" style="padding:6px 14px; font-size:0.75rem; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+            ↗ Open Full Size
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="ptzApiModal" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; z-index:99999; backdrop-filter:blur(6px);">
     <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:580px; max-width:90vw; padding:20px; position:relative; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
       <button onclick="window.closePtzApiModal()" style="position:absolute; top:14px; right:14px; background:transparent; border:none; color:var(--muted); font-size:1.2rem; cursor:pointer;">&times;</button>
@@ -2188,12 +2219,11 @@
             const timeStr = rawTime.includes(" ") ? rawTime.split(" ")[1] : rawTime;
             const locStr = a.location || `Camera ${camId}`;
 
-            let imgUrl = a.image || a.image_path || "";
-            if (imgUrl && !imgUrl.startsWith("http://") && !imgUrl.startsWith("https://")) {
-              imgUrl = `${BASE}${imgUrl.startsWith("/") ? "" : "/"}${imgUrl}`;
-            }
+            let rawImg = a.image || a.image_path || "";
+            const fname = (rawImg.split("/").pop() || "").split("?")[0];
+            const imgUrl = fname ? `/hls/alerts/${fname}` : rawImg;
 
-            card.onclick = () => { if (imgUrl) window.open(imgUrl); };
+            card.onclick = () => { window.openAlertEvidenceModal(a); };
 
             card.innerHTML = `
               <div class="alert-info">
@@ -2205,12 +2235,66 @@
                 <div class="alert-event-title">${eventStr}</div>
                 <div class="alert-loc-label">${locStr}</div>
               </div>
-              ${imgUrl ? `<img src="${imgUrl}" class="alert-thumb" loading="lazy">` : ""}
+              ${imgUrl ? `<img src="${imgUrl}" onerror="this.src='/alerts/${fname}'" class="alert-thumb" loading="lazy">` : ""}
             `;
             alertList.appendChild(card);
           });
         } catch (e) { console.error("Alert poll failed", e); }
       }
+
+      window.openAlertEvidenceModal = function(a) {
+        const modal = document.getElementById("alertEvidenceModal");
+        if (!modal) return;
+        const imgEl = document.getElementById("evidenceImage");
+        const camEl = document.getElementById("evidenceCamId");
+        const timeEl = document.getElementById("evidenceTime");
+        const titleEl = document.getElementById("evidenceTitle");
+        const locEl = document.getElementById("evidenceLocation");
+        const dlBtn = document.getElementById("evidenceDownloadBtn");
+        const tabBtn = document.getElementById("evidenceOpenTabBtn");
+
+        const camId = a.camera_id !== undefined ? a.camera_id : (a.camera !== undefined ? a.camera : "0");
+        const eventStr = a.type_of_alert || a.event || "Violation Detected";
+        const rawTime = a.created_at || a.time || "";
+        const locStr = a.location || `Camera ${camId}`;
+
+        let rawImg = a.image || a.image_path || "";
+        const filename = (rawImg.split("/").pop() || "").split("?")[0];
+        const resolvedUrl = filename ? `/hls/alerts/${filename}` : rawImg;
+
+        if (camEl) camEl.textContent = `CAM ${camId}`;
+        if (timeEl) timeEl.textContent = rawTime;
+        if (titleEl) titleEl.textContent = eventStr;
+        if (locEl) locEl.textContent = locStr;
+        if (imgEl) {
+          imgEl.src = resolvedUrl;
+          imgEl.onerror = () => { if (filename) imgEl.src = `/alerts/${filename}`; };
+        }
+        if (dlBtn) {
+          dlBtn.href = resolvedUrl;
+          dlBtn.download = filename || "violation_evidence.jpg";
+        }
+        if (tabBtn) tabBtn.href = resolvedUrl;
+
+        modal.style.display = "flex";
+      };
+
+      window.closeAlertEvidenceModal = function() {
+        const modal = document.getElementById("alertEvidenceModal");
+        if (modal) modal.style.display = "none";
+      };
+
+      document.addEventListener("DOMContentLoaded", () => {
+        const modal = document.getElementById("alertEvidenceModal");
+        if (modal) {
+          modal.addEventListener("click", (e) => {
+            if (e.target === modal) window.closeAlertEvidenceModal();
+          });
+        }
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape") window.closeAlertEvidenceModal();
+        });
+      });
 
       setInterval(pollAlerts, 3000);
       pollAlerts();
