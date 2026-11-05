@@ -800,7 +800,7 @@ class LocationDashboard {
             "intrusion": ["person", "truck"],
             "non_working_hours": ["person", "truck"],
             "vehicle_intrusion": ["car", "truck", "bus", "motorcycle"],
-            "unauthorized_activity": ["sitting", "lying_down", "loitering", "smoking_gesture", "fighting_posture"]
+            "unauthorized_activity": ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"]
         };
         if (map[norm]) return map[norm];
         const loaded = this.modelClasses[modelName] || this.modelClasses[norm] || [];

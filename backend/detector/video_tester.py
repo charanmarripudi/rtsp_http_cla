@@ -54,7 +54,8 @@ try:
         get_dynamic_class_color,
         match_class,
         clean_str,
-        extract_negation_and_core
+        extract_negation_and_core,
+        classify_pose_activity
     )
 except ImportError:
     try:
@@ -63,9 +64,11 @@ except ImportError:
             get_dynamic_class_color,
             match_class,
             clean_str,
-            extract_negation_and_core
+            extract_negation_and_core,
+            classify_pose_activity
         )
     except ImportError:
+        classify_pose_activity = None
         YOLO_CACHE = {}
         def get_yolo_model(model_path):
             if model_path not in YOLO_CACHE:
@@ -279,6 +282,7 @@ class LiveVideoTestStreamer:
         self.frame_lock = threading.Lock()
         self._latest_raw_frame = None
         self.model = None
+        self._trk_cache = {}
 
     def start(self):
         if self.running:
@@ -420,10 +424,10 @@ class LiveVideoTestStreamer:
                 if box is None:
                     continue
                 x1, y1, x2, y2 = box
-                x1 = max(0, min(w_d - 1, int(x1 * scale_disp_x)))
-                y1 = max(0, min(h_d - 1, int(y1 * scale_disp_y)))
-                x2 = max(0, min(w_d - 1, int(x2 * scale_disp_x)))
-                y2 = max(0, min(h_d - 1, int(y2 * scale_disp_y)))
+                x1 = max(0, min(w_d - 1, int(x1)))
+                y1 = max(0, min(h_d - 1, int(y1)))
+                x2 = max(0, min(w_d - 1, int(x2)))
+                y2 = max(0, min(h_d - 1, int(y2)))
                 if x2 <= x1 or y2 <= y1:
                     continue
                 
@@ -548,13 +552,17 @@ class LiveVideoTestStreamer:
                 if results and len(results) > 0:
                     r = results[0]
                     if r.boxes is not None and len(r.boxes) > 0:
+                        is_unauth_mod = "unauth" in str(m_name).lower() or getattr(c_model, 'task', '') == 'pose'
+                        kps_data = r.keypoints.data.cpu().numpy() if (hasattr(r, 'keypoints') and r.keypoints is not None) else []
                         raw_dets = []
-                        for b in r.boxes:
+                        for b_idx, b in enumerate(r.boxes):
                             cls_id = int(b.cls[0].item())
                             conf_val = float(b.conf[0].item())
                             cls_name = r.names.get(cls_id, str(cls_id)) if hasattr(r, 'names') else str(cls_id)
 
-                            if c_classes and not any(match_class(cls_name, fc) for fc in c_classes):
+                            if is_unauth_mod and cls_name.lower() == "person":
+                                pass  # Allow person through to evaluate activity pose
+                            elif c_classes and not any(match_class(cls_name, fc) for fc in c_classes):
                                 continue
 
                             xyxy = b.xyxy[0].cpu().numpy()
@@ -566,7 +574,8 @@ class LiveVideoTestStreamer:
                                     xyxy[2] * scale_x,
                                     xyxy[3] * scale_y
                                 ])
-                            raw_dets.append((xyxy, cls_name, conf_val))
+                            kp = kps_data[b_idx] if b_idx < len(kps_data) else None
+                            raw_dets.append((xyxy, cls_name, conf_val, kp))
 
                         # Determine if vehicle model
                         is_veh_model = "vehicle" in str(m_name).lower() or any(
@@ -574,15 +583,16 @@ class LiveVideoTestStreamer:
                             for c in (c_classes or [m_name])
                         )
 
+                        all_person_boxes = [d[0].tolist() for d in raw_dets if 'person' in str(d[1]).lower()]
                         now_ts = time.time()
-                        for (xyxy, cls_name, conf_val) in raw_dets:
+                        for (xyxy, cls_name, conf_val, kp) in raw_dets:
                             x1, y1, x2, y2 = xyxy
                             bw = max(0, x2 - x1)
                             bh = max(0, y2 - y1)
 
                             if is_veh_model:
                                 # 1. Confidence floor for vehicle classes (reject road marking hallucinations)
-                                if conf_val < max(0.45, c_conf):
+                                if conf_val < max(0.25, c_conf):
                                     continue
                                 # 2. Discard tiny noise
                                 if bw < 35 or bh < 25 or (bw * bh) < 900:
@@ -602,7 +612,7 @@ class LiveVideoTestStreamer:
                             # 6. Suppress nested sub-boxes (e.g. smaller box inside a larger box)
                             area = bw * bh
                             is_sub_box = False
-                            for (other_xyxy, other_cls, other_conf) in raw_dets:
+                            for (other_xyxy, other_cls, other_conf, other_kp) in raw_dets:
                                 if np.array_equal(other_xyxy, xyxy):
                                     continue
                                 ox1, oy1, ox2, oy2 = other_xyxy
@@ -617,11 +627,46 @@ class LiveVideoTestStreamer:
                             if is_sub_box:
                                 continue
 
+                            label_name = cls_name
                             color = get_dynamic_class_color(cls_name)
+                            conf_to_show = conf_val
+
+                            if is_unauth_mod and cls_name.lower() == "person" and classify_pose_activity is not None:
+                                box_cen = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+                                matched_tid = None
+                                min_d = 99999.0
+                                for tid, tc in self._trk_cache.items():
+                                    tc_cen = tc.get('cen', (0, 0))
+                                    d = math.hypot(box_cen[0] - tc_cen[0], box_cen[1] - tc_cen[1])
+                                    if d < max(bw, bh) * 0.70 and d < min_d:
+                                        min_d = d
+                                        matched_tid = tid
+
+                                if matched_tid is None:
+                                    matched_tid = len(self._trk_cache) + 1
+                                    self._trk_cache[matched_tid] = {'first_seen': now_ts}
+                                trk_obj = self._trk_cache[matched_tid]
+                                trk_obj['cen'] = box_cen
+                                trk_obj['last_seen'] = now_ts
+                                dwell = now_ts - trk_obj.get('first_seen', now_ts)
+
+                                act, act_conf, act_sub = classify_pose_activity(
+                                    trk_obj, kp, xyxy.tolist(), dwell, c_classes or ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"],
+                                    all_persons=all_person_boxes, frame_height=h_orig
+                                )
+                                if act:
+                                    label_name = f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()})"
+                                    color = (20, 20, 237)  # Alert Red
+                                    conf_to_show = act_conf or conf_val
+                                else:
+                                    label_name = f"person"
+                                    color = (0, 255, 100)  # Compliant Green
+                                    conf_to_show = conf_val
+
                             dets.append({
                                 "box": xyxy,
-                                "label": cls_name,
-                                "conf": conf_val,
+                                "label": label_name,
+                                "conf": conf_to_show,
                                 "color": color,
                                 "ts": now_ts
                             })
@@ -922,9 +967,10 @@ def _process_video_worker(job: VideoTestJob):
         job.duration_sec = total_frames / video_fps if video_fps > 0 else 0.0
         
         filter_classes = [c.strip() for c in job.enabled_classes if c.strip()]
+        is_unauth_mod = "unauth" in str(job.model_name).lower() or getattr(model, 'task', '') == 'pose'
         target_class_ids = []
         if hasattr(model, 'names') and isinstance(model.names, dict):
-            if filter_classes:
+            if filter_classes and not is_unauth_mod:
                 for cid, cname in model.names.items():
                     for fc in filter_classes:
                         if match_class(cname, fc):
@@ -939,6 +985,7 @@ def _process_video_worker(job: VideoTestJob):
             
         frame_idx = 0
         last_detections = []
+        job_trk_cache = {}
         
         while cap.isOpened():
             if job.cancel_requested:
@@ -961,7 +1008,7 @@ def _process_video_worker(job: VideoTestJob):
                     "iou": job.iou,
                     "verbose": False,
                 }
-                if target_class_ids:
+                if target_class_ids and not is_unauth_mod:
                     predict_kwargs["classes"] = target_class_ids
                     
                 results = model.predict(**predict_kwargs)
@@ -969,28 +1016,78 @@ def _process_video_worker(job: VideoTestJob):
                 if results and len(results) > 0:
                     r = results[0]
                     if r.boxes is not None and len(r.boxes) > 0:
-                        for b in r.boxes:
+                        kps_data = r.keypoints.data.cpu().numpy() if (hasattr(r, 'keypoints') and r.keypoints is not None) else []
+                        raw_boxes = []
+                        for b_idx, b in enumerate(r.boxes):
                             cls_id = int(b.cls[0].item())
                             conf_val = float(b.conf[0].item())
                             cls_name = model.names.get(cls_id, str(cls_id)) if hasattr(model, 'names') else str(cls_id)
                             
-                            if filter_classes:
+                            if is_unauth_mod and cls_name.lower() == "person":
+                                pass
+                            elif filter_classes:
                                 matched = any(match_class(cls_name, fc) for fc in filter_classes)
                                 if not matched:
                                     continue
                                     
                             xyxy = b.xyxy[0].cpu().numpy()
+                            kp = kps_data[b_idx] if b_idx < len(kps_data) else None
+                            raw_boxes.append((xyxy, cls_name, conf_val, kp))
+
+                        all_person_boxes = [d[0].tolist() for d in raw_boxes if 'person' in str(d[1]).lower()]
+                        current_time_sec = frame_idx / video_fps if video_fps > 0 else 0.0
+
+                        for (xyxy, cls_name, conf_val, kp) in raw_boxes:
+                            x1, y1, x2, y2 = xyxy
+                            bw = max(0, x2 - x1)
+                            bh = max(0, y2 - y1)
+                            label_name = cls_name
                             color = get_dynamic_class_color(cls_name)
-                            
+                            conf_to_show = conf_val
+
+                            if is_unauth_mod and cls_name.lower() == "person" and classify_pose_activity is not None:
+                                box_cen = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+                                matched_tid = None
+                                min_d = 99999.0
+                                for tid, tc in job_trk_cache.items():
+                                    tc_cen = tc.get('cen', (0, 0))
+                                    d = math.hypot(box_cen[0] - tc_cen[0], box_cen[1] - tc_cen[1])
+                                    if d < max(bw, bh) * 0.70 and d < min_d:
+                                        min_d = d
+                                        matched_tid = tid
+
+                                if matched_tid is None:
+                                    matched_tid = len(job_trk_cache) + 1
+                                    job_trk_cache[matched_tid] = {'first_seen': current_time_sec}
+                                trk_obj = job_trk_cache[matched_tid]
+                                trk_obj['cen'] = box_cen
+                                trk_obj['last_seen'] = current_time_sec
+                                dwell = current_time_sec - trk_obj.get('first_seen', current_time_sec)
+
+                                act, act_conf, act_sub = classify_pose_activity(
+                                    trk_obj, kp, xyxy.tolist(), dwell, filter_classes or ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"],
+                                    all_persons=all_person_boxes, frame_height=height
+                                )
+                                if act:
+                                    label_name = f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()})"
+                                    color = (20, 20, 237)
+                                    conf_to_show = act_conf or conf_val
+                                    job.class_counts[act] = job.class_counts.get(act, 0) + 1
+                                else:
+                                    label_name = f"person"
+                                    color = (0, 255, 100)
+                                    conf_to_show = conf_val
+                                    job.class_counts["person"] = job.class_counts.get("person", 0) + 1
+                            else:
+                                job.class_counts[cls_name] = job.class_counts.get(cls_name, 0) + 1
+
                             current_frame_detections.append({
                                 "box": xyxy,
-                                "label": cls_name,
-                                "conf": conf_val,
+                                "label": label_name,
+                                "conf": conf_to_show,
                                 "color": color
                             })
-                            
                             job.detections_total += 1
-                            job.class_counts[cls_name] = job.class_counts.get(cls_name, 0) + 1
                             
                 last_detections = current_frame_detections
             else:

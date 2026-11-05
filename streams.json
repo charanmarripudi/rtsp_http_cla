@@ -7,17 +7,8 @@
     "conf": 0.4,
     "iou": 0.45,
     "model_configs": {
-      "roi_polygon": [
-        [
-          0.576,
-          0.2212
-        ],
-        [
-          0.9747,
-          0.8438
-        ]
-      ],
-      "non_working_hours.pt": {
+      "roi_polygon": [],
+      "intrusion.pt": {
         "enabled_classes": [
           "person",
           "truck"
@@ -31,27 +22,7 @@
             "conf": 0.4,
             "iou": 0.45
           }
-        },
-        "off_hours_start": "15:00",
-        "off_hours_end": "06:00"
-      },
-      "non_working_hours": {
-        "off_hours_start": "15:00",
-        "off_hours_end": "06:00",
-        "class_configs": {
-          "person": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "truck": {
-            "conf": 0.4,
-            "iou": 0.45
-          }
-        },
-        "enabled_classes": [
-          "person",
-          "truck"
-        ]
+        }
       }
     },
     "device_id": "RPI-001",

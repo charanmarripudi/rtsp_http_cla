@@ -286,7 +286,8 @@ def is_negative_violation_class(cls_name: str, model_name: str = "") -> bool:
     # 5. Over speed / crowd alerts / intrusion alerts / unauthorized activities
     if ("over-speed" in c or "overspeed" in c or "crowd-alert" in c or "crowd alert" in c.replace("-", " ") or
         "intrusion" in c or "non-working" in c or "non_working" in c or "unauthorized" in c or
-        "sitting" in c or "lying" in c or "loitering" in c or "smoking" in c or "fighting" in c):
+        "sitting" in c or "lying" in c or "loitering" in c or "smoking" in c or "fighting" in c or
+        "cooking" in c or "crowd" in c):
         return True
 
     return False
@@ -335,17 +336,19 @@ def calculate_joint_angle(p1, p2, p3):
     cos_theta = max(-1.0, min(1.0, dot / (nu * nv)))
     return math.degrees(math.acos(cos_theta))
 
-def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, all_persons=None, frame_height=360):
+def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, all_persons=None, frame_height=360, has_fire_smoke=False):
     """
-    Industrial Terminal Activity Classifier using Biomechanical Joint Angles & Temporal Persistence.
+    Industrial Terminal Activity Classifier using Biomechanical Joint Angles, Spatial Context, & Temporal Persistence.
     Designed for real-time edge CCTV deployments at petroleum terminals (OISD standards).
     
     Activities evaluated:
-    - fighting_posture: Multi-person proximity + combat guard stance (wrists at shoulder/head height)
-    - smoking_gesture: Tight mouth proximity (dist < 0.15*bh) + wrist above elbow + acute angle (<105 deg)
-    - lying_down: Torso axis horizontal on ground (not upright portrait crop, bh >= 14)
-    - sitting: Knee angle 60-135 deg / wide cross-legged floor sitting / seated hip flexion
-    - loitering: Dwell time inside restricted parking bay ROI >= 30.0s
+    - cooking: Crouched / low tending posture over stove/ground or open flame/smoke proximity
+    - crowd: Group of 3+ persons gathering in parking bay / restricted zone
+    - fighting_posture: Multi-person proximity + combat guard stance / punches (requires >= 2 combatants)
+    - smoking_gesture: High-confidence hand-to-mouth gesture with acute elbow flexion and upward forearm
+    - lying_down: Stationary horizontal torso orientation resting on ground for >= 3.0s
+    - sitting: Optional seated posture with bent knee angles (disabled by default in parking area)
+    - loitering: Optional dwell time inside restricted parking bay ROI >= 30.0s
     """
     if not enabled_activities:
         return None, 0.0, None
@@ -363,6 +366,25 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
 
     has_kp = (kp_data is not None and len(kp_data) >= 17)
 
+    # 0. Crowd Gathering in Parking Bay / Restricted Area
+    if _is_enabled('crowd'):
+        num_persons_nearby = 0
+        if all_persons and len(all_persons) >= 3:
+            for ob in all_persons:
+                ox1, oy1, ox2, oy2 = ob
+                dist_cen = math.hypot((x1 + x2)/2.0 - (ox1 + ox2)/2.0, (y1 + y2)/2.0 - (oy1 + oy2)/2.0)
+                if dist_cen < max(bw, bh) * 3.5:
+                    num_persons_nearby += 1
+            if num_persons_nearby >= 3:
+                c_start = trk.get('crowd_start_t') or now_t
+                trk['crowd_start_t'] = c_start
+                if (now_t - c_start) >= 1.5:
+                    return 'crowd', 0.90, f'Crowd Gathering ({num_persons_nearby} Persons in Bay)'
+            else:
+                trk['crowd_start_t'] = None
+        else:
+            trk['crowd_start_t'] = None
+
     # 1. Biomechanical Upright Orientation Check
     is_upright = False
     if has_kp:
@@ -375,14 +397,16 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         sh_valid = (l_sh[2] > 0.20 and r_sh[2] > 0.20)
         sh_y = min(l_sh[1], r_sh[1]) if sh_valid else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
 
-        # If head keypoint is above shoulders, person is definitely upright
-        if head_y is not None and sh_y > 0 and head_y < sh_y:
+        sh_mid_x = (l_sh[0] + r_sh[0]) / 2.0 if sh_valid else (l_sh[0] if l_sh[2] > 0.20 else r_sh[0])
+        head_x = nose[0] if nose[2] > 0.20 else sh_mid_x
+
+        # If head keypoint is vertically above shoulders (upright torso axis)
+        if head_y is not None and sh_y > 0 and (sh_y - head_y) > abs(sh_mid_x - head_x) * 0.60:
             is_upright = True
         # If shoulders are aligned and hips are below shoulders
         elif (l_sh[2] > 0.20 or r_sh[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20):
             sh_mid_y = (l_sh[1] + r_sh[1]) / 2.0
             hip_mid_y = (l_hip[1] + r_hip[1]) / 2.0
-            sh_mid_x = (l_sh[0] + r_sh[0]) / 2.0
             hip_mid_x = (l_hip[0] + r_hip[0]) / 2.0
             if (hip_mid_y - sh_mid_y) > abs(hip_mid_x - sh_mid_x) * 1.1:
                 is_upright = True
@@ -390,22 +414,74 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         elif sh_valid and abs(l_sh[0] - r_sh[0]) > bw * 0.30 and abs(l_sh[1] - r_sh[1]) < abs(l_sh[0] - r_sh[0]) * 0.45:
             is_upright = True
 
-    # 2. Standing Check (A standing person has tall aspect ratio bw/bh < 0.58 and/or straight knees)
-    is_definitely_standing = (aspect_ratio < 0.58)
+    # 2. Standing Check (A standing person has tall aspect ratio and/or vertically extended legs)
+    is_definitely_standing = (aspect_ratio < 0.60)
     if has_kp:
         l_hip, r_hip = kp_data[11], kp_data[12]
         l_knee, r_knee = kp_data[13], kp_data[14]
         l_ank, r_ank = kp_data[15], kp_data[16]
+
+        hip_y = min(l_hip[1], r_hip[1]) if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1] if r_hip[2] > 0.20 else None)
+        knee_y = min(l_knee[1], r_knee[1]) if (l_knee[2] > 0.20 and r_knee[2] > 0.20) else (l_knee[1] if l_knee[2] > 0.20 else r_knee[1] if r_knee[2] > 0.20 else None)
+        ank_y = max(l_ank[1], r_ank[1]) if (l_ank[2] > 0.15 and r_ank[2] > 0.15) else (l_ank[1] if l_ank[2] > 0.15 else r_ank[1] if r_ank[2] > 0.15 else None)
+
+        # Standing in loose clothing / lungi / wide stance: hips are in upper half, ankles near bottom, knees in middle
+        if hip_y is not None and ank_y is not None:
+            if (hip_y - y1) < bh * 0.55 and (ank_y - hip_y) > bh * 0.42:
+                is_definitely_standing = True
+
         l_ang = calculate_joint_angle(l_hip, l_knee, l_ank) if (l_hip[2] > 0.20 and l_knee[2] > 0.20 and l_ank[2] > 0.15) else None
         r_ang = calculate_joint_angle(r_hip, r_knee, r_ank) if (r_hip[2] > 0.20 and r_knee[2] > 0.20 and r_ank[2] > 0.15) else None
-        if l_ang is not None and r_ang is not None and l_ang > 145.0 and r_ang > 145.0:
+        if l_ang is not None and r_ang is not None and l_ang > 140.0 and r_ang > 140.0:
             is_definitely_standing = True
-        elif l_ang is not None and r_ang is None and l_ang > 145.0 and aspect_ratio < 0.65:
-            is_definitely_standing = True
-        elif r_ang is not None and l_ang is None and r_ang > 145.0 and aspect_ratio < 0.65:
-            is_definitely_standing = True
+        elif (l_ang is not None and l_ang > 140.0) or (r_ang is not None and r_ang > 140.0):
+            if aspect_ratio < 0.70:
+                is_definitely_standing = True
 
-    # 3. Biomechanical Sitting Detection
+    # 3. Cooking / Open Flame Posture Detection
+    # Evaluates:
+    # 1. Crouched / low tending posture over stove/ground (knees sharply flexed, hips low, hands forward)
+    # 2. Presence of open flame / smoke near person
+    if _is_enabled('cooking'):
+        is_cooking = False
+        if has_fire_smoke:
+            is_cooking = True
+        elif has_kp and not is_definitely_standing:
+            l_sh, r_sh = kp_data[5], kp_data[6]
+            l_hip, r_hip = kp_data[11], kp_data[12]
+            l_knee, r_knee = kp_data[13], kp_data[14]
+            l_wr, r_wr = kp_data[9], kp_data[10]
+            l_ank, r_ank = kp_data[15], kp_data[16]
+
+            hip_valid = (l_hip[2] > 0.20 or r_hip[2] > 0.20)
+            knee_valid = (l_knee[2] > 0.20 or r_knee[2] > 0.20)
+            wr_valid = (l_wr[2] > 0.20 or r_wr[2] > 0.20)
+
+            if hip_valid and knee_valid:
+                hip_y = min(l_hip[1], r_hip[1]) if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1])
+                knee_y = min(l_knee[1], r_knee[1]) if (l_knee[2] > 0.20 and r_knee[2] > 0.20) else (l_knee[1] if l_knee[2] > 0.20 else r_knee[1])
+
+                hips_low = (hip_y - y1) > bh * 0.35 and abs(knee_y - hip_y) < bh * 0.28
+                wr_y = max(l_wr[1], r_wr[1]) if wr_valid else None
+                hands_low = (wr_y is not None and wr_y >= hip_y - bh * 0.12) if wr_valid else True
+
+                l_k_ang = calculate_joint_angle(l_hip, l_knee, l_ank) if (l_hip[2] > 0.20 and l_knee[2] > 0.20 and l_ank[2] > 0.15) else None
+                r_k_ang = calculate_joint_angle(r_hip, r_knee, r_ank) if (r_hip[2] > 0.20 and r_knee[2] > 0.20 and r_ank[2] > 0.15) else None
+                knee_flexed = (l_k_ang is not None and l_k_ang < 115.0) or (r_k_ang is not None and r_k_ang < 115.0) or hips_low
+
+                if hips_low and hands_low and knee_flexed and 0.50 <= aspect_ratio <= 1.4:
+                    is_cooking = True
+
+        if is_cooking:
+            c_start = trk.get('cook_start_t') or now_t
+            trk['cook_start_t'] = c_start
+            if (now_t - c_start) >= 2.0:
+                sub_desc = 'Active Cooking with Open Flame / Smoke Detected' if has_fire_smoke else 'Crouched Cooking Stance over Ground / Stove'
+                return 'cooking', 0.92, sub_desc
+        else:
+            trk['cook_start_t'] = None
+
+    # 4. Biomechanical Sitting Detection (Optional - Disabled by default in Parking Area)
     is_sitting = False
     if _is_enabled('sitting') and has_kp and not is_definitely_standing:
         l_sh, r_sh = kp_data[5], kp_data[6]
@@ -414,24 +490,23 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         l_ank, r_ank = kp_data[15], kp_data[16]
 
         # Left leg knee flexion (sitting on chair / curb / ground)
-        if l_hip[2] > 0.20 and l_knee[2] > 0.20 and l_ank[2] > 0.15:
+        if l_hip[2] > 0.25 and l_knee[2] > 0.25 and l_ank[2] > 0.20:
             l_knee_ang = calculate_joint_angle(l_hip, l_knee, l_ank)
             l_thigh_dy = abs(l_knee[1] - l_hip[1])
             l_thigh_dx = abs(l_knee[0] - l_hip[0])
-            if 55.0 <= l_knee_ang <= 135.0 and (l_thigh_dy < l_thigh_dx * 0.85 or l_thigh_dy < bh * 0.20):
+            if 55.0 <= l_knee_ang <= 130.0 and (l_thigh_dy < l_thigh_dx * 0.70 or l_thigh_dy < bh * 0.18):
                 is_sitting = True
 
         # Right leg knee flexion
-        if not is_sitting and r_hip[2] > 0.20 and r_knee[2] > 0.20 and r_ank[2] > 0.15:
+        if not is_sitting and r_hip[2] > 0.25 and r_knee[2] > 0.25 and r_ank[2] > 0.20:
             r_knee_ang = calculate_joint_angle(r_hip, r_knee, r_ank)
             r_thigh_dy = abs(r_knee[1] - r_hip[1])
             r_thigh_dx = abs(r_knee[0] - r_hip[0])
-            if 55.0 <= r_knee_ang <= 135.0 and (r_thigh_dy < r_thigh_dx * 0.85 or r_thigh_dy < bh * 0.20):
+            if 55.0 <= r_knee_ang <= 130.0 and (r_thigh_dy < r_thigh_dx * 0.70 or r_thigh_dy < bh * 0.18):
                 is_sitting = True
 
-        # Cross-legged floor sitting (e.g. Indian style sitting, as in Image 1)
-        # MUST have compressed aspect ratio (bw/bh >= 0.65), knees spread wide, and knees near ankles vertically
-        if not is_sitting and aspect_ratio >= 0.65 and (l_knee[2] > 0.20 and r_knee[2] > 0.20):
+        # Cross-legged floor sitting
+        if not is_sitting and aspect_ratio >= 0.70 and (l_knee[2] > 0.20 and r_knee[2] > 0.20):
             knee_spread = abs(l_knee[0] - r_knee[0])
             if knee_spread > bw * 0.45:
                 if l_ank[2] > 0.15 and r_ank[2] > 0.15:
@@ -440,59 +515,56 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                     if abs(knee_y - ank_y) < bh * 0.18:
                         is_sitting = True
 
-        # Torso-thigh angle (hip flexion) when seated on chair/bench
-        if not is_sitting and aspect_ratio >= 0.60 and (l_sh[2] > 0.20 or r_sh[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20) and (l_knee[2] > 0.20 or r_knee[2] > 0.20):
-            sh_pt = l_sh if l_sh[2] > 0.20 else r_sh
-            hip_pt = l_hip if l_hip[2] > 0.20 else r_hip
-            knee_pt = l_knee if l_knee[2] > 0.20 else r_knee
-            hip_ang = calculate_joint_angle(sh_pt, hip_pt, knee_pt)
-            if 65.0 <= hip_ang <= 130.0:
-                is_sitting = True
-
-    # Squat fallback only when full body is in scene with squat aspect ratio
-    if not is_sitting and _is_enabled('sitting') and not is_bottom_cropped and 0.70 <= aspect_ratio <= 1.25 and bh > 35 and not is_definitely_standing:
-        if has_kp:
-            l_hip, r_hip = kp_data[11], kp_data[12]
-            if max(l_hip[2], r_hip[2]) > 0.20:
-                hip_y = l_hip[1] if l_hip[2] > 0.20 else r_hip[1]
-                if (hip_y - y1) > bh * 0.40:
-                    is_sitting = True
-
-    # 4. Lying Down (Torso Strictly Horizontal on Ground, NOT Upright)
+    # 5. Lying Down (Torso Strictly Horizontal on Ground for >= 3.0s, NOT Jumping/Backflips)
     if _is_enabled('lying_down'):
         is_lying = False
         if has_kp:
             l_sh, r_sh = kp_data[5], kp_data[6]
             l_hip, r_hip = kp_data[11], kp_data[12]
-            if (l_sh[2] > 0.15 or r_sh[2] > 0.15) and (l_hip[2] > 0.15 or r_hip[2] > 0.15):
-                sh_x = (l_sh[0] + r_sh[0]) / 2.0 if (l_sh[2] > 0.15 and r_sh[2] > 0.15) else (l_sh[0] if l_sh[2] > 0.15 else r_sh[0])
-                sh_y = (l_sh[1] + r_sh[1]) / 2.0 if (l_sh[2] > 0.15 and r_sh[2] > 0.15) else (l_sh[1] if l_sh[2] > 0.15 else r_sh[1])
-                hip_x = (l_hip[0] + r_hip[0]) / 2.0 if (l_hip[2] > 0.15 and r_hip[2] > 0.15) else (l_hip[0] if l_hip[2] > 0.15 else r_hip[0])
-                hip_y = (l_hip[1] + r_hip[1]) / 2.0 if (l_hip[2] > 0.15 and r_hip[2] > 0.15) else (l_hip[1] if l_hip[2] > 0.15 else r_hip[1])
+            if (l_sh[2] > 0.20 or r_sh[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20):
+                sh_x = (l_sh[0] + r_sh[0]) / 2.0 if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[0] if l_sh[2] > 0.20 else r_sh[0])
+                sh_y = (l_sh[1] + r_sh[1]) / 2.0 if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
+                hip_x = (l_hip[0] + r_hip[0]) / 2.0 if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[0] if l_hip[2] > 0.20 else r_hip[0])
+                hip_y = (l_hip[1] + r_hip[1]) / 2.0 if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1])
                 dx = abs(hip_x - sh_x)
                 dy = abs(hip_y - sh_y)
-                if dx > dy * 1.10 and dx > bw * 0.20:
+                # Torso must be strictly horizontal, wide spread, and not upright
+                if dx > dy * 1.35 and dx > bw * 0.25 and not is_upright:
                     is_lying = True
 
-        # Fallback for small / distant figure lying down (e.g. mud video)
-        if not is_lying and not is_bottom_cropped and aspect_ratio >= 1.20 and bh >= 14 and not is_upright:
+        # Fallback for small / distant figure lying down (aspect ratio wide on ground)
+        if not is_lying and aspect_ratio >= 1.35 and bh >= 16 and (bh < frame_height * 0.40 or y2 < frame_height * 0.96) and not is_upright and not is_definitely_standing:
             is_lying = True
+
+        # Dynamic movement suppression (suppress mid-air acrobatic somersaults / fast jumping flips)
+        if is_lying:
+            prev_cen = trk.get('last_lying_cen')
+            cur_cen = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+            trk['last_lying_cen'] = cur_cen
+            if prev_cen:
+                disp = math.hypot(cur_cen[0] - prev_cen[0], cur_cen[1] - prev_cen[1])
+                if disp > max(bw, bh) * 0.25:
+                    # Person is tumbling / jumping mid-air at high speed - reset timer!
+                    trk['lie_start_t'] = now_t
+                    is_lying = False
 
         if is_lying:
             l_start = trk.get('lie_start_t') or now_t
             trk['lie_start_t'] = l_start
-            if (now_t - l_start) >= 0.8:
+            # Requires persistent resting on ground >= 2.5s (eliminates 1-second flips/somersaults)
+            if (now_t - l_start) >= 2.5:
                 return 'lying_down', 0.89, 'Horizontal Torso Orientation on Ground'
         else:
             trk['lie_start_t'] = None
 
-    # 4. Fighting Posture (Multi-Person Combat Guard Stance / Physical Altercation)
+    # 6. Fighting Posture (Multi-Person Combat Guard Stance / Physical Altercation)
+    # STRICT RULE: A physical fight in a parking bay REQUIRES AT LEAST TWO PERSONS in close physical proximity!
+    # A single person alone holding a phone, clipboard, or coffee cup is NEVER a fight violation!
     if _is_enabled('fighting_posture') and has_kp and not is_sitting:
         l_sh, r_sh = kp_data[5], kp_data[6]
         l_wr, r_wr = kp_data[9], kp_data[10]
         l_el, r_el = kp_data[7], kp_data[8]
-        nose = kp_data[0]
-        sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
+        sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.25 and r_sh[2] > 0.25) else (l_sh[1] if l_sh[2] > 0.25 else r_sh[1])
 
         near_combatant = False
         if all_persons and len(all_persons) > 1:
@@ -501,90 +573,93 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                     continue
                 ox1, oy1, ox2, oy2 = ob
                 dist_cen = math.hypot((x1 + x2)/2.0 - (ox1 + ox2)/2.0, (y1 + y2)/2.0 - (oy1 + oy2)/2.0)
-                if dist_cen < max(bw, bh) * 1.8:
+                if dist_cen < max(bw, bh) * 1.6:
                     near_combatant = True
                     break
 
-        # A true fighting guard stance requires fists/wrists raised to SHOULDER OR HEAD LEVEL:
-        # Fists protect the chin/face (y_wrist <= sh_y + bh * 0.04)
-        l_fist_raised = (l_wr[2] > 0.20 and sh_y > 0 and l_wr[1] <= sh_y + bh * 0.04)
-        r_fist_raised = (r_wr[2] > 0.20 and sh_y > 0 and r_wr[1] <= sh_y + bh * 0.04)
-
-        l_guard_bent = (l_el[2] > 0.20 and calculate_joint_angle(l_sh, l_el, l_wr) < 125.0) if l_fist_raised else False
-        r_guard_bent = (r_el[2] > 0.20 and calculate_joint_angle(r_sh, r_el, r_wr) < 125.0) if r_fist_raised else False
-
-        both_hands_guard = (l_fist_raised and r_fist_raised and (l_guard_bent or r_guard_bent))
-
-        one_punch_extended = False
-        if near_combatant:
-            if l_fist_raised and l_el[2] > 0.20 and calculate_joint_angle(l_sh, l_el, l_wr) > 140.0:
-                one_punch_extended = True
-            elif r_fist_raised and r_el[2] > 0.20 and calculate_joint_angle(r_sh, r_el, r_wr) > 140.0:
-                one_punch_extended = True
-
-        is_fighting = False
-        if near_combatant and (both_hands_guard or one_punch_extended or (l_fist_raised and r_fist_raised)):
-            is_fighting = True
-        elif not near_combatant and both_hands_guard and (nose[2] > 0.20 and (l_wr[1] < nose[1] + bh * 0.10 and r_wr[1] < nose[1] + bh * 0.10)):
-            is_fighting = True
-
-        if is_fighting:
-            f_start = trk.get('fight_start_t') or now_t
-            trk['fight_start_t'] = f_start
-            if (now_t - f_start) >= 0.8:
-                return 'fighting_posture', 0.88, 'Combat Guard Stance / Physical Altercation'
-        else:
+        if not near_combatant:
+            # Solitary person in scene: cannot be in a fight!
             trk['fight_start_t'] = None
+        else:
+            # Multi-person altercation in close proximity
+            l_fist_raised = (l_wr[2] > 0.30 and sh_y > 0 and l_wr[1] <= sh_y + bh * 0.05)
+            r_fist_raised = (r_wr[2] > 0.30 and sh_y > 0 and r_wr[1] <= sh_y + bh * 0.05)
 
-    # 5. Smoking Gesture (Hand-to-Mouth + Bent Elbow + Forearm Raised)
-    if _is_enabled('smoking_gesture') and has_kp:
+            l_guard_bent = (l_el[2] > 0.25 and calculate_joint_angle(l_sh, l_el, l_wr) < 120.0) if l_fist_raised else False
+            r_guard_bent = (r_el[2] > 0.25 and calculate_joint_angle(r_sh, r_el, r_wr) < 120.0) if r_fist_raised else False
+
+            both_hands_guard = (l_fist_raised and r_fist_raised and (l_guard_bent or r_guard_bent))
+
+            # Suppress holding a phone/object with two hands together in front of chest
+            wrists_together = (l_fist_raised and r_fist_raised and abs(l_wr[0] - r_wr[0]) < bw * 0.28)
+            if wrists_together:
+                both_hands_guard = False
+
+            one_punch_extended = False
+            if l_fist_raised and l_el[2] > 0.25 and calculate_joint_angle(l_sh, l_el, l_wr) > 140.0:
+                one_punch_extended = True
+            elif r_fist_raised and r_el[2] > 0.25 and calculate_joint_angle(r_sh, r_el, r_wr) > 140.0:
+                one_punch_extended = True
+
+            is_fighting = (both_hands_guard or one_punch_extended or (l_fist_raised and r_fist_raised and not wrists_together))
+
+            if is_fighting:
+                f_start = trk.get('fight_start_t') or now_t
+                trk['fight_start_t'] = f_start
+                if (now_t - f_start) >= 1.2:
+                    return 'fighting_posture', 0.88, 'Combat Guard Stance / Physical Altercation'
+            else:
+                trk['fight_start_t'] = None
+
+    # 7. Smoking Gesture (Hand-to-Mouth with Acute Elbow Flexion and Upward Forearm)
+    # Requires clear resolution (bh >= 70 px) and strict high confidence keypoints
+    if _is_enabled('smoking_gesture') and has_kp and bh >= 70:
         nose = kp_data[0]
         l_wr, r_wr = kp_data[9], kp_data[10]
         l_el, r_el = kp_data[7], kp_data[8]
         l_sh, r_sh = kp_data[5], kp_data[6]
 
-        sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
-        face_x, face_y = nose[0], nose[1]
         face_conf = nose[2]
-        if face_conf < 0.25 and (l_sh[2] > 0.20 and r_sh[2] > 0.20):
-            face_x = (l_sh[0] + r_sh[0]) / 2.0
-            face_y = min(l_sh[1], r_sh[1]) - bh * 0.16
-            face_conf = 0.5
+        face_x, face_y = nose[0], nose[1]
 
-        if face_conf >= 0.25:
-            mouth_y = face_y + bh * 0.05
+        if face_conf >= 0.35 and (l_sh[2] > 0.30 or r_sh[2] > 0.30):
+            sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.30 and r_sh[2] > 0.30) else (l_sh[1] if l_sh[2] > 0.30 else r_sh[1])
+            mouth_y = face_y + bh * 0.04
             is_smoking = False
 
             for wr, el, sh in [(l_wr, l_el, l_sh), (r_wr, r_el, r_sh)]:
-                if wr[2] > 0.25 and el[2] > 0.20 and sh[2] > 0.20:
-                    dist = math.hypot(wr[0] - face_x, wr[1] - mouth_y)
-                    is_at_mouth_height = (face_y - bh * 0.06 <= wr[1] <= sh_y + bh * 0.02)
-                    wrist_above_elbow = (wr[1] < el[1] + bh * 0.03)
+                # Strict keypoint confidence to reject low-res jitter
+                if wr[2] >= 0.45 and el[2] >= 0.35 and sh[2] >= 0.30:
+                    dist_to_mouth = math.hypot(wr[0] - face_x, wr[1] - mouth_y)
+                    # Hand must be directly at mouth/lips level (above shoulder line)
+                    is_at_mouth = (face_y - bh * 0.04 <= wr[1] <= sh_y - bh * 0.01) and (abs(wr[0] - face_x) < bw * 0.22)
+                    # Forearm must be oriented upward toward mouth (elbow significantly below wrist)
+                    forearm_upward = (el[1] - wr[1] > bh * 0.08)
                     elbow_ang = calculate_joint_angle(sh, el, wr)
-                    is_chin_prop = (is_sitting and wr[1] > mouth_y and abs(wr[0] - face_x) < bw * 0.15)
+                    acute_flexion = (elbow_ang <= 115.0)
 
-                    if dist < min(bh * 0.15, bw * 0.32) and is_at_mouth_height and wrist_above_elbow and elbow_ang < 105.0 and not is_chin_prop:
+                    if dist_to_mouth < min(bh * 0.12, bw * 0.25) and is_at_mouth and forearm_upward and acute_flexion:
                         is_smoking = True
                         break
 
             if is_smoking:
                 s_start = trk.get('smoke_start_t') or now_t
                 trk['smoke_start_t'] = s_start
-                if (now_t - s_start) >= 1.5:
+                if (now_t - s_start) >= 2.0:
                     return 'smoking_gesture', 0.88, 'Persistent Hand-to-Mouth Smoking Gesture'
             else:
                 trk['smoke_start_t'] = None
 
-    # 6. Sitting Confirmation
+    # 8. Sitting Confirmation (Optional)
     if is_sitting:
         sit_start = trk.get('sit_start_t') or now_t
         trk['sit_start_t'] = sit_start
-        if (now_t - sit_start) >= 0.8:
+        if (now_t - sit_start) >= 1.5:
             return 'sitting', 0.85, 'Seated Posture with Bent Knee Angles'
     else:
         trk['sit_start_t'] = None
 
-    # 7. Loitering (Track dwell time in parking area >= 30.0s)
+    # 9. Loitering (Track dwell time in parking area >= 30.0s)
     if _is_enabled('loitering'):
         if dwell_time >= 30.0:
             return 'loitering', 0.88, f'Dwell Time {int(dwell_time)}s >= 30s'
@@ -914,6 +989,15 @@ class DetectorWorker:
         if has_sand_ext:
             for cd in companion_dirs:
                 cp = os.path.join(cd, "yolov8n.pt")
+                if os.path.exists(cp) and cp not in seen:
+                    seen.append(cp)
+                    break
+
+        # Companion model expansion for unauthorized_activity: Final_Fire_smoke.pt for fire/smoke cooking detection
+        has_unauth = any("unauthorized" in str(p).lower() for p in seen)
+        if has_unauth:
+            for cd in companion_dirs:
+                cp = os.path.join(cd, "Final_Fire_smoke.pt")
                 if os.path.exists(cp) and cp not in seen:
                     seen.append(cp)
                     break
@@ -1888,11 +1972,11 @@ class DetectorWorker:
             unauth_cfg = get_config_for_model(self.model_configs, "unauthorized_activity.pt") or get_config_for_model(self.model_configs, "unauthorized_activity") or {}
             unauth_classes = unauth_cfg.get("enabled_classes") if isinstance(unauth_cfg, dict) else None
             if unauth_classes is None and camera_selected_classes:
-                sub = [c for c in camera_selected_classes if any(k in c.lower() for k in ("sitting", "lying", "loiter", "smok", "fight"))]
+                sub = [c for c in camera_selected_classes if any(k in c.lower() for k in ("cook", "crowd", "lying", "smok", "fight", "sitting", "loiter"))]
                 if sub:
                     unauth_classes = sub
             if unauth_classes is None:
-                unauth_classes = ["sitting", "lying_down", "loitering", "smoking_gesture", "fighting_posture"]
+                unauth_classes = ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"]
 
             has_roi = bool(self.roi_polygon and len(self.roi_polygon) == 2)
             if has_roi:
@@ -1902,6 +1986,11 @@ class DetectorWorker:
                 r_max_y = max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * self.height
 
             all_person_boxes = [trk['box'] for trk in self._ema_tracks.values() if 'person' in str(trk.get('cls', '')).lower()]
+
+            has_fire_smoke = any(
+                any(fk in str(t.get('cls', '')).lower() for fk in ("fire", "smoke", "gas"))
+                for t in self._ema_tracks.values()
+            )
 
             for tid, trk in self._ema_tracks.items():
                 if 'person' in str(trk.get('cls', '')).lower():
@@ -1919,7 +2008,7 @@ class DetectorWorker:
                     if in_zone and unauth_classes:
                         dwell_time = now_t - trk.get('first_seen', now_t)
                         act, act_conf, act_sub = classify_pose_activity(
-                            trk, trk.get('keypoints'), bx, dwell_time, unauth_classes, all_person_boxes, frame_height=self.height
+                            trk, trk.get('keypoints'), bx, dwell_time, unauth_classes, all_person_boxes, frame_height=self.height, has_fire_smoke=has_fire_smoke
                         )
                         trk['unauth_activity'] = act
                         trk['unauth_conf'] = act_conf
@@ -2218,7 +2307,7 @@ class DetectorWorker:
             for a_cls in absence_alerts_to_trigger:
                 self.alert_cooldowns[a_cls] = now_t
                 print(f"[ALERT-TRIGGER-VIOLATION] Absence alert generated: cam={self.cam_id}, class={a_cls}", flush=True)
-                self._save_alert(a_cls, frame_snapshot)
+                self._save_alert(a_cls, f, display_boxes=display_boxes)
 
             for tid, trk in list(self._ema_tracks.items()):
                 c = trk.get('cls', '')
@@ -2250,7 +2339,7 @@ class DetectorWorker:
                 if total_hits >= 1:
                     trk['last_alert_time'] = now_t
                     print(f"[ALERT-TRIGGER-VIOLATION] Negative alert generated: cam={self.cam_id}, class={disp_c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
-                    self._save_alert(disp_c, frame_snapshot)
+                    self._save_alert(disp_c, f, display_boxes=display_boxes)
 
             # Check Crowd Gathering Alert in ROI if person class monitored
             cfg = get_config_for_model(self.model_configs, "yolov8n.pt") if self.model_configs else {}
@@ -2325,7 +2414,7 @@ class DetectorWorker:
                         self.alert_cooldowns[cd_key] = now_t
                         crowd_event_name = f"CROWD ALERT: {person_boxes_in_roi} Persons in ROI"
                         print(f"[ALERT-TRIGGER-CROWD] Crowd Gathering alert triggered: cam={self.cam_id}, count={person_boxes_in_roi} (threshold={crowd_thresh})", flush=True)
-                        self._save_alert(crowd_event_name, frame_snapshot)
+                        self._save_alert(crowd_event_name, f, display_boxes=display_boxes)
                 else:
                     for b in display_boxes:
                         if b.get('cls', '').lower() == 'person':
@@ -2378,7 +2467,7 @@ class DetectorWorker:
                             if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
                                 alert_msg = f"VIOLATION: Intrusion / Perimeter Intrusion Detected ({c_trk.capitalize()} in ROI)"
                                 print(f"[ALERT-TRIGGER-INTRUSION] Camera {self.cam_id}: {alert_msg}", flush=True)
-                                self._save_alert(alert_msg, frame_snapshot)
+                                self._save_alert(alert_msg, f, display_boxes=display_boxes)
 
             # -- Intrusion in Non-Working Hours --------------------------------
             is_nwh_assigned = any("non_working" in str(p).lower() or "off_hours" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
@@ -2460,7 +2549,7 @@ class DetectorWorker:
                             if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
                                 alert_msg = f"VIOLATION: Intrusion in Non-Working Hours Detected ({c_trk.capitalize()}{' in ROI' if has_roi else ''})"
                                 print(f"[ALERT-TRIGGER-NWH] Camera {self.cam_id}: {alert_msg}", flush=True)
-                                self._save_alert(alert_msg, frame_snapshot)
+                                self._save_alert(alert_msg, f, display_boxes=display_boxes)
 
             # -- Vehicle Intrusion Detection in User-Drawn ROI / Restricted Zone -
             is_veh_intru_assigned = any("vehicle_intrusion" in str(p).lower() or "vehicle-intrusion" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
@@ -2508,7 +2597,7 @@ class DetectorWorker:
                         if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
                             alert_msg = f"VIOLATION: Vehicle Intrusion Detected ({c_trk.capitalize()}{' in ROI' if has_roi else ''})"
                             print(f"[ALERT-TRIGGER-VEH-INTRUSION] Camera {self.cam_id}: {alert_msg}", flush=True)
-                            self._save_alert(alert_msg, frame_snapshot)
+                            self._save_alert(alert_msg, f, display_boxes=display_boxes)
 
             # -- Unauthorized Activity (Parking Area) Alert Triggering --
             if is_unauth_assigned and not is_speed_camera:
@@ -2540,7 +2629,7 @@ class DetectorWorker:
                         has_roi = bool(self.roi_polygon and len(self.roi_polygon) == 2)
                         alert_msg = f"VIOLATION: Unauthorized Activity in Parking Area Detected ({act.replace('_', ' ').title()}{' in ROI' if has_roi else ''})"
                         print(f"[ALERT-TRIGGER-UNAUTH] Camera {self.cam_id}: {alert_msg}", flush=True)
-                        self._save_alert(alert_msg, frame_snapshot)
+                        self._save_alert(alert_msg, f, display_boxes=display_boxes)
 
             with self._box_lock:
                 self._tracked_boxes = display_boxes
@@ -2553,9 +2642,9 @@ class DetectorWorker:
                     spd = trk.get('speed_kmh', 0.0)
                     alert_cls = f"OVER SPEED: {spd:.1f} km/h (Limit: {speed_limit:.0f} km/h)"
                     print(f"[ALERT-TRIGGER-SPEED] Over speed alert generated: cam={self.cam_id}, vehicle_id={tid}, class={trk.get('cls')}, speed={spd:.1f} km/h", flush=True)
-                    self._save_alert(alert_cls, frame_snapshot)
+                    self._save_alert(alert_cls, f, display_boxes=display_boxes)
 
-    def _save_alert(self, class_name, frame, vehicle_label=None):
+    def _save_alert(self, class_name, frame, vehicle_label=None, display_boxes=None):
         try:
             now_dt = datetime.now()
             ts = now_dt.strftime("%Y%m%d_%H%M%S")
@@ -2567,7 +2656,72 @@ class DetectorWorker:
             filename = f"cam{self.cam_id}_{ts}_{safe_cls_filename}.jpg"
             adir = os.path.join(BASE_DIR, "alerts")
             os.makedirs(adir, exist_ok=True)
-            img_saved = cv2.imwrite(os.path.join(adir, filename), frame)
+
+            # Build fully annotated high-visibility evidence image
+            alert_img = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR) if frame is not None else np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            f_h, f_w = alert_img.shape[:2]
+
+            # 1. Draw User-Drawn ROI Zone (if configured)
+            has_roi = bool(self.roi_polygon and len(self.roi_polygon) == 2)
+            if has_roi:
+                try:
+                    rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                    rx2 = int(max(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
+                    ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+                    ry2 = int(max(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
+
+                    is_intrusion = any(k in str(class_name).lower() for k in ("intrusion", "off-hours", "restricted", "unauthorized"))
+                    roi_color = (20, 20, 237) if is_intrusion else (0, 180, 255) # Red for intrusion, else Amber
+
+                    roi_overlay = alert_img.copy()
+                    cv2.rectangle(roi_overlay, (rx1, ry1), (rx2, ry2), roi_color, -1)
+                    cv2.addWeighted(roi_overlay, 0.14, alert_img, 0.86, 0, alert_img)
+                    cv2.rectangle(alert_img, (rx1, ry1), (rx2, ry2), roi_color, 2)
+
+                    roi_tag = "RESTRICTED ROI ZONE"
+                    (rw, rh), _ = cv2.getTextSize(roi_tag, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+                    cv2.rectangle(alert_img, (rx1, max(0, ry1 - rh - 6)), (rx1 + rw + 8, ry1), roi_color, -1)
+                    cv2.putText(alert_img, roi_tag, (rx1 + 4, ry1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+                except Exception:
+                    pass
+
+            # 2. Render all active bounding boxes (including Bold Reliance Red violation boxes)
+            boxes_to_render = display_boxes if display_boxes is not None else getattr(self, '_tracked_boxes', [])
+            if boxes_to_render:
+                DetectorWorker._draw_boxes(alert_img, boxes_to_render)
+
+            # 3. If speed camera, draw speed lines & HUD
+            if getattr(self, 'is_speed_camera', False):
+                la_y = int(f_h * getattr(self, 'line_a_ratio', 0.40))
+                lb_y = int(f_h * getattr(self, 'line_b_ratio', 0.75))
+                cv2.line(alert_img, (int(f_w * 0.05), la_y), (int(f_w * 0.95), la_y), (255, 200, 0), 2)
+                cv2.putText(alert_img, "LINE A (GATE ENTRY)", (int(f_w * 0.06), la_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 200, 0), 1, cv2.LINE_AA)
+                cv2.line(alert_img, (int(f_w * 0.05), lb_y), (int(f_w * 0.95), lb_y), (0, 255, 100), 2)
+                cv2.putText(alert_img, "LINE B (GANTRY ROAD)", (int(f_w * 0.06), lb_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 100), 1, cv2.LINE_AA)
+
+            # 4. Standardized Violation Type String
+            lbl = vehicle_label or class_name
+            lbl_str = str(lbl).strip()
+            if "OVER SPEED" in lbl_str.upper() or "CROWD" in lbl_str.upper():
+                type_of_alert_str = lbl_str
+            elif lbl_str.upper().startswith("VIOLATION:"):
+                type_of_alert_str = lbl_str if "detected" in lbl_str.lower() else f"{lbl_str} Detected"
+            elif lbl_str.lower().endswith("detected"):
+                type_of_alert_str = f"VIOLATION: {lbl_str}"
+            else:
+                type_of_alert_str = f"VIOLATION: {lbl_str} Detected"
+
+            # 5. Top Alert Evidence Header Strip across snapshot
+            banner_h = 28
+            banner_overlay = alert_img.copy()
+            cv2.rectangle(banner_overlay, (0, 0), (f_w, banner_h), (18, 18, 200), -1) # Dark crimson alert header
+            cv2.addWeighted(banner_overlay, 0.88, alert_img, 0.12, 0, alert_img)
+            cv2.rectangle(alert_img, (0, 0), (f_w, banner_h), (50, 50, 240), 1)
+
+            banner_text = f"ALERT: {type_of_alert_str} | CAM {self.cam_id} ({self.location}) | {now_dt.strftime('%H:%M:%S')}"
+            cv2.putText(alert_img, banner_text, (8, banner_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+
+            img_saved = cv2.imwrite(os.path.join(adir, filename), alert_img, [cv2.IMWRITE_JPEG_QUALITY, 92])
             print(f"[ALERT-IMG] Saved snapshot {filename}, ok={img_saved}", flush=True)
 
             # Full local HTTP URL (Option 2)
