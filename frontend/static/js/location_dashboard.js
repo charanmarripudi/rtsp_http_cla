@@ -182,7 +182,7 @@ class LocationDashboardStore {
         const rawModels = Array.isArray(data.models) ? data.models : [];
         this.allModels = rawModels.filter(m => {
             const lc = String(m).toLowerCase();
-            return !lc.includes("leakage") && !lc.includes("nik_ppe") && !lc.includes("ppe_new") && !lc.startsWith("fire_smoke");
+            return !lc.includes("leakage") && !lc.includes("nik_ppe") && !lc.includes("ppe_new") && !lc.startsWith("fire_smoke") && lc !== "spark_arrested.pt";
         });
         this.cameraModels = (data.cameraModels && typeof data.cameraModels === "object") ? data.cameraModels : {};
         this.modelClasses = (data.modelClasses && typeof data.modelClasses === "object") ? data.modelClasses : {};
@@ -792,17 +792,17 @@ class LocationDashboard {
             "tyre_final": ["Defective"],
             "valve_box_best": ["Valve_Box_Open"],
             "dome_open_closed_best": ["Dome_Opened"],
-            "150_firehose_best": ["fire_hose", "firehose_box", "no-fire_hose"],
-            "sand_ext_chocks": ["Fire_Extinguisher", "Sand-Bucket", "wheel-choke", "no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"],
-            "best_tape": ["reflective_tape_floor", "reflective_tape_person", "reflective_tape_vehicles", "traffic_tape_bollards", "traffic_tape_cone", "no-tape", "no-reflective_tape", "no-traffic_tape"],
+            "150_firehose_best": ["no-fire_hose"],
+            "sand_ext_chocks": ["no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"],
+            "best_tape": ["no-tape", "no-reflective_tape", "no-traffic_tape"],
             "yolov8n": ["person"],
             "crowd_detection": ["person"],
             "intrusion": ["person", "truck"],
             "non_working_hours": ["person", "truck"],
             "vehicle_intrusion": ["car", "truck", "bus", "motorcycle"],
             "unauthorized_activity": ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"],
-            "spark_arrestor": ["Spark_Arrestor", "no-Spark_Arrestor"],
-            "spark_arrested": ["Spark_Arrestor", "no-Spark_Arrestor"]
+            "spark_arrestor": ["no-Spark_Arrestor"],
+            "spark_arrested": ["no-Spark_Arrestor"]
         };
         if (map[norm]) return map[norm];
         const loaded = this.modelClasses[modelName] || this.modelClasses[norm] || [];
@@ -849,7 +849,17 @@ class LocationDashboard {
         if (!this.allModels.length) return '<span style="color:var(--muted);font-size:.68rem;">No models available</span>';
 
         let html = "";
-        const modelsToRender = this.allModels.filter(m => !m.toLowerCase().includes("leakage") && !m.toLowerCase().startsWith("fire_smoke"));
+        const seenTitles = new Set();
+        const modelsToRender = [];
+        this.allModels.forEach(m => {
+            const lc = m.toLowerCase();
+            if (lc.includes("leakage") || lc.startsWith("fire_smoke") || lc === "spark_arrested.pt") return;
+            const clean = m.replace(/\.pt$/i, "").toLowerCase();
+            const canonical = clean.includes("spark_arrest") ? "spark_arrestor" : clean;
+            if (seenTitles.has(canonical)) return;
+            seenTitles.add(canonical);
+            modelsToRender.push(m);
+        });
         const modelConfigs = (stream && stream.model_configs) || {};
 
         modelsToRender.forEach(model => {

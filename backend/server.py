@@ -1273,7 +1273,7 @@ async def update_thresholds(req: Request):
 
 @app.get("/api/models")
 def get_models():
-    hidden = {"nik_ppe_best.pt", "ppe_new.pt", "fire_smoke.pt", "leakage.pt"}
+    hidden = {"nik_ppe_best.pt", "ppe_new.pt", "fire_smoke.pt", "leakage.pt", "spark_arrested.pt"}
     candidates = [
         MODEL_DIR,
         os.path.join(BASE_DIR, "models"),
@@ -1351,24 +1351,24 @@ MODEL_CLASSES_CACHE = {
         "fire", "smoke"
     ],
     "150_firehose_best.pt": [
-        "fire_hose", "firehose_box", "no-fire_hose"
+        "no-fire_hose"
     ],
     "150_firehose_best": [
-        "fire_hose", "firehose_box", "no-fire_hose"
+        "no-fire_hose"
     ],
     "120_spillage_best.pt": [
         "spillage"
     ],
     "best_tape.pt": [
-        "reflective_tape_floor", "reflective_tape_person", "reflective_tape_vehicles", "traffic_tape_bollards", "traffic_tape_cone",
         "no-tape", "no-reflective_tape", "no-traffic_tape"
     ],
     "best_tape": [
-        "reflective_tape_floor", "reflective_tape_person", "reflective_tape_vehicles", "traffic_tape_bollards", "traffic_tape_cone",
         "no-tape", "no-reflective_tape", "no-traffic_tape"
     ],
     "sand_ext_chocks.pt": [
-        "Fire_Extinguisher", "Sand-Bucket", "wheel-choke",
+        "no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"
+    ],
+    "sand_ext_chocks": [
         "no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"
     ],
     "tyre_final.pt": [
@@ -1381,16 +1381,16 @@ MODEL_CLASSES_CACHE = {
         "Dome_Closed", "Dome_Opened"
     ],
     "spark_arrestor.pt": [
-        "Spark_Arrestor", "no-Spark_Arrestor"
+        "no-Spark_Arrestor"
     ],
     "spark_arrestor": [
-        "Spark_Arrestor", "no-Spark_Arrestor"
+        "no-Spark_Arrestor"
     ],
     "spark_arrested.pt": [
-        "Spark_Arrestor", "no-Spark_Arrestor"
+        "no-Spark_Arrestor"
     ],
     "spark_arrested": [
-        "Spark_Arrestor", "no-Spark_Arrestor"
+        "no-Spark_Arrestor"
     ]
 }
 
