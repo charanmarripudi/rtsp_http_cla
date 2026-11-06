@@ -617,6 +617,9 @@ def classify_pose_activity(
     # Update rolling wrist kinematics (velocity, acceleration, and movement variance)
     wrist_max_v, wrist_max_a, wrist_var = update_wrist_kinematics(trk, kp_data, now_t, bh)
 
+    is_crouched_or_seated = False
+    is_cooking = False
+
     # 1. Biomechanical Upright Orientation & Body Angle Calculation (Section 3.A)
     is_upright = False
     body_angle = None
@@ -676,7 +679,8 @@ def classify_pose_activity(
             if aspect_ratio < 0.70 and (ank_y - hip_y) >= bh * 0.44:
                 is_definitely_standing = True
 
-        if not is_definitely_standing and is_upright:
+        hips_low = ((y2 - hip_y) < bh * 0.45) if hip_y is not None else False
+        if not is_definitely_standing and is_upright and not hips_low:
             l_sh, r_sh = kp_data[5], kp_data[6]
             sh_valid = (l_sh[2] > 0.20 or r_sh[2] > 0.20)
             sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
@@ -697,8 +701,8 @@ def classify_pose_activity(
     # Detects:
     # A. Open flame / smoke companion detection near person
     # B. Cooking equipment proximity (bottle, cup, bowl, spoon, knife, fork, oven, microwave, pan, pot, stove)
-    # C. Crouched / low tending posture over stove/ground (floor food prep/eating)
-    # D. Hands working downward in front of lap/waist (cutting vegetables / tending stove)
+    # C. Standing food prep / cooking at stove, counter, table, or cooking surface
+    # D. Crouched / seated floor food prep / pot cooking over ground or burner
     if _is_enabled('cooking'):
         is_cooking = False
         sub_desc = 'Unauthorized Cooking / Food Prep in Restricted Area'
@@ -734,21 +738,66 @@ def classify_pose_activity(
         if has_fire_smoke:
             is_cooking = True
             sub_desc = 'Active Cooking with Open Flame / Smoke Detected'
-        elif has_kp and not is_definitely_standing:
+        elif has_kp:
             l_sh, r_sh = kp_data[5], kp_data[6]
+            l_el, r_el = kp_data[7], kp_data[8]
+            l_wr, r_wr = kp_data[9], kp_data[10]
             l_hip, r_hip = kp_data[11], kp_data[12]
             l_knee, r_knee = kp_data[13], kp_data[14]
-            l_wr, r_wr = kp_data[9], kp_data[10]
+            nose = kp_data[0]
 
             sh_valid = (l_sh[2] > 0.20 or r_sh[2] > 0.20)
             hip_valid = (l_hip[2] > 0.20 or r_hip[2] > 0.20)
             knee_valid = (l_knee[2] > 0.20 or r_knee[2] > 0.20)
             wr_valid = (l_wr[2] > 0.20 and r_wr[2] > 0.20)
+            any_wr_valid = (l_wr[2] > 0.20 or r_wr[2] > 0.20)
 
             sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
+            sh_mid_y = (l_sh[1] + r_sh[1]) / 2.0 if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else sh_y
             hip_y = min(l_hip[1], r_hip[1]) if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1])
             knee_y = min(l_knee[1], r_knee[1]) if (l_knee[2] > 0.20 and r_knee[2] > 0.20) else (l_knee[1] if l_knee[2] > 0.20 else r_knee[1])
-            wr_y = (l_wr[1] + r_wr[1]) / 2.0 if wr_valid else None
+            wr_y = (l_wr[1] + r_wr[1]) / 2.0 if wr_valid else (l_wr[1] if l_wr[2] > 0.20 else r_wr[1] if r_wr[2] > 0.20 else None)
+
+            # Head tilted downward toward cooking surface or pot (looking down at food/counter)
+            head_looking_down = False
+            if nose[2] > 0.15 and sh_valid:
+                head_looking_down = (nose[1] >= sh_mid_y - bh * 0.08)
+
+            # Elbow flexion: bent arms holding utensils, cookware, food, or stirring (40 to 135 deg)
+            l_el_ang = calculate_joint_angle(l_sh, l_el, l_wr) if (l_sh[2] > 0.20 and l_el[2] > 0.20 and l_wr[2] > 0.20) else None
+            r_el_ang = calculate_joint_angle(r_sh, r_el, r_wr) if (r_sh[2] > 0.20 and r_el[2] > 0.20 and r_wr[2] > 0.20) else None
+            elbows_bent = ((l_el_ang is not None and 40.0 <= l_el_ang <= 135.0) or
+                           (r_el_ang is not None and 40.0 <= r_el_ang <= 135.0))
+
+            # Forearm extending forward over surface/stove (horizontal / reaching forward, NOT hanging straight down at hips)
+            forearm_forward = False
+            if l_wr[2] > 0.20 and l_el[2] > 0.20 and (l_wr[1] <= l_el[1] + bh * 0.12):
+                forearm_forward = True
+            if r_wr[2] > 0.20 and r_el[2] > 0.20 and (r_wr[1] <= r_el[1] + bh * 0.12):
+                forearm_forward = True
+
+            # Hands at stove / counter / prep height (between mid-chest and upper-thigh)
+            hand_at_face = (l_wr[2] > 0.30 and l_wr[1] < sh_mid_y) or (r_wr[2] > 0.30 and r_wr[1] < sh_mid_y)
+            counter_top = sh_mid_y + bh * 0.04
+            counter_bot = (hip_y + bh * 0.35) if hip_valid else (y1 + bh * 0.85)
+            l_at_counter = (l_wr[2] > 0.20 and counter_top <= l_wr[1] <= counter_bot)
+            r_at_counter = (r_wr[2] > 0.20 and counter_top <= r_wr[1] <= counter_bot)
+            hands_at_counter_height = (l_at_counter and r_at_counter) if wr_valid else (l_at_counter or r_at_counter)
+            if hand_at_face:
+                hands_at_counter_height = False
+
+            # Low to moderate wrist velocity (stirring, cutting, holding cookware; NOT rapid striking speed)
+            non_violent_hands = (wrist_max_v < 1.1 and wrist_max_a < 3.2)
+
+            # Hands gathered in front of torso (not hanging down at side seams of trousers)
+            hands_in_front = True
+            if wr_valid:
+                hands_in_front = abs(l_wr[0] - r_wr[0]) <= bw * 0.55
+                if hip_valid and (l_wr[1] > hip_y + bh * 0.12 and r_wr[1] > hip_y + bh * 0.12 and abs(l_wr[0] - r_wr[0]) > bw * 0.40):
+                    hands_in_front = False
+            elif any_wr_valid:
+                w_pt = l_wr if l_wr[2] > 0.20 else r_wr
+                hands_in_front = abs(w_pt[0] - (x1 + x2)/2.0) <= bw * 0.45
 
             # Crouching / seated posture (hips low to ground or knees flexed or wide crouch)
             hips_low_to_ground = ((y2 - hip_y) < bh * 0.45) if hip_valid else False
@@ -756,37 +805,51 @@ def classify_pose_activity(
             if hip_valid and knee_valid:
                 l_k_ang = calculate_joint_angle(l_hip, l_knee, kp_data[15]) if (l_hip[2] > 0.20 and l_knee[2] > 0.20 and kp_data[15][2] > 0.15) else None
                 r_k_ang = calculate_joint_angle(r_hip, r_knee, kp_data[16]) if (r_hip[2] > 0.20 and r_knee[2] > 0.20 and kp_data[16][2] > 0.15) else None
-                knee_flexed = (l_k_ang is not None and l_k_ang < 125.0) or (r_k_ang is not None and r_k_ang < 125.0) or abs(knee_y - hip_y) < bh * 0.25
+                if l_k_ang is not None or r_k_ang is not None:
+                    knee_flexed = (l_k_ang is not None and l_k_ang < 128.0) or (r_k_ang is not None and r_k_ang < 128.0)
+                else:
+                    knee_flexed = abs(knee_y - hip_y) < bh * 0.18
 
-            is_crouched_or_seated = hips_low_to_ground or knee_flexed or (aspect_ratio >= 0.85)
+            is_crouched_or_seated = (hips_low_to_ground and knee_flexed) or (knee_flexed and aspect_ratio >= 0.70) or (aspect_ratio >= 0.85 and not is_definitely_standing)
 
-            # REJECT: Upright walking or standing person
-            is_tall_standing = (is_definitely_standing or not is_crouched_or_seated) and is_upright and sh_valid and hip_valid and (hip_y - sh_y) >= bh * 0.26
-
-            # REJECT: Arms separated on sides of body (normal walking/standing posture)
-            arms_separated = wr_valid and abs(l_wr[0] - r_wr[0]) > bw * 0.35
-
-            if not is_tall_standing and not arms_separated and wr_valid and is_crouched_or_seated:
-                hands_clustered = abs(l_wr[0] - r_wr[0]) <= bw * 0.35
-                hands_at_lap_or_ground = (wr_y >= hip_y - bh * 0.20) if hip_valid else True
-
-                if hands_clustered and hands_at_lap_or_ground:
+            # Case A: Crouched / Floor food prep / pot cooking (Two men on ground in Image 1)
+            if is_crouched_or_seated and any_wr_valid and non_violent_hands and not hand_at_face:
+                hands_at_lap_or_ground = (wr_y >= (hip_y - bh * 0.15)) if (wr_y is not None and hip_valid) else True
+                if hands_in_front and hands_at_lap_or_ground:
                     is_cooking = True
+                    sub_desc = 'Unauthorized Cooking / Floor Food Prep in Restricted Area'
                     if has_utensil_interaction:
                         sub_desc = 'Food Preparation with Cooking Equipment in Restricted Area'
 
+            # Case B: Standing Food Prep at Stove / Counter / Surface (Woman at stove in Image 2)
+            if not is_cooking and (is_definitely_standing or is_upright) and any_wr_valid and non_violent_hands and not hand_at_face:
+                if hands_at_counter_height and hands_in_front and forearm_forward and elbows_bent:
+                    if head_looking_down or has_utensil_interaction:
+                        is_cooking = True
+                        sub_desc = 'Unauthorized Cooking / Food Prep at Stove in Restricted Area'
+                        if has_utensil_interaction:
+                            sub_desc = 'Active Cooking at Stove with Utensils in Restricted Area'
+
+            # Case C: Companion Cooking Equipment Interaction (Must be actively handling / engaging, not merely standing nearby)
+            if not is_cooking and has_utensil_interaction and any_wr_valid and non_violent_hands and hands_in_front and not hand_at_face:
+                if elbows_bent or head_looking_down or is_crouched_or_seated or forearm_forward:
+                    is_cooking = True
+                    sub_desc = 'Food Preparation with Cooking Equipment in Restricted Area'
+
         if is_cooking:
+            trk['is_cooking'] = True
             c_start = _get_start_t('cook_start_t')
             trk['cook_start_t'] = c_start
-            wait_time = 0.0 if is_video_test else 1.2
+            wait_time = 0.0 if is_video_test else 0.8
             if check_temporal_consistency(c_start, now_t, wait_time):
                 conf = 0.94 if has_fire_smoke else (0.92 if has_utensil_interaction else 0.88)
                 return 'cooking', conf, sub_desc
         else:
+            trk['is_cooking'] = False
             trk['cook_start_t'] = None
 
     # 4. Smoking Gesture (Hand-to-Mouth with Acute Elbow Flexion and Upward Forearm)
-    if _is_enabled('smoking_gesture') and has_kp and bh >= 70:
+    if not is_cooking and _is_enabled('smoking_gesture') and has_kp and bh >= 70:
         nose = kp_data[0]
         l_wr, r_wr = kp_data[9], kp_data[10]
         l_el, r_el = kp_data[7], kp_data[8]
@@ -840,7 +903,7 @@ def classify_pose_activity(
 
     # 5. Fighting Detection (Section 3.B - Physical Altercation, Combat Guard, Strikes)
     # Strictly differentiates normal conversation, walking together, arguing vs. punching, kicking, grappling
-    if _is_enabled('fighting_posture'):
+    if not is_cooking and _is_enabled('fighting_posture'):
         is_fighting = False
         h1 = max(1.0, bh)
         center1 = np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0])
@@ -861,16 +924,20 @@ def classify_pose_activity(
                     o_kp = other.get('keypoints')
                     o_beh = other.get('behavior', other.get('unauth_activity'))
                     o_v = float(other.get('wrist_vel', 0.0))
+                    o_a = float(other.get('wrist_acc', 0.0))
+                    o_cooking = bool(other.get('is_cooking', False) or o_beh == 'cooking')
                 else:
                     o_box = other
                     o_kp = None
                     o_beh = None
                     o_v = 0.0
+                    o_a = 0.0
+                    o_cooking = False
                 
                 if not o_box or len(o_box) != 4 or o_box == box:
                     continue
-                # Skip interaction if opponent is already verified lying flat on floor
-                if o_beh == 'lying_down':
+                # Skip interaction if opponent is already verified lying flat on floor or cooking
+                if o_beh == 'lying_down' or o_cooking:
                     continue
                 
                 ox1, oy1, ox2, oy2 = o_box
@@ -903,34 +970,26 @@ def classify_pose_activity(
                 wrists_valid = bool(wrists1 or o_wrists)
                 is_close = dist_centers < dynamic_center_thresh
                 is_touching = (min_wrist_gap < dynamic_contact_thresh) and wrists_valid
-                
-                # --- CONVERSATIONAL SUPPRESSION (Prevents false positives on dialogue shots) ---
-                # In conversational dialogue, two people face each other in 2D perspective overlap.
-                # If neither individual exhibits punching velocity, guard fists, or bodily clench,
-                # it is normal conversation / walking together.
-                is_dialogue_conversation = False
-                if is_upright and is_close and not (is_touching and (wrist_max_v >= 1.2 or o_v >= 1.2)):
-                    # Check if wrists are relaxed below shoulders / hanging down
-                    wrists_hanging = True
-                    sh_ref = y1 + h1 * 0.35
-                    if left_wrist1 is not None and left_wrist1[1] < sh_ref:
-                        wrists_hanging = False
-                    if right_wrist1 is not None and right_wrist1[1] < sh_ref:
-                        wrists_hanging = False
-                        
-                    if wrists_hanging and (wrist_max_v < 1.0 and o_v < 1.0) and (iou < 0.35):
-                        is_dialogue_conversation = True
+                direct_face_reach = (min_wrist_gap < avg_height * 0.22) and wrists_valid
 
-                # Fighting Trigger Criteria:
-                # 1. Close contact with rapid strike velocity (punching/pushing: wrist_v >= 1.2 h/s)
-                # 2. Close physical grappling with heavy bodily IoU >= 0.35 and wrist contact
-                # 3. Direct strike impact with high acceleration (wrist_a >= 3.5 h/s^2)
-                # 4. Solitary guard or sparring stance while within striking distance
-                has_strike_velocity = (wrist_max_v >= 1.2 or o_v >= 1.2 or wrist_max_a >= 3.5)
-                has_heavy_grappling = (iou >= 0.35) and is_touching
+                # Rapid strike kinematics (punching, pushing, slapping: Section 3.B, 5.6, 5.7)
+                has_strike_velocity = (wrist_max_v >= 1.2 or o_v >= 1.2 or wrist_max_a >= 3.5 or o_a >= 3.5)
 
-                if not is_dialogue_conversation:
-                    if (is_close and is_touching) or has_heavy_grappling:
+                # Heavy bodily grappling (tackling, wrestling, clenched bodies)
+                has_heavy_grappling = (iou >= 0.38) and is_touching and is_upright
+
+                # Direct face/head reach with high upper-body overlap (Test 22 sparring reach)
+                has_face_strike = direct_face_reach and (iou >= 0.25) and is_upright
+
+                # REJECT: Seated / crouching individuals with non-violent hand movements
+                # (sitting together, sharing food, eating, talking on the floor is NEVER fighting)
+                is_peaceful_seated = is_crouched_or_seated and not has_strike_velocity
+
+                # REJECT: Standing conversation / walking together / non-aggressive interaction
+                is_peaceful_dialogue = is_upright and is_close and not has_strike_velocity and not has_heavy_grappling and not has_face_strike
+
+                if not is_peaceful_seated and not is_peaceful_dialogue:
+                    if (is_touching and has_strike_velocity) or has_heavy_grappling or has_face_strike:
                         is_fighting = True
                         break
 
@@ -939,7 +998,10 @@ def classify_pose_activity(
             l_sh, r_sh = kp_data[5], kp_data[6]
             l_wr, r_wr = kp_data[9], kp_data[10]
             l_el, r_el = kp_data[7], kp_data[8]
+            sh_valid = (l_sh[2] > 0.25 or r_sh[2] > 0.25)
             sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.25 and r_sh[2] > 0.25) else (l_sh[1] if l_sh[2] > 0.25 else r_sh[1])
+            sh_mid_y = (l_sh[1] + r_sh[1]) / 2.0 if (l_sh[2] > 0.25 and r_sh[2] > 0.25) else sh_y
+            nose = kp_data[0]
             
             near_combatant = False
             if all_persons and len(all_persons) > 1:
@@ -951,34 +1013,48 @@ def classify_pose_activity(
                         near_combatant = True
                         break
             
-            if near_combatant:
-                l_fist_raised = (l_wr[2] > 0.25 and sh_y > 0 and l_wr[1] <= sh_y + bh * 0.08)
-                r_fist_raised = (r_wr[2] > 0.25 and sh_y > 0 and r_wr[1] <= sh_y + bh * 0.08)
-                l_guard_bent = (l_el[2] > 0.25 and calculate_joint_angle(l_sh, l_el, l_wr) < 125.0) if l_fist_raised else False
-                r_guard_bent = (r_el[2] > 0.25 and calculate_joint_angle(r_sh, r_el, r_wr) < 125.0) if r_fist_raised else False
-                both_hands_guard = (l_fist_raised and r_fist_raised and (l_guard_bent or r_guard_bent))
-                wrists_together = (l_fist_raised and r_fist_raised and abs(l_wr[0] - r_wr[0]) < bw * 0.25 and abs(l_wr[1] - r_wr[1]) < bh * 0.10)
+            if near_combatant and is_upright:
+                # 1. Fighter must be looking forward/ahead at opponent (chin up / looking ahead, NOT looking down at cooking/counter/phone)
+                looking_at_opponent = (nose[2] > 0.20 and nose[1] < sh_mid_y - bh * 0.05) if (nose[2] > 0.20 and sh_valid) else True
+
+                # 2. Wrists raised to CHIN / NOSE / HEAD LEVEL (protecting face, NOT at waist or counter)
+                l_chin_guard = (l_wr[2] > 0.25 and sh_valid and l_wr[1] <= sh_mid_y - bh * 0.02)
+                r_chin_guard = (r_wr[2] > 0.25 and sh_valid and r_wr[1] <= sh_mid_y - bh * 0.02)
                 
+                # 3. Forearms pointing VERTICALLY UPWARD from elbows to fists (fists guarding jaw)
+                l_forearm_up = (l_el[2] > 0.25 and (l_el[1] - l_wr[1] >= bh * 0.07)) if l_chin_guard else False
+                r_forearm_up = (r_el[2] > 0.25 and (r_el[1] - r_wr[1] >= bh * 0.07)) if r_chin_guard else False
+
+                # 4. Acute elbow flexion (arms drawn close to guard face: angle <= 115 deg)
+                l_guard_bent = (l_el[2] > 0.25 and calculate_joint_angle(l_sh, l_el, l_wr) <= 115.0) if l_chin_guard else False
+                r_guard_bent = (r_el[2] > 0.25 and calculate_joint_angle(r_sh, r_el, r_wr) <= 115.0) if r_chin_guard else False
+
+                # Both hands raised in boxing / martial arts guard stance
+                both_hands_guard = (l_chin_guard and r_chin_guard and (l_forearm_up or r_forearm_up) and (l_guard_bent or r_guard_bent) and looking_at_opponent)
+
+                # 5. One punch extended forward at shoulder/head height with strike extension
                 one_punch_extended = False
-                if l_fist_raised and l_el[2] > 0.25 and calculate_joint_angle(l_sh, l_el, l_wr) > 135.0:
-                    one_punch_extended = True
-                elif r_fist_raised and r_el[2] > 0.25 and calculate_joint_angle(r_sh, r_el, r_wr) > 135.0:
-                    one_punch_extended = True
-                
+                if looking_at_opponent:
+                    if l_chin_guard and l_el[2] > 0.25 and calculate_joint_angle(l_sh, l_el, l_wr) > 135.0:
+                        one_punch_extended = (wrist_max_v >= 1.0 or wrist_max_a >= 2.5)
+                    elif r_chin_guard and r_el[2] > 0.25 and calculate_joint_angle(r_sh, r_el, r_wr) > 135.0:
+                        one_punch_extended = (wrist_max_v >= 1.0 or wrist_max_a >= 2.5)
+
+                # 6. High karate / martial arts kick
                 l_hip, r_hip = kp_data[11], kp_data[12]
                 l_knee, r_knee = kp_data[13], kp_data[14]
                 l_ank, r_ank = kp_data[15], kp_data[16]
                 is_kicking = False
-                if (l_ank[2] > 0.25 and l_hip[2] > 0.20 and l_ank[1] < l_hip[1] + bh * 0.12):
+                if (l_ank[2] > 0.25 and l_hip[2] > 0.20 and l_ank[1] < l_hip[1] + bh * 0.08):
                     is_kicking = True
-                elif (r_ank[2] > 0.25 and r_hip[2] > 0.20 and r_ank[1] < r_hip[1] + bh * 0.12):
+                elif (r_ank[2] > 0.25 and r_hip[2] > 0.20 and r_ank[1] < r_hip[1] + bh * 0.08):
                     is_kicking = True
-                elif (l_knee[2] > 0.25 and l_hip[2] > 0.20 and l_knee[1] < l_hip[1] + bh * 0.05):
+                elif (l_knee[2] > 0.25 and l_hip[2] > 0.20 and l_knee[1] < l_hip[1] - bh * 0.02):
                     is_kicking = True
-                elif (r_knee[2] > 0.25 and r_hip[2] > 0.20 and r_knee[1] < r_hip[1] + bh * 0.05):
+                elif (r_knee[2] > 0.25 and r_hip[2] > 0.20 and r_knee[1] < r_hip[1] - bh * 0.02):
                     is_kicking = True
-                
-                if both_hands_guard or one_punch_extended or is_kicking or (l_fist_raised and r_fist_raised and not wrists_together):
+
+                if (both_hands_guard and not is_crouched_or_seated) or one_punch_extended or is_kicking:
                     is_fighting = True
 
         if is_fighting:
@@ -2556,7 +2632,8 @@ class DetectorWorker:
                     'keypoints': t.get('keypoints'),
                     'behavior': t.get('unauth_activity'),
                     'wrist_vel': float(t.get('wrist_max_v', 0.0)),
-                    'wrist_acc': float(t.get('wrist_max_a', 0.0))
+                    'wrist_acc': float(t.get('wrist_max_a', 0.0)),
+                    'is_cooking': bool(t.get('is_cooking', False))
                 }
                 for t_id, t in self._ema_tracks.items()
                 if 'person' in str(t.get('cls', '')).lower()

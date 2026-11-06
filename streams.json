@@ -17,10 +17,67 @@
           0.9485
         ]
       ],
-      "150_firehose_best.pt": {
+      "unauthorized_activity.pt": {
         "enabled_classes": [
-          "no-fire_hose"
-        ]
+          "cooking",
+          "crowd",
+          "smoking_gesture",
+          "fighting_posture",
+          "lying_down"
+        ],
+        "class_configs": {
+          "cooking": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "crowd": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "smoking_gesture": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "fighting_posture": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "lying_down": {
+            "conf": 0.4,
+            "iou": 0.45
+          }
+        }
+      },
+      "unauthorized_activity": {
+        "enabled_classes": [
+          "cooking",
+          "crowd",
+          "smoking_gesture",
+          "fighting_posture",
+          "lying_down"
+        ],
+        "class_configs": {
+          "cooking": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "crowd": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "smoking_gesture": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "fighting_posture": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "lying_down": {
+            "conf": 0.4,
+            "iou": 0.45
+          }
+        }
       }
     },
     "device_id": "RPI-001",

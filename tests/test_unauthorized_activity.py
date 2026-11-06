@@ -476,7 +476,77 @@ def run_tests():
     assert check_cooldown(120.0, 100.0, 30.0) is False
     print("Test 29 PASSED: All 14 Mathematical CV Algorithms validated with 100% precision!")
 
-    print("\nALL 29 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 30: Standing Cooking at Stove / Counter (User Evidence Image 2)
+    # Woman standing upright at stove, head tilted down, wrists working forward over cooktop:
+    # MUST detect cooking and MUST NEVER trigger fighting_posture even with other people in frame!
+    trk30 = {'cook_start_t': time.time() - 3.0}
+    b30 = [100, 50, 200, 310] # bh = 260, bw = 100, aspect_ratio = 0.38 (standing tall)
+    kp30 = [
+        [150, 88, 0.9], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [125, 95, 0.9], [175, 95, 0.9],    # shoulders at y=95
+        [115, 140, 0.85], [185, 138, 0.85], # elbows bent at counter height
+        [135, 145, 0.85], [165, 142, 0.85], # wrists working forward over stove / pan
+        [130, 185, 0.9], [170, 185, 0.9],   # hips at y=185
+        [130, 245, 0.85], [170, 245, 0.85], # knees
+        [130, 305, 0.85], [170, 305, 0.85]  # ankles at ground y=305
+    ]
+    # Another person in frame (e.g. user holding the phone in front of webcam)
+    b30_phone_holder = [30, 20, 300, 360]
+    person_records_30 = [
+        {'id': 1, 'box': b30, 'keypoints': kp30, 'behavior': None},
+        {'id': 2, 'box': b30_phone_holder, 'keypoints': None, 'behavior': None}
+    ]
+    act30, conf30, sub30 = classify_pose_activity(
+        trk30, kp30, b30, 5.0, enabled,
+        all_persons=person_records_30, is_video_test=True
+    )
+    assert act30 == 'cooking', f"Test 30 FAILED: Standing cooking falsely flagged as {act30}!"
+    assert act30 != 'fighting_posture', f"Test 30 FAILED: Standing cooking falsely triggered fighting_posture!"
+    print(f"Test 30 PASSED: Standing woman cooking at stove (Image 2) -> {act30} ({sub30}) (NOT fighting!)")
+
+    # Test 31: Multi-Person Crouched Floor Food Prep (User Evidence Image 1)
+    # Two men sitting on ground cooking food in a pot between them:
+    # Low wrist velocity, hands working at ground pot: MUST detect cooking and NEVER fighting_posture!
+    trk31_a = {'cook_start_t': time.time() - 3.0}
+    trk31_b = {'cook_start_t': time.time() - 3.0}
+    b31_a = [80, 140, 160, 260] # bh = 120, bw = 80 (crouched on ground)
+    b31_b = [170, 140, 250, 260] # bh = 120, bw = 80 (crouched on ground)
+    kp31_a = [
+        [120, 155, 0.9], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [100, 170, 0.9], [140, 170, 0.9],
+        [95, 195, 0.85], [145, 195, 0.85],
+        [125, 220, 0.85], [140, 225, 0.85], # hands working in front at pot
+        [105, 215, 0.9], [135, 215, 0.9],   # hips low to ground (y2 - hip_y = 45 < 120*0.45)
+        [90, 240, 0.85], [150, 240, 0.85],
+        [100, 255, 0.8], [140, 255, 0.8]
+    ]
+    kp31_b = [
+        [210, 155, 0.9], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [190, 170, 0.9], [230, 170, 0.9],
+        [185, 195, 0.85], [235, 195, 0.85],
+        [190, 225, 0.85], [205, 220, 0.85], # hands working in front at pot
+        [195, 215, 0.9], [225, 215, 0.9],
+        [180, 240, 0.85], [240, 240, 0.85],
+        [190, 255, 0.8], [230, 255, 0.8]
+    ]
+    person_records_31 = [
+        {'id': 1, 'box': b31_a, 'keypoints': kp31_a, 'behavior': None, 'wrist_vel': 0.15},
+        {'id': 2, 'box': b31_b, 'keypoints': kp31_b, 'behavior': None, 'wrist_vel': 0.20}
+    ]
+    act31_a, conf31_a, sub31_a = classify_pose_activity(
+        trk31_a, kp31_a, b31_a, 5.0, enabled,
+        all_persons=person_records_31, is_video_test=True
+    )
+    act31_b, conf31_b, sub31_b = classify_pose_activity(
+        trk31_b, kp31_b, b31_b, 5.0, enabled,
+        all_persons=person_records_31, is_video_test=True
+    )
+    assert act31_a == 'cooking', f"Test 31 FAILED: Person A falsely classified as {act31_a}!"
+    assert act31_b == 'cooking', f"Test 31 FAILED: Person B falsely classified as {act31_b}!"
+    assert act31_a != 'fighting_posture' and act31_b != 'fighting_posture', "Test 31 FAILED: False fighting posture!"
+    print(f"Test 31 PASSED: Two men sitting cooking food in pot (Image 1) -> {act31_a} / {act31_b} (NOT fighting!)")
+
+    print("\nALL 31 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()
