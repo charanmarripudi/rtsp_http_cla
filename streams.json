@@ -9,71 +9,31 @@
     "model_configs": {
       "roi_polygon": [
         [
-          0.5,
-          0.2685
+          0.023,
+          0.0287
         ],
         [
-          0.9631,
-          0.9485
+          0.9954,
+          0.9217
         ]
       ],
-      "unauthorized_activity.pt": {
+      "firehose.pt": {
         "enabled_classes": [
-          "cooking",
-          "crowd",
-          "smoking",
-          "fighting_posture",
-          "lying_down"
+          "no-fire_hose"
         ],
         "class_configs": {
-          "cooking": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "crowd": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "smoking": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "fighting_posture": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "lying_down": {
+          "no-fire_hose": {
             "conf": 0.4,
             "iou": 0.45
           }
         }
       },
-      "unauthorized_activity": {
+      "firehose": {
         "enabled_classes": [
-          "cooking",
-          "crowd",
-          "smoking",
-          "fighting_posture",
-          "lying_down"
+          "no-fire_hose"
         ],
         "class_configs": {
-          "cooking": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "crowd": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "smoking": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "fighting_posture": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "lying_down": {
+          "no-fire_hose": {
             "conf": 0.4,
             "iou": 0.45
           }

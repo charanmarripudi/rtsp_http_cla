@@ -196,7 +196,7 @@ class LocationDashboardStore {
         this.locations = JSON.parse(localStorage.getItem("offline_locations") || "[]");
         this.streams = JSON.parse(localStorage.getItem("offline_streams") || "[]").map((item, idx) => this.streamView(item, idx));
         this.cameraModels = JSON.parse(localStorage.getItem("offline_camera_models") || "{}");
-        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "leakage_best.pt", "smoking.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "intrusion.pt", "non_working_hours.pt", "vehicle_intrusion.pt", "unauthorized_activity.pt", "spark_arrestor.pt"];
+        this.allModels = ["ppe.pt", "fire_smoke.pt", "firehose.pt", "sand_fire_ext_chock.pt", "tape.pt", "tyre.pt", "spillage.pt", "leakage.pt", "smoking.pt", "valve_box.pt", "dome.pt", "yolov8n.pt", "intrusion.pt", "non_working_hours.pt", "vehicle_intrusion.pt", "unauthorized_activity.pt", "spark_arrestor.pt"];
     }
 
     seedLocationsFromStreams() {
@@ -948,21 +948,31 @@ class LocationDashboard {
     getNegativeClasses(modelName) {
         const norm = (modelName || "").toLowerCase().replace(/\.pt$/i, "");
         const map = {
+            "ppe": ["NO-Hardhat", "NO-Mask", "NO-Safety Vest", "No-Gloves", "No-Shoes", "No-Goggles", "No-Safety-Belt"],
             "hansung_ppe_violations": ["NO-Hardhat", "NO-Mask", "NO-Safety Vest", "No-Gloves", "No-Shoes", "No-Goggles", "No-Safety-Belt"],
             "ppe_new": ["NO-Mask", "No-Cap-Lamp", "No-Gloves", "No-Gum-Boots", "No-Hard-Hat", "No-Saftey-Belt", "No-Saftey-Vest"],
             "nik_ppe_best": ["Fall-Detected", "NO-Mask", "No_Gloves", "No_Goggles", "No_Harness", "No_boots", "No_helmet", "No_safety_vest"],
             "construction": ["no_helmet", "no_goggle", "no_gloves", "no_boots", "none"],
             "hf_ppe_detection": ["no-helmet"],
             "keremberke_ppe_gear": ["no_glove", "no_goggles", "no_helmet", "no_mask", "no_shoes"],
+            "fire_smoke": ["fire", "smoke"],
             "final_fire_smoke": ["fire", "smoke"],
+            "spillage": ["spillage"],
             "120_spillage_best": ["spillage"],
+            "leakage": ["leak"],
             "leakage_best": ["leak"],
             "smoking": ["smoking"],
+            "tyre": ["Defective"],
             "tyre_final": ["Defective"],
+            "valve_box": ["Valve_Box_Open"],
             "valve_box_best": ["Valve_Box_Open"],
+            "dome": ["Dome_Opened"],
             "dome_open_closed_best": ["Dome_Opened"],
-            "150_firehose_best": ["no-fire_hose"],
+            "firehose": ["no-fire_hose", "no-firehose_box"],
+            "150_firehose_best": ["no-fire_hose", "no-firehose_box"],
+            "sand_fire_ext_chock": ["no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"],
             "sand_ext_chocks": ["no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"],
+            "tape": ["no-tape", "no-reflective_tape", "no-traffic_tape"],
             "best_tape": ["no-tape", "no-reflective_tape", "no-traffic_tape"],
             "yolov8n": ["person"],
             "crowd_detection": ["person"],

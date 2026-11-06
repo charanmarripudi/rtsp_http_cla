@@ -579,7 +579,7 @@ def run_tests():
     # Test 35: Companion model auto-resolution for unauthorized_activity
     resolved = DetectorWorker._resolve_companion_models(['models/unauthorized_activity.pt'])
     res_str = " ".join(str(r) for r in resolved)
-    assert any("Final_Fire_smoke" in r for r in resolved), "Test 35 FAILED: Final_Fire_smoke.pt not resolved as companion!"
+    assert any("fire_smoke" in r.lower() for r in resolved), "Test 35 FAILED: fire_smoke.pt not resolved as companion!"
     assert any("smoking" in r.lower() for r in resolved), "Test 35 FAILED: smoking.pt not resolved as companion!"
     print(f"Test 35 PASSED: Unauthorized activity companion models resolved: {res_str}")
 

@@ -1344,19 +1344,45 @@ MODEL_CLASSES_CACHE = {
         "Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle",
         "No-Gloves", "No-Shoes", "No-Goggles", "No-Safety-Belt"
     ],
+    "ppe.pt": [
+        "Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle",
+        "No-Gloves", "No-Shoes", "No-Goggles", "No-Safety-Belt"
+    ],
+    "ppe": [
+        "Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle",
+        "No-Gloves", "No-Shoes", "No-Goggles", "No-Safety-Belt"
+    ],
     "construction.pt": [
         "helmet", "gloves", "vest", "boots", "goggles", "none", "Person", "no_helmet", "no_goggle", "no_gloves", "no_boots"
     ],
     "Final_Fire_smoke.pt": [
         "fire", "smoke"
     ],
+    "fire_smoke.pt": [
+        "fire", "smoke"
+    ],
+    "fire_smoke": [
+        "fire", "smoke"
+    ],
     "150_firehose_best.pt": [
-        "no-fire_hose"
+        "fire_hose", "firehose_box", "no-fire_hose", "no-firehose_box"
     ],
     "150_firehose_best": [
-        "no-fire_hose"
+        "fire_hose", "firehose_box", "no-fire_hose", "no-firehose_box"
+    ],
+    "firehose.pt": [
+        "fire_hose", "firehose_box", "no-fire_hose", "no-firehose_box"
+    ],
+    "firehose": [
+        "fire_hose", "firehose_box", "no-fire_hose", "no-firehose_box"
     ],
     "120_spillage_best.pt": [
+        "spillage"
+    ],
+    "spillage.pt": [
+        "spillage"
+    ],
+    "spillage": [
         "spillage"
     ],
     "best_tape.pt": [
@@ -1365,19 +1391,49 @@ MODEL_CLASSES_CACHE = {
     "best_tape": [
         "no-tape", "no-reflective_tape", "no-traffic_tape"
     ],
+    "tape.pt": [
+        "no-tape", "no-reflective_tape", "no-traffic_tape"
+    ],
+    "tape": [
+        "no-tape", "no-reflective_tape", "no-traffic_tape"
+    ],
     "sand_ext_chocks.pt": [
         "no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"
     ],
     "sand_ext_chocks": [
         "no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"
     ],
+    "sand_fire_ext_chock.pt": [
+        "no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"
+    ],
+    "sand_fire_ext_chock": [
+        "no-Fire_Extinguisher", "no-Sand-Bucket", "no-wheel-choke"
+    ],
     "tyre_final.pt": [
+        "Defective", "Good_tyre"
+    ],
+    "tyre.pt": [
+        "Defective", "Good_tyre"
+    ],
+    "tyre": [
         "Defective", "Good_tyre"
     ],
     "Valve_box_best.pt": [
         "Valve_Box_Close", "Valve_Box_Open"
     ],
+    "valve_box.pt": [
+        "Valve_Box_Close", "Valve_Box_Open"
+    ],
+    "valve_box": [
+        "Valve_Box_Close", "Valve_Box_Open"
+    ],
     "dome_open_closed_best.pt": [
+        "Dome_Closed", "Dome_Opened"
+    ],
+    "dome.pt": [
+        "Dome_Closed", "Dome_Opened"
+    ],
+    "dome": [
         "Dome_Closed", "Dome_Opened"
     ],
     "spark_arrestor.pt": [
@@ -1396,6 +1452,12 @@ MODEL_CLASSES_CACHE = {
         "leak"
     ],
     "leakage_best": [
+        "leak"
+    ],
+    "leakage.pt": [
+        "leak"
+    ],
+    "leakage": [
         "leak"
     ],
     "smoking.pt": [

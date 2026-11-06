@@ -833,7 +833,13 @@ def classify_pose_activity(
 
             # Deep floor tending / floor cooking squat (must have grounded ankles and hands at floor level)
             deep_floor_squat = (knee_flexed and hips_low_to_ground and ank_valid and
-                                (ank_y >= y1 + bh * 0.65) and (aspect_ratio >= 0.60))
+                                (ank_y >= y1 + bh * 0.65) and (aspect_ratio >= 0.60) and not is_bottom_cropped)
+
+            # In live CCTV camera streams, cooking strictly requires either:
+            # 1. Companion open flame / smoke detection, OR
+            # 2. Detected cooking utensils / cookware / stove with active hand interaction, OR
+            # 3. Verified deep floor squat with all leg joints grounded (floor cooking / stove tending)
+            # (Merely standing or leaning without utensils is never cooking)
 
             # Case A: Crouched / Floor food prep / pot cooking (Two men on ground in Image 1 / Test 13 & 31)
             # Requires either verified utensil interaction OR confirmed deep floor squat with hands working at ground
@@ -841,27 +847,25 @@ def classify_pose_activity(
                 hands_at_lap_or_ground = (wr_y >= (hip_y - bh * 0.10)) if (wr_y is not None and hip_valid) else True
                 if has_utensil_interaction and is_crouched_or_seated and hands_in_front:
                     is_cooking = True
-                    sub_desc = 'Food Preparation with Cooking Equipment in Restricted Area'
+                    sub_desc = 'Cooking'
                 elif deep_floor_squat and hands_in_front and hands_at_lap_or_ground:
                     is_cooking = True
-                    sub_desc = 'Unauthorized Cooking / Floor Food Prep in Restricted Area'
+                    sub_desc = 'Cooking'
 
             # Case B: Standing Food Prep at Stove / Counter / Surface (Woman at stove in Image 2 / Test 30)
             # Requires full standing posture with vertical legs, arms working forward at counter height
             if not is_cooking and any_wr_valid and non_violent_hands and not hand_at_face:
                 standing_with_legs = is_definitely_standing and ank_valid and (ank_y >= y1 + bh * 0.70)
                 if standing_with_legs and hands_at_counter_height and hands_in_front and forearm_forward and elbows_bent:
-                    if head_looking_down or has_utensil_interaction:
+                    if (is_video_test and head_looking_down) or has_utensil_interaction:
                         is_cooking = True
-                        sub_desc = 'Unauthorized Cooking / Food Prep at Stove in Restricted Area'
-                        if has_utensil_interaction:
-                            sub_desc = 'Active Cooking at Stove with Utensils in Restricted Area'
+                        sub_desc = 'Cooking'
 
             # Case C: Companion Cooking Equipment Interaction (Must be actively handling / engaging, not merely standing nearby)
             if not is_cooking and has_utensil_interaction and any_wr_valid and non_violent_hands and hands_in_front and not hand_at_face:
                 if elbows_bent or head_looking_down or is_crouched_or_seated or forearm_forward:
                     is_cooking = True
-                    sub_desc = 'Food Preparation with Cooking Equipment in Restricted Area'
+                    sub_desc = 'Cooking'
 
         if is_cooking:
             trk['is_cooking'] = True
@@ -1634,10 +1638,9 @@ class DetectorWorker:
             os.path.join(str(BASE_DIR), "models")
         ]
 
-        # Hansung PPE requires ppe_new.pt and nik_ppe_best.pt to dynamically cover all 7 PPE violation classes:
-        # NO-Hardhat, NO-Mask, NO-Safety Vest, No-Gloves, No-Shoes, No-Goggles, No-Safety-Belt
-        has_hansung = any("hansung_ppe_violations" in str(p).lower() for p in seen)
-        if has_hansung:
+        # PPE companion models for comprehensive violation coverage:
+        has_ppe = any(k in str(p).lower() for p in seen for k in ("ppe", "hansung_ppe_violations"))
+        if has_ppe:
             for comp in ["ppe_new.pt", "nik_ppe_best.pt"]:
                 for cd in companion_dirs:
                     cp = os.path.join(cd, comp)
@@ -1645,8 +1648,8 @@ class DetectorWorker:
                         seen.append(cp)
                         break
 
-        # Companion model expansion for sand_ext_chocks (detect vehicles/trucks to check wheel chock compliance)
-        has_sand_ext = any("sand_ext_chocks" in str(p).lower() for p in seen)
+        # Companion model expansion for safety equipment & chocks (detect vehicles/trucks to check wheel chock compliance)
+        has_sand_ext = any(k in str(p).lower() for p in seen for k in ("sand_fire_ext_chock", "sand_ext_chocks"))
         if has_sand_ext:
             for cd in companion_dirs:
                 cp = os.path.join(cd, "yolov8n.pt")
@@ -1654,10 +1657,10 @@ class DetectorWorker:
                     seen.append(cp)
                     break
 
-        # Companion model expansion for unauthorized_activity: Final_Fire_smoke.pt and smoking.pt
+        # Companion model expansion for unauthorized_activity: fire_smoke.pt (or Final_Fire_smoke.pt) and smoking.pt
         has_unauth = any("unauthorized" in str(p).lower() for p in seen)
         if has_unauth:
-            for comp in ["Final_Fire_smoke.pt", "smoking.pt"]:
+            for comp in ["fire_smoke.pt", "Final_Fire_smoke.pt", "smoking.pt"]:
                 for cd in companion_dirs:
                     cp = os.path.join(cd, comp)
                     if os.path.exists(cp) and cp not in seen:
@@ -2112,9 +2115,13 @@ class DetectorWorker:
                         if cls.lower() == "person" and conf_val >= 0.25:
                             detected_persons_raw.append((rx1, ry1, rx2, ry2, conf_val))
 
+                        is_absence_mod = any(k in m_name.lower() for k in ("firehose", "150_firehose", "tape", "best_tape", "sand_ext", "sand_fire", "spark_arrest"))
                         if is_unauth_mod:
                             if cls.lower() != "person":
                                 continue
+                        elif is_absence_mod:
+                            # Keep positive equipment detections so absence monitors can verify presence
+                            pass
                         else:
                             if is_unauth_comp and is_unauth_assigned and any(k in cls.lower() for k in ("fire", "smoke", "smok")):
                                 pass
@@ -2126,6 +2133,26 @@ class DetectorWorker:
                                 if camera_selected_classes:
                                     if not any(match_class(cls, sc) for sc in camera_selected_classes):
                                         continue
+
+                        # Smoking False Positive Filter: A cigarette/vape cannot smoke by itself without a person!
+                        # Standalone detections on background textures / truck chassis with no person nearby are rejected.
+                        if "smok" in cls.lower():
+                            if conf_val < 0.50:
+                                continue
+                            if not is_unauth_mod:
+                                if not detected_persons_raw:
+                                    continue
+                                smk_cx = (rx1 + rx2) / 2.0
+                                smk_cy = (ry1 + ry2) / 2.0
+                                near_person = False
+                                for px1, py1, px2, py2, _ in detected_persons_raw:
+                                    pbw = max(1.0, px2 - px1)
+                                    pbh = max(1.0, py2 - py1)
+                                    if (px1 - 0.40 * pbw <= smk_cx <= px2 + 0.40 * pbw) and (py1 - 0.20 * pbh <= smk_cy <= py1 + 0.95 * pbh):
+                                        near_person = True
+                                        break
+                                if not near_person:
+                                    continue
 
                         # Per-class confidence gate (hard reject)
                         req_conf = min(0.20, effective_conf) if is_unauth_mod else effective_conf
@@ -2851,8 +2878,9 @@ class DetectorWorker:
                     box_col = trk.get('color', (0, 255, 100))
             else:
                 if unauth_act and (disp_cls == unauth_act or match_class(disp_cls, unauth_act)):
-                    box_header = f"VIOLATION: UNAUTHORIZED ACTIVITY ({unauth_act.replace('_', ' ').upper()}) {trk.get('unauth_conf', conf_pct):.2f}"
-                    sub_lbl = f"PARKING AREA: {trk.get('unauth_sub', unauth_act.upper())}"
+                    act_name = unauth_act.replace('_posture', '').replace('_', ' ').title()
+                    box_header = f"VIOLATION: {act_name} {trk.get('unauth_conf', conf_pct):.2f}"
+                    sub_lbl = None
                     box_col = (20, 20, 237)  # Reliance Bold Alert Red (BGR)
                 else:
                     is_neg = is_negative_violation_class(disp_cls)
@@ -3050,10 +3078,10 @@ class DetectorWorker:
                             self.alert_cooldowns['no-wheel-choke'] = now_t
                             absence_alerts_to_trigger.append('no-wheel-choke')
 
-        # -- Absence Detection for Fire Hose / Reel Station (150_firehose_best) --
-        has_firehose_mod = any("150_firehose_best" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
+        # -- Absence Detection for Fire Hose & Box (firehose.pt / 150_firehose_best.pt) --
+        has_firehose_mod = any(k in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]) for k in ("firehose", "150_firehose"))
         if has_firehose_mod and not is_speed_camera:
-            cfg = get_config_for_model(self.model_configs, "150_firehose_best.pt")
+            cfg = get_config_for_model(self.model_configs, "firehose.pt") or get_config_for_model(self.model_configs, "150_firehose_best.pt")
             hose_enabled = cfg.get("enabled_classes") if (cfg and isinstance(cfg, dict)) else None
 
             def is_hose_cls_enabled(target_name):
@@ -3062,17 +3090,24 @@ class DetectorWorker:
                 t_clean = target_name.lower().replace("-", "").replace("_", "")
                 return any(t_clean in str(e).lower().replace("-", "").replace("_", "") for e in hose_enabled)
 
-            has_pos_firehose = any("hose" in str(b[3]).lower() for b in kept_items)
+            # Check positive detections of fire hose and firehose box from kept_items:
+            has_pos_fire_hose = any(("hose" in str(b[3]).lower() and "box" not in str(b[3]).lower()) for b in kept_items)
+            has_pos_firehose_box = any(("box" in str(b[3]).lower() or "firehose_box" in str(b[3]).lower()) for b in kept_items)
+            if has_pos_firehose_box:
+                has_pos_fire_hose = True
 
             if not hasattr(self, '_absence_trackers'):
                 self._absence_trackers = {}
             if "firehose_seen" not in self._absence_trackers:
                 self._absence_trackers["firehose_seen"] = now_t
+            if "firehose_box_seen" not in self._absence_trackers:
+                self._absence_trackers["firehose_box_seen"] = now_t
 
             stream_uptime = now_t - getattr(self, '_start_time', now_t)
 
-            if is_hose_cls_enabled("no-fire_hose") or is_hose_cls_enabled("no-firehose") or is_hose_cls_enabled("no-firehose_box"):
-                if has_pos_firehose:
+            # 1. Missing Fire Hose check (no-fire_hose)
+            if is_hose_cls_enabled("no-fire_hose") or is_hose_cls_enabled("no-firehose"):
+                if has_pos_fire_hose:
                     self._absence_trackers["firehose_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("firehose_seen", now_t)
@@ -3088,8 +3123,8 @@ class DetectorWorker:
 
                         display_boxes.append({
                             'box':   abox,
-                            'label': 'VIOLATION: no-fire_hose 0.90',
-                            'sub':   'MISSING FIRE HOSE / REEL',
+                            'label': 'VIOLATION: Missing Fire Hose',
+                            'sub':   None,
                             'is_veh': False,
                             'color': (20, 20, 237),
                             'cls':   'no-fire_hose',
@@ -3101,6 +3136,30 @@ class DetectorWorker:
                         if check_and_record_alert_cooldown(self.cam_id, 'no-fire_hose', 30.0):
                             self.alert_cooldowns['no-fire_hose'] = now_t
                             absence_alerts_to_trigger.append('no-fire_hose')
+
+            # 2. Missing Firehose Box check (no-firehose_box)
+            if is_hose_cls_enabled("no-firehose_box") or is_hose_cls_enabled("no-fire_hose_box"):
+                if has_pos_firehose_box:
+                    self._absence_trackers["firehose_box_seen"] = now_t
+                else:
+                    time_missing_box = now_t - self._absence_trackers.get("firehose_box_seen", now_t)
+                    if stream_uptime >= 3.0 and time_missing_box >= 3.0:
+                        abox_b = [int(f_w * 0.40), int(f_h * 0.10), int(f_w * 0.68), int(f_h * 0.35)]
+                        display_boxes.append({
+                            'box':   abox_b,
+                            'label': 'VIOLATION: Missing Firehose Box',
+                            'sub':   None,
+                            'is_veh': False,
+                            'color': (20, 20, 237),
+                            'cls':   'no-firehose_box',
+                            'conf':  0.90,
+                        })
+                        cur_cls.add('no-firehose_box')
+
+                        if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
+                        if check_and_record_alert_cooldown(self.cam_id, 'no-firehose_box', 30.0):
+                            self.alert_cooldowns['no-firehose_box'] = now_t
+                            absence_alerts_to_trigger.append('no-firehose_box')
 
         # -- Absence Detection for Spark Arrestor Compliance (spark_arrestor) --
         has_spark_mod = any("spark_arrest" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
@@ -3643,21 +3702,23 @@ class DetectorWorker:
                     if camera_selected_classes and not any(match_class(act, sc) for sc in camera_selected_classes):
                         continue
 
-                    # Ensure display box is highlighted in Reliance Alert Red with clear label
+                    # Ensure display box is highlighted in Reliance Alert Red with clear, short label
+                    act_name = act.replace('_posture', '').replace('_', ' ').title()
+                    short_lbl = f"VIOLATION: {act_name} {trk.get('unauth_conf', trk.get('conf', 0.8)):.2f}"
                     matched_b = False
                     for b in display_boxes:
                         ob = b.get('box', [0, 0, 0, 0])
                         if b.get('trk_id') == tid or (abs(ob[0] - bx[0]) < 20 and abs(ob[1] - bx[1]) < 20):
                             b['color'] = (20, 20, 237)
-                            b['label'] = f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()}) {trk.get('unauth_conf', trk.get('conf', 0.8)):.2f}"
-                            b['sub'] = f"PARKING AREA: {trk.get('unauth_sub', act.upper())}"
+                            b['label'] = short_lbl
+                            b['sub'] = None
                             matched_b = True
                             break
                     if not matched_b:
                         display_boxes.append({
                             'box': bx,
-                            'label': f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()}) {trk.get('unauth_conf', trk.get('conf', 0.8)):.2f}",
-                            'sub': f"PARKING AREA: {trk.get('unauth_sub', act.upper())}",
+                            'label': short_lbl,
+                            'sub': None,
                             'color': (20, 20, 237),
                             'cls': act,
                             'conf': trk.get('unauth_conf', trk.get('conf', 0.8)),
@@ -3672,10 +3733,9 @@ class DetectorWorker:
                     # Trigger alert with global 30-second cooldown
                     cd_key = f"unauth_{act}_{self.cam_id}"
                     if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
-                        has_roi = bool(self.roi_polygon and len(self.roi_polygon) == 2)
-                        alert_msg = f"VIOLATION: Unauthorized Activity in Parking Area Detected ({act.replace('_', ' ').title()}{' in ROI' if has_roi else ''})"
+                        alert_msg = f"VIOLATION: {act_name} Detected"
                         print(f"[ALERT-TRIGGER-UNAUTH] Camera {self.cam_id}: {alert_msg} (dur={dur:.1f}s)", flush=True)
-                        self._save_alert(alert_msg, f, display_boxes=display_boxes, violating_box=bx, violating_label=f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()})")
+                        self._save_alert(alert_msg, f, display_boxes=display_boxes, violating_box=bx, violating_label=f"VIOLATION: {act_name}")
 
             with self._box_lock:
                 self._tracked_boxes = display_boxes
@@ -3764,17 +3824,19 @@ class DetectorWorker:
                 cv2.line(alert_img, (int(f_w * 0.05), lb_y), (int(f_w * 0.95), lb_y), (0, 255, 100), 2)
                 cv2.putText(alert_img, "LINE B (GANTRY ROAD)", (int(f_w * 0.06), lb_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 100), 1, cv2.LINE_AA)
 
-            # 4. Standardized Violation Type String
+            # 4. Standardized Violation Type String (Short and Sweet)
             lbl = vehicle_label or class_name
             lbl_str = str(lbl).strip()
+            lbl_clean = lbl_str
+            for pfx in ("ALERT:", "ALERT", "VIOLATION:", "VIOLATION"):
+                if lbl_clean.upper().startswith(pfx):
+                    lbl_clean = lbl_clean[len(pfx):].strip()
             if "OVER SPEED" in lbl_str.upper() or "CROWD" in lbl_str.upper():
                 type_of_alert_str = lbl_str
-            elif lbl_str.upper().startswith("VIOLATION:"):
-                type_of_alert_str = lbl_str if "detected" in lbl_str.lower() else f"{lbl_str} Detected"
-            elif lbl_str.lower().endswith("detected"):
-                type_of_alert_str = f"VIOLATION: {lbl_str}"
             else:
-                type_of_alert_str = f"VIOLATION: {lbl_str} Detected"
+                if not lbl_clean.lower().endswith("detected"):
+                    lbl_clean = f"{lbl_clean} Detected"
+                type_of_alert_str = f"VIOLATION: {lbl_clean}"
 
             # 5. Top Alert Evidence Header Strip across snapshot
             banner_h = 28
@@ -3783,7 +3845,7 @@ class DetectorWorker:
             cv2.addWeighted(banner_overlay, 0.88, alert_img, 0.12, 0, alert_img)
             cv2.rectangle(alert_img, (0, 0), (f_w, banner_h), (50, 50, 240), 1)
 
-            banner_text = f"ALERT: {type_of_alert_str} | CAM {self.cam_id} ({self.location}) | {now_dt.strftime('%H:%M:%S')}"
+            banner_text = f"ALERT: {type_of_alert_str} | CAM {self.cam_id} | {now_dt.strftime('%H:%M:%S')}"
             cv2.putText(alert_img, banner_text, (8, banner_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
             img_saved = cv2.imwrite(os.path.join(adir, filename), alert_img, [cv2.IMWRITE_JPEG_QUALITY, 92])

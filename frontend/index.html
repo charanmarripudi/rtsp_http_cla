@@ -2382,24 +2382,23 @@
       } catch (e) {
         console.error("Failed to load models from API, using default list:", e);
         allModels = [
-          "hansung_ppe_violations.pt",
-          "150_firehose_best.pt",
-          "sand_ext_chocks.pt",
-          "Final_Fire_smoke.pt",
-          "construction.pt",
-          "best_tape.pt",
-          "tyre_final.pt",
-          "120_spillage_best.pt",
-          "Valve_box_best.pt",
-          "dome_open_closed_best.pt",
-          "yolov8n.pt",
+          "ppe.pt",
+          "firehose.pt",
+          "sand_fire_ext_chock.pt",
+          "fire_smoke.pt",
+          "tape.pt",
+          "tyre.pt",
+          "spillage.pt",
+          "valve_box.pt",
+          "dome.pt",
+          "leakage.pt",
+          "smoking.pt",
+          "spark_arrestor.pt",
           "intrusion.pt",
           "non_working_hours.pt",
           "vehicle_intrusion.pt",
           "unauthorized_activity.pt",
-          "spark_arrestor.pt",
-          "leakage_best.pt",
-          "smoking.pt"
+          "yolov8n.pt"
         ];
       }
 
@@ -2789,24 +2788,22 @@
 
             // ── 1. Specialized models with class-level checkboxes ──
             const specializedModels = [
-              { file: "hansung_ppe_violations.pt", label: "HANSUNG VIOLATIONS CLASSES", color: "#fb7185", classes: ["Hardhat","Mask","NO-Hardhat","NO-Mask","NO-Safety Vest","Person","Safety Cone","Safety Vest","machinery","vehicle","No-Gloves","No-Shoes","No-Goggles","No-Safety-Belt"] },
-              { file: "construction.pt", label: "CONSTRUCTION PPE CLASSES", color: "#eab308", classes: ["helmet","gloves","vest","boots","goggles","none","Person","no_helmet","no_goggle","no_gloves","no_boots"] },
-              { file: "hf_ppe_detection.pt", label: "HF PPE DETECTION CLASSES", color: "#a78bfa", classes: ["helmet","human","no-helmet","vest"] },
-              { file: "Final_Fire_smoke.pt", label: "FINAL FIRE & SMOKE CLASSES", color: "#ef4444", classes: ["fire","smoke"] },
-              { file: "150_firehose_best.pt", label: "FIREHOSE DETECTION CLASSES", color: "#ec4899", classes: ["no-fire_hose"] },
-              { file: "120_spillage_best.pt", label: "SPILLAGE DETECTION CLASSES", color: "#06b6d4", classes: ["spillage"] },
-              { file: "best_tape.pt", label: "REFLECTIVE TAPE CLASSES", color: "#10b981", classes: ["no-tape","no-reflective_tape","no-traffic_tape"] },
-              { file: "sand_ext_chocks.pt", label: "SAND EXT CHOCKS CLASSES", color: "#84cc16", classes: ["no-Fire_Extinguisher","no-Sand-Bucket","no-wheel-choke"] },
-              { file: "tyre_final.pt", label: "TYRE INSPECTION CLASSES", color: "#6366f1", classes: ["Defective","Good_tyre"] },
-              { file: "Valve_box_best.pt", label: "VALVE BOX CLASSES", color: "#38bdf8", classes: ["Valve_Box_Close", "Valve_Box_Open"] },
-              { file: "dome_open_closed_best.pt", label: "DOME OPEN/CLOSED CLASSES", color: "#14b8a6", classes: ["Dome_Closed", "Dome_Opened"] },
+              { file: "ppe.pt", label: "PPE DETECTION CLASSES", color: "#fb7185", classes: ["Hardhat","Mask","NO-Hardhat","NO-Mask","NO-Safety Vest","Person","Safety Cone","Safety Vest","machinery","vehicle","No-Gloves","No-Shoes","No-Goggles","No-Safety-Belt"] },
+              { file: "fire_smoke.pt", label: "FIRE & SMOKE CLASSES", color: "#ef4444", classes: ["fire","smoke"] },
+              { file: "firehose.pt", label: "FIREHOSE & FIREHOSE BOX CLASSES", color: "#ec4899", classes: ["fire_hose", "firehose_box", "no-fire_hose", "no-firehose_box"] },
+              { file: "spillage.pt", label: "SPILLAGE DETECTION CLASSES", color: "#06b6d4", classes: ["spillage"] },
+              { file: "tape.pt", label: "REFLECTIVE TAPE CLASSES", color: "#10b981", classes: ["no-tape","no-reflective_tape","no-traffic_tape"] },
+              { file: "sand_fire_ext_chock.pt", label: "SAFETY EQUIPMENT & CHOCKS CLASSES", color: "#84cc16", classes: ["no-Fire_Extinguisher","no-Sand-Bucket","no-wheel-choke"] },
+              { file: "tyre.pt", label: "TYRE INSPECTION CLASSES", color: "#6366f1", classes: ["Defective","Good_tyre"] },
+              { file: "valve_box.pt", label: "VALVE BOX CLASSES", color: "#38bdf8", classes: ["Valve_Box_Close", "Valve_Box_Open"] },
+              { file: "dome.pt", label: "DOME OPEN/CLOSED CLASSES", color: "#14b8a6", classes: ["Dome_Closed", "Dome_Opened"] },
               { file: "yolov8n.pt", label: "CROWD DETECTION CLASSES", color: "#38bdf8", classes: ["person"] },
               { file: "intrusion.pt", label: "INTRUSION DETECTION / PERIMETER INTRUSION CLASSES", color: "#f43f5e", classes: ["person", "truck"] },
               { file: "non_working_hours.pt", label: "INTRUSION IN NON-WORKING HOURS CLASSES", color: "#e11d48", classes: ["person", "truck"] },
               { file: "vehicle_intrusion.pt", label: "VEHICLE INTRUSION CLASSES", color: "#3b82f6", classes: ["car", "truck", "bus", "motorcycle"] },
               { file: "unauthorized_activity.pt", label: "UNAUTHORIZED ACTIVITY (PARKING AREA) CLASSES", color: "#f43f5e", classes: ["cooking", "crowd", "smoking", "fighting_posture", "lying_down"] },
               { file: "spark_arrestor.pt", label: "SPARK ARRESTOR COMPLIANCE CLASSES", color: "#f59e0b", classes: ["no-Spark_Arrestor"] },
-              { file: "leakage_best.pt", label: "LEAKAGE DETECTION CLASSES", color: "#0ea5e9", classes: ["leak"] },
+              { file: "leakage.pt", label: "LEAKAGE DETECTION CLASSES", color: "#0ea5e9", classes: ["leak"] },
               { file: "smoking.pt", label: "SMOKING DETECTION CLASSES", color: "#f97316", classes: ["smoking"] }
             ];
 
