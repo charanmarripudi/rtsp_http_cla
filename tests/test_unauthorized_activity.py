@@ -546,7 +546,44 @@ def run_tests():
     assert act31_a != 'fighting_posture' and act31_b != 'fighting_posture', "Test 31 FAILED: False fighting posture!"
     print(f"Test 31 PASSED: Two men sitting cooking food in pot (Image 1) -> {act31_a} / {act31_b} (NOT fighting!)")
 
-    print("\nALL 31 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 32: Active Smoking Detection via Smoking Companion Model
+    trk32 = {'first_seen': 100.0}
+    b32 = [100, 50, 180, 250]
+    smk_objs = [
+        {'box': [130, 80, 150, 100], 'cls': 'smoking', 'conf': 0.94}
+    ]
+    act32, conf32, sub32 = classify_pose_activity(
+        trk32, None, b32, 5.0, enabled, is_video_test=True, smoking_objects=smk_objs
+    )
+    assert act32 == 'smoking', f"Test 32 FAILED: Expected smoking, got {act32}"
+    assert conf32 >= 0.92, f"Test 32 FAILED: Expected conf >= 0.92, got {conf32}"
+    print(f"Test 32 PASSED: Active smoking detected via companion smoking model -> {act32} ({conf32:.2f}, {sub32})")
+
+    # Test 33: Umbrella match_class verification for unauthorized_activity
+    from detector.detector_worker import match_class, is_negative_violation_class, is_opposite_class, DetectorWorker
+    assert match_class('smoking', 'unauthorized_activity'), "Test 33 FAILED: smoking should match unauthorized_activity"
+    assert match_class('cooking', 'unauthorized_activity'), "Test 33 FAILED: cooking should match unauthorized_activity"
+    assert match_class('fighting_posture', 'unauthorized_activity'), "Test 33 FAILED: fighting_posture should match unauthorized_activity"
+    assert match_class('lying_down', 'unauthorized_activity'), "Test 33 FAILED: lying_down should match unauthorized_activity"
+    assert match_class('smoking_gesture', 'unauthorized_activity'), "Test 33 FAILED: smoking_gesture should match unauthorized_activity"
+    print("Test 33 PASSED: Umbrella class matching for unauthorized_activity fully verified!")
+
+    # Test 34: Leakage detection model classes and violation gating (leakage_best.pt)
+    assert is_negative_violation_class('leak') == True, "Test 34 FAILED: 'leak' must be a negative safety violation"
+    assert is_negative_violation_class('leakage') == True, "Test 34 FAILED: 'leakage' must be a negative safety violation"
+    assert is_negative_violation_class('no leak') == False, "Test 34 FAILED: 'no leak' is compliant and must NEVER alert"
+    assert is_negative_violation_class('no-leak') == False, "Test 34 FAILED: 'no-leak' is compliant and must NEVER alert"
+    assert is_opposite_class('leak', 'no leak') == True, "Test 34 FAILED: 'leak' and 'no leak' must be opposite pair"
+    print("Test 34 PASSED: Leakage model ('leak' violation vs 'no leak' compliant) verified 100%!")
+
+    # Test 35: Companion model auto-resolution for unauthorized_activity
+    resolved = DetectorWorker._resolve_companion_models(['models/unauthorized_activity.pt'])
+    res_str = " ".join(str(r) for r in resolved)
+    assert any("Final_Fire_smoke" in r for r in resolved), "Test 35 FAILED: Final_Fire_smoke.pt not resolved as companion!"
+    assert any("smoking" in r.lower() for r in resolved), "Test 35 FAILED: smoking.pt not resolved as companion!"
+    print(f"Test 35 PASSED: Unauthorized activity companion models resolved: {res_str}")
+
+    print("\nALL 35 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()

@@ -1319,10 +1319,10 @@ MODEL_CLASSES_CACHE = {
         "truck", "car", "bus", "motorcycle"
     ],
     "unauthorized_activity.pt": [
-        "cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"
+        "cooking", "crowd", "smoking_gesture", "smoking", "fighting_posture", "lying_down"
     ],
     "unauthorized_activity": [
-        "cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"
+        "cooking", "crowd", "smoking_gesture", "smoking", "fighting_posture", "lying_down"
     ],
     "ppe_new.pt": [
         "Cap-Lamp", "Gloves", "Gum-Boots", "Hard-Hat", "Mask", "NO-Mask",
@@ -1391,6 +1391,24 @@ MODEL_CLASSES_CACHE = {
     ],
     "spark_arrested": [
         "no-Spark_Arrestor"
+    ],
+    "leakage_best.pt": [
+        "leak", "no leak"
+    ],
+    "leakage_best": [
+        "leak", "no leak"
+    ],
+    "smoking.pt": [
+        "smoking"
+    ],
+    "smoking": [
+        "smoking"
+    ],
+    "cig_smoking.pt": [
+        "smoking"
+    ],
+    "cig_smoking": [
+        "smoking"
     ]
 }
 

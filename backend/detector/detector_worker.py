@@ -274,7 +274,8 @@ def is_negative_violation_class(cls_name: str, model_name: str = "") -> bool:
         "fire-hose", "firehose", "firehose-box", "firehosebox",
         "reflective-tape", "traffic-tape", "tape",
         "reflective-tape-floor", "reflective-tape-person", "reflective-tape-vehicles",
-        "traffic-tape-bollards", "traffic-tape-cone"
+        "traffic-tape-bollards", "traffic-tape-cone",
+        "no-leak", "noleak", "no-leakage", "noleakage"
     }
     if c in positive_compliant:
         return False
@@ -288,7 +289,7 @@ def is_negative_violation_class(cls_name: str, model_name: str = "") -> bool:
     hazards_and_violations = {
         "fall-detected", "violation", "none",
         "fire", "smoke",
-        "spillage",
+        "spillage", "leak", "leakage",
         "dome-opened", "dome-open", "domeopened", "domeopen",
         "valve-box-open", "valveboxopen", "valve-box-opened",
         "defective"
@@ -319,6 +320,13 @@ def match_class(box_cls, enabled_cls):
     if b_clean == e_clean:
         return True
         
+    # Unauthorized activity umbrella matching
+    unauth_umbrella = ("unauthorized", "unauthorizedactivity")
+    unauth_subs = ("cooking", "crowd", "smoking", "smokinggesture", "fighting", "fightingposture", "lying", "lyingdown", "sitting", "loitering")
+    if (b_clean in unauth_umbrella and any(sub in e_clean for sub in unauth_subs)) or \
+       (e_clean in unauth_umbrella and any(sub in b_clean for sub in unauth_subs)):
+        return True
+
     if b_neg != e_neg:
         return False
         
@@ -574,7 +582,8 @@ def update_wrist_kinematics(trk, kp_data, now_t, bh):
 def classify_pose_activity(
     trk, kp_data, box, dwell_time, enabled_activities,
     all_persons=None, frame_height=360, has_fire_smoke=False,
-    now_t=None, is_video_test=False, nearby_objects=None
+    now_t=None, is_video_test=False, nearby_objects=None,
+    smoking_objects=None
 ):
     """
     Unified Activity Classifier using Pretrained Biomechanical Pose Estimation,
@@ -600,7 +609,13 @@ def classify_pose_activity(
         trk = {}
 
     def _is_enabled(act_name):
-        return any(act_name.lower().replace('-', '_') in str(e).lower().replace('-', '_') for e in enabled_activities)
+        a_clean = act_name.lower().replace('-', '').replace('_', '')
+        return any(
+            a_clean in str(e).lower().replace('-', '').replace('_', '') or
+            str(e).lower().replace('-', '').replace('_', '') in a_clean or
+            (str(e).lower().replace('-', '').replace('_', '') in ("unauthorized", "unauthorizedactivity"))
+            for e in enabled_activities
+        )
 
     def _get_start_t(key):
         val = trk.get(key)
@@ -848,58 +863,87 @@ def classify_pose_activity(
             trk['is_cooking'] = False
             trk['cook_start_t'] = None
 
-    # 4. Smoking Gesture (Hand-to-Mouth with Acute Elbow Flexion and Upward Forearm)
-    if not is_cooking and _is_enabled('smoking_gesture') and has_kp and bh >= 70:
-        nose = kp_data[0]
-        l_wr, r_wr = kp_data[9], kp_data[10]
-        l_el, r_el = kp_data[7], kp_data[8]
-        l_sh, r_sh = kp_data[5], kp_data[6]
-        l_knee, r_knee = kp_data[13], kp_data[14]
+    # 4. Smoking Activity Detection (Section 3 - Pretrained Smoking Model + Biomechanical Pose)
+    if not is_cooking and (_is_enabled('smoking_gesture') or _is_enabled('smoking')):
+        is_smoking = False
+        smoking_conf = 0.88
+        smoking_sub = 'Persistent Hand-to-Mouth Smoking Gesture'
+        smoke_ret_act = 'smoking_gesture'
 
-        face_conf = nose[2]
-        face_x, face_y = nose[0], nose[1]
+        # Check A: Pretrained Smoking Model detection (smoking.pt / cig_smoking.pt companion)
+        if smoking_objects:
+            p_x1, p_y1, p_x2, p_y2 = box if (box and len(box) == 4) else [0, 0, 1, 1]
+            p_bw = max(1.0, float(p_x2 - p_x1))
+            p_bh = max(1.0, float(p_y2 - p_y1))
+            p_expanded = [p_x1 - 0.25 * p_bw, p_y1 - 0.10 * p_bh, p_x2 + 0.25 * p_bw, p_y1 + 0.90 * p_bh]
 
-        if face_conf >= 0.35 and (l_sh[2] > 0.30 or r_sh[2] > 0.30):
-            sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.30 and r_sh[2] > 0.30) else (l_sh[1] if l_sh[2] > 0.30 else r_sh[1])
-            mouth_y = face_y + bh * 0.04
-            is_smoking = False
+            for smk in smoking_objects:
+                sb = smk.get('box', [])
+                if len(sb) == 4:
+                    sx_mid = (sb[0] + sb[2]) / 2.0
+                    sy_mid = (sb[1] + sb[3]) / 2.0
+                    if (p_expanded[0] <= sx_mid <= p_expanded[2] and p_expanded[1] <= sy_mid <= p_expanded[3]) or \
+                       calculate_iou(box, sb) > 0.05:
+                        is_smoking = True
+                        smoking_conf = max(0.92, float(smk.get('conf', 0.90)))
+                        smoking_sub = 'Active Smoking Detected via Smoking Model'
+                        smoke_ret_act = 'smoking'
+                        break
 
-            # Check if both hands are at collar/neck (jacket pulling / collar adjustment - Screenshot 5)
-            both_hands_at_collar = (l_wr[2] > 0.30 and r_wr[2] > 0.30 and
-                                    abs(l_wr[1] - r_wr[1]) < bh * 0.15 and
-                                    l_wr[1] >= face_y and r_wr[1] >= face_y and
-                                    abs(l_wr[0] - r_wr[0]) > bw * 0.18)
+        # Check B: Biomechanical Hand-to-Mouth Pose Estimation fallback
+        if not is_smoking and has_kp and bh >= 70:
+            nose = kp_data[0]
+            l_wr, r_wr = kp_data[9], kp_data[10]
+            l_el, r_el = kp_data[7], kp_data[8]
+            l_sh, r_sh = kp_data[5], kp_data[6]
+            l_knee, r_knee = kp_data[13], kp_data[14]
 
-            # Check if elbow is resting on knee / lap (contemplative sitting / "The Thinker" - Screenshot 1)
-            elbow_on_knee = False
-            for el_pt in [l_el, r_el]:
-                for kn_pt in [l_knee, r_knee]:
-                    if el_pt[2] > 0.25 and kn_pt[2] > 0.25:
-                        if math.hypot(el_pt[0] - kn_pt[0], el_pt[1] - kn_pt[1]) < bh * 0.18:
-                            elbow_on_knee = True
-                            break
+            face_conf = nose[2]
+            face_x, face_y = nose[0], nose[1]
 
-            if not both_hands_at_collar and not elbow_on_knee:
-                for wr, el, sh in [(l_wr, l_el, l_sh), (r_wr, r_el, r_sh)]:
-                    if wr[2] >= 0.45 and el[2] >= 0.35 and sh[2] >= 0.30:
-                        dist_to_mouth = math.hypot(wr[0] - face_x, wr[1] - mouth_y)
-                        is_at_mouth = (face_y - bh * 0.03 <= wr[1] <= sh_y) and (abs(wr[0] - face_x) < bw * 0.20)
-                        forearm_upward = (el[1] - wr[1] > bh * 0.08)
-                        elbow_ang = calculate_joint_angle(sh, el, wr)
-                        acute_flexion = (elbow_ang <= 115.0)
+            if face_conf >= 0.35 and (l_sh[2] > 0.30 or r_sh[2] > 0.30):
+                sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.30 and r_sh[2] > 0.30) else (l_sh[1] if l_sh[2] > 0.30 else r_sh[1])
+                mouth_y = face_y + bh * 0.04
 
-                        if dist_to_mouth < min(bh * 0.12, bw * 0.22) and is_at_mouth and forearm_upward and acute_flexion:
-                            is_smoking = True
-                            break
+                # Check if both hands are at collar/neck (jacket pulling / collar adjustment - Screenshot 5)
+                both_hands_at_collar = (l_wr[2] > 0.30 and r_wr[2] > 0.30 and
+                                        abs(l_wr[1] - r_wr[1]) < bh * 0.15 and
+                                        l_wr[1] >= face_y and r_wr[1] >= face_y and
+                                        abs(l_wr[0] - r_wr[0]) > bw * 0.18)
 
-            if is_smoking:
-                s_start = _get_start_t('smoke_start_t')
-                trk['smoke_start_t'] = s_start
-                wait_time = 0.0 if is_video_test else 1.8
-                if check_temporal_consistency(s_start, now_t, wait_time):
-                    return 'smoking_gesture', 0.88, 'Persistent Hand-to-Mouth Smoking Gesture'
-            else:
-                trk['smoke_start_t'] = None
+                # Check if elbow is resting on knee / lap (contemplative sitting / "The Thinker" - Screenshot 1)
+                elbow_on_knee = False
+                for el_pt in [l_el, r_el]:
+                    for kn_pt in [l_knee, r_knee]:
+                        if el_pt[2] > 0.25 and kn_pt[2] > 0.25:
+                            if math.hypot(el_pt[0] - kn_pt[0], el_pt[1] - kn_pt[1]) < bh * 0.18:
+                                elbow_on_knee = True
+                                break
+
+                if not both_hands_at_collar and not elbow_on_knee:
+                    for wr, el, sh in [(l_wr, l_el, l_sh), (r_wr, r_el, r_sh)]:
+                        if wr[2] >= 0.45 and el[2] >= 0.35 and sh[2] >= 0.30:
+                            dist_to_mouth = math.hypot(wr[0] - face_x, wr[1] - mouth_y)
+                            is_at_mouth = (face_y - bh * 0.03 <= wr[1] <= sh_y) and (abs(wr[0] - face_x) < bw * 0.20)
+                            forearm_upward = (el[1] - wr[1] > bh * 0.08)
+                            elbow_ang = calculate_joint_angle(sh, el, wr)
+                            acute_flexion = (elbow_ang <= 115.0)
+
+                            if dist_to_mouth < min(bh * 0.12, bw * 0.22) and is_at_mouth and forearm_upward and acute_flexion:
+                                is_smoking = True
+                                smoking_conf = 0.88
+                                smoking_sub = 'Persistent Hand-to-Mouth Smoking Gesture'
+                                smoke_ret_act = 'smoking_gesture'
+                                break
+
+        if is_smoking:
+            s_start = _get_start_t('smoke_start_t')
+            trk['smoke_start_t'] = s_start
+            wait_time = 0.0 if is_video_test else (0.8 if smoke_ret_act == 'smoking' else 1.8)
+            if check_temporal_consistency(s_start, now_t, wait_time):
+                return smoke_ret_act, smoking_conf, smoking_sub
+        else:
+            trk['smoke_start_t'] = None
 
     # 5. Fighting Detection (Section 3.B - Physical Altercation, Combat Guard, Strikes)
     # Strictly differentiates normal conversation, walking together, arguing vs. punching, kicking, grappling
@@ -1385,6 +1429,12 @@ DYNAMIC_CLASS_COLOR_MAP = {
     "human": (200, 100, 50),
     "fire": (0, 0, 255),                 # Pure Red
     "smoke": (180, 180, 180),            # Silver Grey
+    "leak": (20, 20, 237),               # Reliance Alert Red
+    "leakage": (20, 20, 237),            # Reliance Alert Red
+    "no-leak": (0, 230, 80),             # Emerald Lime Green (Compliant)
+    "noleak": (0, 230, 80),              # Emerald Lime Green (Compliant)
+    "no-leakage": (0, 230, 80),          # Emerald Lime Green (Compliant)
+    "smoking": (20, 20, 237),            # Reliance Alert Red
 }
 
 def get_dynamic_class_color(class_name):
@@ -1579,14 +1629,15 @@ class DetectorWorker:
                     seen.append(cp)
                     break
 
-        # Companion model expansion for unauthorized_activity: Final_Fire_smoke.pt for fire/smoke cooking detection
+        # Companion model expansion for unauthorized_activity: Final_Fire_smoke.pt and smoking.pt
         has_unauth = any("unauthorized" in str(p).lower() for p in seen)
         if has_unauth:
-            for cd in companion_dirs:
-                cp = os.path.join(cd, "Final_Fire_smoke.pt")
-                if os.path.exists(cp) and cp not in seen:
-                    seen.append(cp)
-                    break
+            for comp in ["Final_Fire_smoke.pt", "smoking.pt", "cig_smoking.pt"]:
+                for cd in companion_dirs:
+                    cp = os.path.join(cd, comp)
+                    if os.path.exists(cp) and cp not in seen:
+                        seen.append(cp)
+                        break
 
         # Companion model expansion for spark_arrestor: yolov8n.pt to detect vehicles/trucks for compliance
         has_spark = any("spark_arrest" in str(p).lower() for p in seen)
@@ -1913,6 +1964,8 @@ class DetectorWorker:
                         if ec not in camera_selected_classes:
                             camera_selected_classes.append(ec)
 
+        is_unauth_assigned = any("unauthorized" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))
+
         if not self.models:
             paths = self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]
             self.models = [get_yolo_model(mp) for mp in paths]
@@ -1930,6 +1983,7 @@ class DetectorWorker:
             class_configs   = {}
             is_veh_model    = ("vehicle" in m_name.lower() or "speed" in m_name.lower())
             is_unauth_mod   = ("unauthorized" in m_name.lower())
+            is_unauth_comp  = any(k in m_name.lower() for k in ("fire_smoke", "smoking", "cig_smoking"))
             default_imgsz   = 320 if is_veh_model else int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz         = default_imgsz
             cfg             = get_config_for_model(self.model_configs, m_name)
@@ -1966,6 +2020,8 @@ class DetectorWorker:
 
             if is_unauth_mod:
                 filter_classes = ["person"]
+            elif is_unauth_comp and is_unauth_assigned:
+                filter_classes = ["fire", "smoke", "smoking"]
             elif enabled_classes is not None:
                 filter_classes = list(enabled_classes)
             elif camera_selected_classes:
@@ -2035,13 +2091,16 @@ class DetectorWorker:
                             if cls.lower() != "person":
                                 continue
                         else:
-                            if filter_classes is not None:
-                                if not any(match_class(cls, e) or is_opposite_class(cls, e) for e in filter_classes):
-                                    continue
+                            if is_unauth_comp and is_unauth_assigned and any(k in cls.lower() for k in ("fire", "smoke", "smok")):
+                                pass
+                            else:
+                                if filter_classes is not None:
+                                    if not any(match_class(cls, e) or is_opposite_class(cls, e) for e in filter_classes):
+                                        continue
 
-                            if camera_selected_classes:
-                                if not any(match_class(cls, sc) or is_opposite_class(cls, sc) for sc in camera_selected_classes):
-                                    continue
+                                if camera_selected_classes:
+                                    if not any(match_class(cls, sc) or is_opposite_class(cls, sc) for sc in camera_selected_classes):
+                                        continue
 
                         # Per-class confidence gate (hard reject)
                         req_conf = min(0.20, effective_conf) if is_unauth_mod else effective_conf
@@ -2658,6 +2717,16 @@ class DetectorWorker:
                 for t in self._ema_tracks.values()
             )
 
+            smoking_objects = [
+                {
+                    'box': t['box'],
+                    'cls': str(t.get('cls', '')).lower(),
+                    'conf': float(t.get('conf', 0.5))
+                }
+                for t in self._ema_tracks.values()
+                if 'smok' in str(t.get('cls', '')).lower()
+            ]
+
             for tid, trk in self._ema_tracks.items():
                 if 'person' in str(trk.get('cls', '')).lower():
                     bx = trk.get('box', [])
@@ -2676,7 +2745,8 @@ class DetectorWorker:
                         act, act_conf, act_sub = classify_pose_activity(
                             trk, trk.get('keypoints'), bx, dwell_time, unauth_classes,
                             all_person_records, frame_height=self.height,
-                            has_fire_smoke=has_fire_smoke, nearby_objects=cooking_objects
+                            has_fire_smoke=has_fire_smoke, nearby_objects=cooking_objects,
+                            smoking_objects=smoking_objects
                         )
                         trk['unauth_activity'] = act
                         trk['unauth_conf'] = act_conf

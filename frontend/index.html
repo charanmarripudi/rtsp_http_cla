@@ -2397,7 +2397,9 @@
           "non_working_hours.pt",
           "vehicle_intrusion.pt",
           "unauthorized_activity.pt",
-          "spark_arrestor.pt"
+          "spark_arrestor.pt",
+          "leakage_best.pt",
+          "smoking.pt"
         ];
       }
 
@@ -2802,8 +2804,10 @@
               { file: "intrusion.pt", label: "INTRUSION DETECTION / PERIMETER INTRUSION CLASSES", color: "#f43f5e", classes: ["person", "truck"] },
               { file: "non_working_hours.pt", label: "INTRUSION IN NON-WORKING HOURS CLASSES", color: "#e11d48", classes: ["person", "truck"] },
               { file: "vehicle_intrusion.pt", label: "VEHICLE INTRUSION CLASSES", color: "#3b82f6", classes: ["car", "truck", "bus", "motorcycle"] },
-              { file: "unauthorized_activity.pt", label: "UNAUTHORIZED ACTIVITY (PARKING AREA) CLASSES", color: "#f43f5e", classes: ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"] },
-              { file: "spark_arrestor.pt", label: "SPARK ARRESTOR COMPLIANCE CLASSES", color: "#f59e0b", classes: ["no-Spark_Arrestor"] }
+              { file: "unauthorized_activity.pt", label: "UNAUTHORIZED ACTIVITY (PARKING AREA) CLASSES", color: "#f43f5e", classes: ["cooking", "crowd", "smoking_gesture", "smoking", "fighting_posture", "lying_down"] },
+              { file: "spark_arrestor.pt", label: "SPARK ARRESTOR COMPLIANCE CLASSES", color: "#f59e0b", classes: ["no-Spark_Arrestor"] },
+              { file: "leakage_best.pt", label: "LEAKAGE DETECTION CLASSES", color: "#0ea5e9", classes: ["leak", "no leak"] },
+              { file: "smoking.pt", label: "SMOKING DETECTION CLASSES", color: "#f97316", classes: ["smoking"] }
             ];
 
             const specFileNames = specializedModels.map(s => s.file);

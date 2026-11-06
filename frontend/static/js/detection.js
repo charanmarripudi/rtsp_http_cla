@@ -325,7 +325,8 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                 "ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt",
                 "hansung_ppe_violations.pt", "construction.pt", "Final_Fire_smoke.pt",
                 "150_firehose_best.pt", "120_spillage_best.pt", "best_tape.pt", "sand_ext_chocks.pt", "tyre_final.pt",
-                "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "spark_arrestor.pt"
+                "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "spark_arrestor.pt",
+                "leakage_best.pt", "smoking.pt"
             ];
             uniqueAssigned.forEach(m => {
                 const cleanName = m.replace(".pt", "");
@@ -355,6 +356,10 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                 displayModelName = "Vehicle Intrusion Detection";
                             } else if (cleanName.toLowerCase() === "unauthorized_activity") {
                                 displayModelName = "Unauthorized Activity (Parking Area)";
+                            } else if (cleanName.toLowerCase() === "leakage_best") {
+                                displayModelName = "Leakage Detection";
+                            } else if (cleanName.toLowerCase() === "smoking") {
+                                displayModelName = "Smoking Detection";
                             } else if (cleanName.toLowerCase().includes("spark_arrest")) {
                                 displayModelName = "Spark Arrestor Compliance";
                             }
@@ -531,6 +536,10 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                         displayM = "Vehicle Intrusion Detection";
                     } else if (cleanName.toLowerCase() === "unauthorized_activity") {
                         displayM = "Unauthorized Activity (Parking Area)";
+                    } else if (cleanName.toLowerCase() === "leakage_best") {
+                        displayM = "Leakage Detection";
+                    } else if (cleanName.toLowerCase() === "smoking") {
+                        displayM = "Smoking Detection";
                     } else if (cleanName.toLowerCase().includes("spark_arrest")) {
                         displayM = "Spark Arrestor Compliance";
                     }

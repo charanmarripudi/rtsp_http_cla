@@ -22,6 +22,7 @@
           "cooking",
           "crowd",
           "smoking_gesture",
+          "smoking",
           "fighting_posture",
           "lying_down"
         ],
@@ -45,6 +46,10 @@
           "lying_down": {
             "conf": 0.4,
             "iou": 0.45
+          },
+          "smoking": {
+            "conf": 0.4,
+            "iou": 0.45
           }
         }
       },
@@ -53,6 +58,7 @@
           "cooking",
           "crowd",
           "smoking_gesture",
+          "smoking",
           "fighting_posture",
           "lying_down"
         ],
@@ -66,6 +72,10 @@
             "iou": 0.45
           },
           "smoking_gesture": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "smoking": {
             "conf": 0.4,
             "iou": 0.45
           },

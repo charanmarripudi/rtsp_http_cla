@@ -186,7 +186,7 @@ class LocationDashboardStore {
         const rawModels = Array.isArray(data.models) ? data.models : [];
         this.allModels = rawModels.filter(m => {
             const lc = String(m).toLowerCase();
-            return !lc.includes("leakage") && !lc.includes("nik_ppe") && !lc.includes("ppe_new") && !lc.startsWith("fire_smoke") && lc !== "spark_arrested.pt";
+            return !lc.includes("nik_ppe") && !lc.includes("ppe_new") && !lc.startsWith("fire_smoke") && lc !== "spark_arrested.pt";
         });
         this.cameraModels = (data.cameraModels && typeof data.cameraModels === "object") ? data.cameraModels : {};
         this.modelClasses = (data.modelClasses && typeof data.modelClasses === "object") ? data.modelClasses : {};
@@ -196,7 +196,7 @@ class LocationDashboardStore {
         this.locations = JSON.parse(localStorage.getItem("offline_locations") || "[]");
         this.streams = JSON.parse(localStorage.getItem("offline_streams") || "[]").map((item, idx) => this.streamView(item, idx));
         this.cameraModels = JSON.parse(localStorage.getItem("offline_camera_models") || "{}");
-        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "intrusion.pt", "non_working_hours.pt", "vehicle_intrusion.pt", "unauthorized_activity.pt", "spark_arrestor.pt"];
+        this.allModels = ["hansung_ppe_violations.pt", "Final_Fire_smoke.pt", "150_firehose_best.pt", "sand_ext_chocks.pt", "construction.pt", "best_tape.pt", "tyre_final.pt", "120_spillage_best.pt", "leakage_best.pt", "smoking.pt", "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "intrusion.pt", "non_working_hours.pt", "vehicle_intrusion.pt", "unauthorized_activity.pt", "spark_arrestor.pt"];
     }
 
     seedLocationsFromStreams() {
@@ -956,6 +956,8 @@ class LocationDashboard {
             "keremberke_ppe_gear": ["no_glove", "no_goggles", "no_helmet", "no_mask", "no_shoes"],
             "final_fire_smoke": ["fire", "smoke"],
             "120_spillage_best": ["spillage"],
+            "leakage_best": ["leak"],
+            "smoking": ["smoking"],
             "tyre_final": ["Defective"],
             "valve_box_best": ["Valve_Box_Open"],
             "dome_open_closed_best": ["Dome_Opened"],
@@ -967,7 +969,7 @@ class LocationDashboard {
             "intrusion": ["person", "truck"],
             "non_working_hours": ["person", "truck"],
             "vehicle_intrusion": ["car", "truck", "bus", "motorcycle"],
-            "unauthorized_activity": ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"],
+            "unauthorized_activity": ["cooking", "crowd", "smoking_gesture", "smoking", "fighting_posture", "lying_down"],
             "spark_arrestor": ["no-Spark_Arrestor"],
             "spark_arrested": ["no-Spark_Arrestor"]
         };
@@ -975,7 +977,7 @@ class LocationDashboard {
         const loaded = this.modelClasses[modelName] || this.modelClasses[norm] || [];
         return loaded.filter(c => {
             const lc = String(c).toLowerCase();
-            return lc.startsWith("no-") || lc.startsWith("no_") || lc.includes("fall") || lc.includes("fire") || lc.includes("smoke") || lc.includes("spill") || lc.includes("open") || lc.includes("defective");
+            return lc.startsWith("no-") || lc.startsWith("no_") || lc.includes("fall") || lc.includes("fire") || lc.includes("smoke") || lc.includes("spill") || lc.includes("leak") || lc.includes("open") || lc.includes("defective");
         });
     }
 
@@ -1020,7 +1022,7 @@ class LocationDashboard {
         const modelsToRender = [];
         this.allModels.forEach(m => {
             const lc = m.toLowerCase();
-            if (lc.includes("leakage") || lc.startsWith("fire_smoke") || lc === "spark_arrested.pt") return;
+            if (lc.startsWith("fire_smoke") || lc === "spark_arrested.pt") return;
             const clean = m.replace(/\.pt$/i, "").toLowerCase();
             const canonical = clean.includes("spark_arrest") ? "spark_arrestor" : clean;
             if (seenTitles.has(canonical)) return;
