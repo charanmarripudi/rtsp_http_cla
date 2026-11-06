@@ -344,7 +344,139 @@ def run_tests():
     assert act24 != 'fighting_posture', f"Test 24 FAILED: Standing person near lying person falsely flagged as fighting!"
     print(f"Test 24 PASSED: Fighting skipped when interacting with a person who is lying down")
 
-    print("\nALL 24 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 25: Conversational Dialogue with Overlapping 2D Bounding Boxes (Image 9 Face-to-Face Scene)
+    # Two people facing each other in conversation: slight horizontal & vertical box overlap,
+    # but wrists relaxed/down, normal talking gestures (v < 0.8), no fists raised -> MUST BE None (NOT fighting!)
+    trk25_a = {'first_seen': 100.0}
+    b25_a = [80, 50, 180, 250]   # Person 1 (facing right)
+    b25_b = [150, 50, 250, 250]  # Person 2 (facing left, overlapping from 150 to 180 in x)
+    kp25_a = [[130, 80, 0.9]] + [[0,0,0]]*4 + [
+        [110, 110, 0.9], [150, 110, 0.9],  # shoulders
+        [100, 150, 0.85], [160, 150, 0.85], # elbows
+        [110, 190, 0.85], [150, 190, 0.85], # wrists relaxed below shoulders
+        [120, 200, 0.8], [140, 200, 0.8],
+        [120, 230, 0.8], [140, 230, 0.8],
+        [120, 250, 0.8], [140, 250, 0.8]
+    ]
+    kp25_b = [[190, 80, 0.9]] + [[0,0,0]]*4 + [
+        [170, 110, 0.9], [210, 110, 0.9],
+        [160, 150, 0.85], [220, 150, 0.85],
+        [170, 190, 0.85], [210, 190, 0.85],
+        [180, 200, 0.8], [200, 200, 0.8],
+        [180, 230, 0.8], [200, 230, 0.8],
+        [180, 250, 0.8], [200, 250, 0.8]
+    ]
+    person_records_conv = [
+        {'id': 1, 'box': b25_a, 'keypoints': kp25_a, 'behavior': None, 'wrist_vel': 0.3},
+        {'id': 2, 'box': b25_b, 'keypoints': kp25_b, 'behavior': None, 'wrist_vel': 0.4}
+    ]
+    act25, _, _ = classify_pose_activity(trk25_a, kp25_a, b25_a, 5.0, enabled, all_persons=person_records_conv, is_video_test=True)
+    assert act25 is None, f"Test 25 FAILED: Conversational dialogue was falsely flagged as {act25}!"
+    print("Test 25 PASSED: Conversational dialogue with overlapping 2D boxes (Image 9) -> None (NOT fighting!)")
+
+    # Test 26: Cooking Detection with nearby MS COCO utensils / appliances
+    trk26 = {'first_seen': 100.0}
+    b26 = [100, 150, 220, 280]  # crouched food prep
+    kp26 = [[160, 170, 0.9]] + [[0,0,0]]*4 + [
+        [130, 190, 0.9], [190, 190, 0.9],
+        [125, 220, 0.85], [195, 220, 0.85],
+        [150, 235, 0.85], [170, 235, 0.85], # hands clustered at bowl
+        [140, 230, 0.8], [180, 230, 0.8],
+        [120, 250, 0.8], [200, 250, 0.8],
+        [130, 275, 0.8], [190, 275, 0.8]
+    ]
+    cooking_objs = [
+        {'box': [145, 225, 175, 255], 'cls': 'bowl', 'conf': 0.88}
+    ]
+    act26, conf26, sub26 = classify_pose_activity(trk26, kp26, b26, 5.0, enabled, is_video_test=True, nearby_objects=cooking_objs)
+    assert act26 == 'cooking', f"Test 26 FAILED: Expected cooking, got {act26}"
+    print(f"Test 26 PASSED: Food prep with nearby bowl/utensil -> {act26} ({sub26})")
+
+    # Test 27: Standing near stove / kitchen appliance without interacting
+    # Person is standing upright, hands at sides: MUST NOT trigger cooking
+    trk27 = {'first_seen': 100.0}
+    b27 = [100, 50, 160, 300]   # tall standing person (aspect ratio < 0.60)
+    kp27 = [[130, 70, 0.9]] + [[0,0,0]]*4 + [
+        [110, 100, 0.9], [150, 100, 0.9],
+        [105, 150, 0.85], [155, 150, 0.85],
+        [100, 210, 0.85], [160, 210, 0.85], # hands hanging down at sides
+        [115, 180, 0.8], [145, 180, 0.8],
+        [115, 240, 0.8], [145, 240, 0.8],
+        [115, 295, 0.8], [145, 295, 0.8]
+    ]
+    nearby_stove = [{'box': [170, 180, 240, 290], 'cls': 'oven', 'conf': 0.90}]
+    act27, _, _ = classify_pose_activity(trk27, kp27, b27, 5.0, enabled, is_video_test=True, nearby_objects=nearby_stove)
+    assert act27 is None, f"Test 27 FAILED: Standing person near oven falsely flagged as {act27}!"
+    print("Test 27 PASSED: Upright person standing near oven -> None (NOT cooking!)")
+
+    # Test 28: Forward bending / stooping to pick up object
+    # Person bending forward: hips high, ankles at ground level, body angle ~45 deg: MUST NOT trigger lying_down!
+    trk28 = {'first_seen': 100.0}
+    b28 = [100, 100, 200, 260] # h = 160, w = 100
+    kp28 = [[190, 180, 0.9]] + [[0,0,0]]*4 + [
+        [170, 160, 0.9], [170, 160, 0.9], # shoulders at y=160
+        [180, 200, 0.8], [180, 200, 0.8],
+        [190, 240, 0.8], [190, 240, 0.8],
+        [130, 130, 0.85], [130, 130, 0.85], # hips high at y=130
+        [125, 190, 0.8], [125, 190, 0.8],
+        [120, 255, 0.8], [120, 255, 0.8]   # ankles at ground y=255
+    ]
+    act28, _, _ = classify_pose_activity(trk28, kp28, b28, 5.0, enabled, is_video_test=True)
+    assert act28 != 'lying_down', f"Test 28 FAILED: Forward bending person falsely flagged as lying_down!"
+    print("Test 28 PASSED: Forward bending person -> None (NOT lying_down!)")
+
+    # Test 29: Verification of all 14 mathematical algorithms
+    from backend.detector.detector_worker import (
+        calculate_euclidean_distance,
+        calculate_cosine_similarity,
+        calculate_body_orientation_angle,
+        calculate_joint_angle,
+        calculate_bbox_aspect_ratio,
+        calculate_wrist_velocity,
+        calculate_acceleration,
+        calculate_box_iou,
+        check_temporal_consistency,
+        moving_average_filter,
+        exponential_moving_average,
+        calculate_activity_confidence,
+        calculate_event_duration,
+        check_cooldown
+    )
+    # 1. Euclidean
+    assert round(calculate_euclidean_distance((0, 0), (3, 4)), 2) == 5.0
+    # 2. Cosine similarity
+    assert round(calculate_cosine_similarity((1, 0), (1, 0)), 2) == 1.0
+    assert round(calculate_cosine_similarity((1, 0), (0, 1)), 2) == 0.0
+    # 3. Body orientation angle (vertical = 90 deg, horizontal = 0 deg)
+    assert round(calculate_body_orientation_angle((100, 50), (100, 150)), 1) == 90.0
+    assert round(calculate_body_orientation_angle((50, 100), (150, 100)), 1) == 0.0
+    # 4. Joint angle (right angle = 90 deg)
+    assert round(calculate_joint_angle((100, 50), (100, 100), (150, 100)), 1) == 90.0
+    # 5. Aspect ratio
+    assert round(calculate_bbox_aspect_ratio([0, 0, 100, 200]), 2) == 0.5
+    # 6. Wrist velocity (normalized)
+    assert round(calculate_wrist_velocity((100, 100), (100, 50), 0.5, 100), 2) == 1.0
+    # 7. Acceleration
+    assert round(calculate_acceleration(2.0, 1.0, 0.5), 2) == 2.0
+    # 8. IoU
+    assert round(calculate_box_iou([0, 0, 10, 10], [5, 0, 15, 10]), 3) == 0.333
+    # 9. Temporal consistency
+    assert check_temporal_consistency(10.0, 12.5, 2.0) is True
+    assert check_temporal_consistency(10.0, 11.0, 2.0) is False
+    # 10. Moving average
+    assert round(moving_average_filter([10, 20, 30, 40]), 1) == 25.0
+    # 11. EMA
+    assert round(exponential_moving_average(100, 50, 0.3), 1) == 65.0
+    # 12. Confidence aggregation
+    assert round(calculate_activity_confidence(0.9, 0.8, 0.7), 2) == 0.83
+    # 13. Event duration
+    assert calculate_event_duration(100.0, 142.5) == 42.5
+    # 14. Cooldown
+    assert check_cooldown(150.0, 100.0, 30.0) is True
+    assert check_cooldown(120.0, 100.0, 30.0) is False
+    print("Test 29 PASSED: All 14 Mathematical CV Algorithms validated with 100% precision!")
+
+    print("\nALL 29 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()

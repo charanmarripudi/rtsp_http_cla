@@ -1621,6 +1621,26 @@ def get_video_test_raw(job_id: str):
         headers={"Accept-Ranges": "bytes"}
     )
 
+@app.get("/api/video-test/csv/{job_id}")
+def get_video_test_csv(job_id: str):
+    job = get_job(job_id)
+    if not job or not os.path.exists(job.csv_path):
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Inference CSV results not found"})
+    return FileResponse(
+        job.csv_path,
+        media_type="text/csv",
+        filename=job.csv_filename
+    )
+
+@app.get("/api/video-test/evidence/{filename}")
+def get_video_test_evidence(filename: str):
+    safe_name = os.path.basename(filename)
+    from detector.video_tester import RESULTS_DIR
+    img_path = str(RESULTS_DIR / safe_name)
+    if not os.path.exists(img_path):
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Evidence snapshot not found"})
+    return FileResponse(img_path, media_type="image/jpeg")
+
 # ---------------------------------------------------------
 # REAL-TIME LIVE VIDEO DETECTION STREAMING ENDPOINTS
 # ---------------------------------------------------------

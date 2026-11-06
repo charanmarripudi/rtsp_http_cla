@@ -15,6 +15,7 @@ import threading
 import subprocess
 import re
 import hashlib
+import csv
 from datetime import datetime
 from pathlib import Path
 import cv2
@@ -212,6 +213,7 @@ def resolve_model_path(model_name: str) -> str:
         BASE_DIR / "models" / basename,
         BASE_DIR / "models" / model_name,
         BASE_DIR / "backend" / "models" / basename,
+        BASE_DIR / "tests" / basename,
         BASE_DIR / basename,
         Path(model_name)
     ]
@@ -746,6 +748,9 @@ class VideoTestJob:
         self.raw_path = resolve_raw_path(raw_filename)
         self.result_filename = f"{job_id}_annotated.mp4"
         self.result_path = str(RESULTS_DIR / self.result_filename)
+        self.csv_filename = f"{job_id}_results.csv"
+        self.csv_path = str(RESULTS_DIR / self.csv_filename)
+        self.evidence_images = []
         
         self.model_name = model_name
         self.model_path = resolve_model_path(model_name)
@@ -799,6 +804,9 @@ class VideoTestJob:
             "class_counts": self.class_counts,
             "result_url": f"/api/video-test/result/{self.job_id}",
             "raw_url": f"/api/video-test/raw/{self.job_id}",
+            "csv_filename": self.csv_filename,
+            "csv_url": f"/api/video-test/csv/{self.job_id}",
+            "evidence_images": self.evidence_images,
             "error": self.error,
         }
 
@@ -997,6 +1005,15 @@ def _process_video_worker(job: VideoTestJob):
         frame_idx = 0
         last_detections = []
         job_trk_cache = {}
+        last_evidence_times = {}
+
+        # Initialize CSV result logging for video testing pipeline (Section 6)
+        csv_file = open(job.csv_path, "w", newline="", encoding="utf-8")
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow([
+            "frame_idx", "timestamp_sec", "track_id", "class_name", "confidence",
+            "x1", "y1", "x2", "y2", "is_violation", "activity_detail"
+        ])
         
         while cap.isOpened():
             if job.cancel_requested:
@@ -1010,6 +1027,7 @@ def _process_video_worker(job: VideoTestJob):
             frame_idx += 1
             run_detection = ((frame_idx - 1) % job.frame_skip == 0)
             current_frame_detections = []
+            current_time_sec = frame_idx / video_fps if video_fps > 0 else 0.0
             
             if run_detection:
                 predict_kwargs = {
@@ -1045,16 +1063,40 @@ def _process_video_worker(job: VideoTestJob):
                             kp = kps_data[b_idx] if b_idx < len(kps_data) else None
                             raw_boxes.append((xyxy, cls_name, conf_val, kp))
 
-                        all_person_boxes = [d[0].tolist() for d in raw_boxes if 'person' in str(d[1]).lower()]
-                        current_time_sec = frame_idx / video_fps if video_fps > 0 else 0.0
+                        all_person_records = [
+                            {
+                                'id': d_i + 1,
+                                'box': d[0].tolist(),
+                                'keypoints': d[3],
+                                'wrist_vel': job_trk_cache.get(d_i + 1, {}).get('wrist_max_v', 0.0)
+                            }
+                            for d_i, d in enumerate(raw_boxes)
+                            if 'person' in str(d[1]).lower()
+                        ]
 
-                        for (xyxy, cls_name, conf_val, kp) in raw_boxes:
+                        cooking_objects = [
+                            {
+                                'box': d[0].tolist(),
+                                'cls': str(d[1]).lower(),
+                                'conf': float(d[2])
+                            }
+                            for d in raw_boxes
+                            if any(k in str(d[1]).lower() for k in (
+                                "bottle", "cup", "fork", "knife", "spoon", "bowl",
+                                "microwave", "oven", "toaster", "sink", "refrigerator",
+                                "sandwich", "pizza", "pot", "pan", "stove", "fire", "smoke", "gas", "spatula"
+                            ))
+                        ]
+
+                        for b_i, (xyxy, cls_name, conf_val, kp) in enumerate(raw_boxes):
                             x1, y1, x2, y2 = xyxy
                             bw = max(0, x2 - x1)
                             bh = max(0, y2 - y1)
                             label_name = cls_name
                             color = get_dynamic_class_color(cls_name)
                             conf_to_show = conf_val
+                            act = None
+                            act_sub = ""
 
                             if is_unauth_mod and cls_name.lower() == "person" and classify_pose_activity is not None:
                                 box_cen = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
@@ -1078,16 +1120,37 @@ def _process_video_worker(job: VideoTestJob):
                                 pose_activities = [c for c in (filter_classes or []) if any(k in c.lower() for k in ("cook", "crowd", "lying", "smok", "fight", "sitting", "loiter"))]
                                 if not pose_activities:
                                     pose_activities = ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"]
-                                all_person_records = [{'box': d[0].tolist(), 'keypoints': d[3]} for d in raw_boxes if 'person' in str(d[1]).lower()]
+                                
                                 act, act_conf, act_sub = classify_pose_activity(
                                     trk_obj, kp, xyxy.tolist(), dwell, pose_activities,
-                                    all_persons=all_person_records, frame_height=height, now_t=current_time_sec, is_video_test=True
+                                    all_persons=all_person_records, frame_height=height,
+                                    now_t=current_time_sec, is_video_test=True, nearby_objects=cooking_objects
                                 )
                                 if act:
                                     label_name = f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()})"
                                     color = (20, 20, 237)
                                     conf_to_show = act_conf or conf_val
                                     job.class_counts[act] = job.class_counts.get(act, 0) + 1
+                                    
+                                    # Save Event Evidence Image snapshot with cooldown (Section 6)
+                                    snap_key = f"{matched_tid}_{act}"
+                                    last_snap = last_evidence_times.get(snap_key, -999.0)
+                                    if (current_time_sec - last_snap) >= 2.0 and len(job.evidence_images) < 30:
+                                        evidence_fname = f"{job.job_id}_evidence_{act}_f{frame_idx}.jpg"
+                                        evidence_path = str(RESULTS_DIR / evidence_fname)
+                                        try:
+                                            cv2.imwrite(evidence_path, frame)
+                                            job.evidence_images.append({
+                                                "filename": evidence_fname,
+                                                "url": f"/api/video-test/evidence/{evidence_fname}",
+                                                "activity": act,
+                                                "sub_desc": act_sub or "",
+                                                "timestamp_sec": round(current_time_sec, 2),
+                                                "frame_idx": frame_idx
+                                            })
+                                            last_evidence_times[snap_key] = current_time_sec
+                                        except Exception as e_ev:
+                                            logger.warning(f"Failed to save evidence image: {e_ev}")
                                 else:
                                     label_name = f"person"
                                     color = (0, 255, 100)
@@ -1095,6 +1158,14 @@ def _process_video_worker(job: VideoTestJob):
                                     job.class_counts["person"] = job.class_counts.get("person", 0) + 1
                             else:
                                 job.class_counts[cls_name] = job.class_counts.get(cls_name, 0) + 1
+                                matched_tid = b_i + 1
+
+                            # Write detection record to CSV results file
+                            csv_writer.writerow([
+                                frame_idx, round(current_time_sec, 3), matched_tid or 0, label_name,
+                                round(conf_to_show, 3), int(x1), int(y1), int(x2), int(y2),
+                                bool(act), act_sub or ""
+                            ])
 
                             current_frame_detections.append({
                                 "box": xyxy,
@@ -1124,6 +1195,10 @@ def _process_video_worker(job: VideoTestJob):
 
         cap.release()
         out_writer.release()
+        try:
+            csv_file.close()
+        except Exception:
+            pass
         
         if job.status == "cancelled":
             if os.path.exists(temp_avi_path):

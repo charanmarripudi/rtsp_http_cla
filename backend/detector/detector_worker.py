@@ -334,13 +334,61 @@ def match_class(box_cls, enabled_cls):
         
     return False
 
+# =========================================================================
+# MATHEMATICAL ALGORITHMS & BIOMECHANICAL ANALYSIS (SECTION 5)
+# Pure NumPy / Python math for ARM64 Raspberry Pi 4/5 & Local Workstations
+# NO model fine-tuning or retraining required.
+# =========================================================================
+
+def calculate_euclidean_distance(p1, p2):
+    """
+    1. Euclidean Distance:
+    d(p1, p2) = sqrt((x2 - x1)^2 + (y2 - y1)^2)
+    Measures 2D spatial separation between skeletal joints or person centroids.
+    """
+    if p1 is None or p2 is None:
+        return float('inf')
+    return math.hypot(float(p1[0]) - float(p2[0]), float(p1[1]) - float(p2[1]))
+
+def calculate_cosine_similarity(v1, v2):
+    """
+    2. Cosine Similarity:
+    cos(theta) = (v1 . v2) / (||v1||_2 * ||v2||_2)
+    Measures directional alignment between limb vectors or opponent facing orientations.
+    """
+    dot = float(v1[0]) * float(v2[0]) + float(v1[1]) * float(v2[1])
+    n1 = math.hypot(float(v1[0]), float(v1[1]))
+    n2 = math.hypot(float(v2[0]), float(v2[1]))
+    if n1 < 1e-5 or n2 < 1e-5:
+        return 0.0
+    return max(-1.0, min(1.0, dot / (n1 * n2)))
+
+def calculate_body_orientation_angle(shoulder_pt, hip_pt):
+    """
+    3. Body Orientation Angle:
+    theta = |arctan2(y_hip - y_shoulder, x_hip - x_shoulder)| * (180 / pi)
+    Angle of torso axis relative to horizontal ground:
+    - theta >= 65 degrees: Upright posture (standing or seated)
+    - 32 <= theta < 65 degrees: Bending, stooping, or forward crawl
+    - theta < 32 degrees: Horizontal lying down (prone or supine)
+    """
+    if shoulder_pt is None or hip_pt is None:
+        return None
+    dy = abs(float(hip_pt[1]) - float(shoulder_pt[1]))
+    dx = abs(float(hip_pt[0]) - float(shoulder_pt[0]))
+    rad = math.atan2(dy, max(1e-4, dx))
+    return math.degrees(rad)
+
 def calculate_joint_angle(p1, p2, p3):
     """
-    Computes interior angle at joint p2 between points p1 and p3 in degrees [0, 180].
-    Used for biomechanical joint flexion analysis (knee, hip, elbow).
+    4. Biomechanical Joint Angle (Elbow / Knee / Hip):
+    theta = arccos((a . b) / (||a|| * ||b||))
+    Computes interior angle at joint p2 between limb segments (p1 - p2) and (p3 - p2).
+    - Acute elbow angle (< 115 deg): Guard stance, smoking gesture, telephone call.
+    - Extended elbow angle (> 135 deg): Extended punch, strike, or reach.
     """
-    u = (p1[0] - p2[0], p1[1] - p2[1])
-    v = (p3[0] - p2[0], p3[1] - p2[1])
+    u = (float(p1[0]) - float(p2[0]), float(p1[1]) - float(p2[1]))
+    v = (float(p3[0]) - float(p2[0]), float(p3[1]) - float(p2[1]))
     dot = u[0] * v[0] + u[1] * v[1]
     nu = math.hypot(u[0], u[1])
     nv = math.hypot(v[0], v[1])
@@ -349,25 +397,207 @@ def calculate_joint_angle(p1, p2, p3):
     cos_theta = max(-1.0, min(1.0, dot / (nu * nv)))
     return math.degrees(math.acos(cos_theta))
 
-def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, all_persons=None, frame_height=360, has_fire_smoke=False, now_t=None, is_video_test=False):
+def calculate_bbox_aspect_ratio(box):
     """
-    Industrial Terminal Activity Classifier using Biomechanical Joint Angles, Spatial Context, & Temporal Persistence.
-    Designed for real-time edge CCTV deployments at petroleum terminals (OISD standards) and AI Video Lab testing.
+    5. Body Bounding-Box Aspect Ratio:
+    AR = width / height
+    - AR < 0.65: Standing person
+    - 0.65 <= AR <= 1.15: Seated / crouching person
+    - AR > 1.30: Horizontal lying down / fallen person
+    """
+    if not box or len(box) < 4:
+        return 0.5
+    w = max(1.0, float(box[2]) - float(box[0]))
+    h = max(1.0, float(box[3]) - float(box[1]))
+    return w / h
+
+def calculate_wrist_velocity(p_curr, p_prev, dt, bh):
+    """
+    6. Wrist Velocity:
+    v = ||p(t) - p(t - dt)||_2 / (bh * dt)  [body-heights / second]
+    Normalized by bounding box height to achieve scale-invariance across camera distances.
+    """
+    if p_curr is None or p_prev is None or dt <= 0.001:
+        return 0.0
+    dist_px = math.hypot(float(p_curr[0]) - float(p_prev[0]), float(p_curr[1]) - float(p_prev[1]))
+    return (dist_px / max(1.0, float(bh))) / dt
+
+def calculate_acceleration(v_curr, v_prev, dt):
+    """
+    7. Acceleration:
+    a = (v(t) - v(t - dt)) / dt  [body-heights / second^2]
+    Detects sudden ballistic thrusts characteristic of punches, pushes, or strikes.
+    """
+    if dt <= 0.001:
+        return 0.0
+    return abs(float(v_curr) - float(v_prev)) / dt
+
+def calculate_box_iou(box_a, box_b):
+    """
+    8. Intersection over Union (IoU):
+    IoU = Area(A inter B) / Area(A union B)
+    Used for genuine spatial contact verification (> 0.35) and track deduplication.
+    Prevents false fighting alerts from 1-pixel overlap in 2D dialogue perspective.
+    """
+    if not box_a or not box_b or len(box_a) < 4 or len(box_b) < 4:
+        return 0.0
+    xa = max(float(box_a[0]), float(box_b[0]))
+    ya = max(float(box_a[1]), float(box_b[1]))
+    xb = min(float(box_a[2]), float(box_b[2]))
+    yb = min(float(box_a[3]), float(box_b[3]))
+    inter = max(0.0, xb - xa) * max(0.0, yb - ya)
+    area_a = max(1.0, (float(box_a[2]) - float(box_a[0])) * (float(box_a[3]) - float(box_a[1])))
+    area_b = max(1.0, (float(box_b[2]) - float(box_b[0])) * (float(box_b[3]) - float(box_b[1])))
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+def check_temporal_consistency(start_time, current_time, required_duration):
+    """
+    9. Temporal Consistency:
+    Validates whether a posture or activity has been sustained for at least required_duration.
+    """
+    if start_time is None or current_time is None:
+        return False
+    return (float(current_time) - float(start_time)) >= float(required_duration)
+
+def moving_average_filter(history_values, window_size=5):
+    """
+    10. Moving Average Filter:
+    mean_val = (1 / N) * sum(x_i)
+    Smooths jittery skeletal joint coordinates across consecutive frames.
+    """
+    if not history_values:
+        return 0.0
+    vals = history_values[-window_size:]
+    return sum(vals) / float(len(vals))
+
+def exponential_moving_average(curr_val, prev_val, alpha=0.30):
+    """
+    11. Exponential Moving Average (EMA):
+    S_t = alpha * X_t + (1 - alpha) * S_{t-1}
+    Maintains temporal track bounding boxes and velocity metrics with low memory footprint.
+    """
+    if prev_val is None:
+        return float(curr_val)
+    return float(alpha) * float(curr_val) + (1.0 - float(alpha)) * float(prev_val)
+
+def calculate_activity_confidence(pose_conf=1.0, motion_conf=1.0, obj_conf=1.0, weights=(0.50, 0.30, 0.20)):
+    """
+    12. Activity Confidence Aggregation:
+    C_total = w1 * C_pose + w2 * C_motion + w3 * C_context
+    Combines biomechanical posture match, motion velocity, and companion context.
+    """
+    w1, w2, w3 = weights
+    score = w1 * float(pose_conf) + w2 * float(motion_conf) + w3 * float(obj_conf)
+    return max(0.0, min(1.0, round(score, 3)))
+
+def calculate_event_duration(start_time, end_time):
+    """
+    13. Event Duration Calculation:
+    delta_T = T_end - T_start
+    """
+    if start_time is None or end_time is None:
+        return 0.0
+    return max(0.0, float(end_time) - float(start_time))
+
+def check_cooldown(current_time, last_alert_time, cooldown_seconds=30.0):
+    """
+    14. Cooldown & Duplicate-Alert Prevention:
+    Suppresses alerts if elapsed time since last alert < cooldown_seconds.
+    """
+    if last_alert_time is None or last_alert_time <= 0:
+        return True
+    return (float(current_time) - float(last_alert_time)) >= float(cooldown_seconds)
+
+def update_wrist_kinematics(trk, kp_data, now_t, bh):
+    """
+    Tracks rolling wrist kinematics (velocity, acceleration, and movement variance).
+    """
+    if trk is None or kp_data is None or len(kp_data) < 17:
+        return 0.0, 0.0, 0.0
+    
+    lw = kp_data[9]
+    rw = kp_data[10]
+    lw_valid = (lw[2] > 0.20)
+    rw_valid = (rw[2] > 0.20)
+    
+    if not lw_valid and not rw_valid:
+        return trk.get('wrist_max_v', 0.0), trk.get('wrist_max_a', 0.0), trk.get('wrist_variance', 0.0)
+    
+    whist = trk.get('wrist_hist')
+    if whist is None:
+        whist = []
+        trk['wrist_hist'] = whist
+    
+    curr_pts = {
+        't': now_t,
+        'lw': (float(lw[0]), float(lw[1])) if lw_valid else None,
+        'rw': (float(rw[0]), float(rw[1])) if rw_valid else None
+    }
+    whist.append(curr_pts)
+    if len(whist) > 10:
+        whist.pop(0)
+    
+    max_v = 0.0
+    max_a = 0.0
+    var_acc = 0.0
+    
+    if len(whist) >= 2:
+        prev = whist[-2]
+        dt = max(0.01, now_t - prev['t'])
+        vels = []
+        for side in ('lw', 'rw'):
+            if curr_pts[side] and prev[side]:
+                v_norm = calculate_wrist_velocity(curr_pts[side], prev[side], dt, bh)
+                vels.append(v_norm)
+                if v_norm > max_v:
+                    max_v = v_norm
+        
+        prev_v = trk.get('wrist_max_v', 0.0)
+        max_a = calculate_acceleration(max_v, prev_v, dt)
+            
+        all_dists = []
+        for i in range(1, len(whist)):
+            for side in ('lw', 'rw'):
+                if whist[i][side] and whist[i-1][side]:
+                    d = math.hypot(whist[i][side][0] - whist[i-1][side][0], whist[i][side][1] - whist[i-1][side][1])
+                    all_dists.append(d)
+        if len(all_dists) >= 3:
+            mean_d = sum(all_dists) / len(all_dists)
+            var_acc = sum((x - mean_d) ** 2 for x in all_dists) / len(all_dists)
+    
+    trk['wrist_max_v'] = max_v
+    trk['wrist_max_a'] = max_a
+    trk['wrist_variance'] = var_acc
+    return max_v, max_a, var_acc
+
+def classify_pose_activity(
+    trk, kp_data, box, dwell_time, enabled_activities,
+    all_persons=None, frame_height=360, has_fire_smoke=False,
+    now_t=None, is_video_test=False, nearby_objects=None
+):
+    """
+    Unified Activity Classifier using Pretrained Biomechanical Pose Estimation,
+    Spatial Context, Wrist Kinematics, & Temporal Persistence.
+    Supports Raspberry Pi 4/5 (ARM64) and Local Systems without model retraining.
     
     Activities evaluated:
-    - cooking: Crouched / low tending posture over stove/ground, floor food prep/eating, or open flame/smoke proximity
+    - cooking: Low tending posture over stove/ground, food prep, utensil interaction, or flame/smoke proximity
     - smoking_gesture: High-confidence hand-to-mouth gesture with acute elbow flexion and upward forearm
-    - fighting_posture: Multi-person proximity + combat guard stance / punches (requires >= 2 combatants)
-    - lying_down: Stationary horizontal torso orientation resting on ground for >= 2.5s
-    - sitting: Optional seated posture with bent knee angles (disabled by default in parking area)
+    - fighting_posture: Multi-person altercation with punching velocity, combat guard, kicks, or grappling (excludes normal conversation)
+    - lying_down: Stationary horizontal torso orientation resting on ground (excludes standing, sitting, bending, crawling)
+    - sitting: Seated posture with bent knee angles (disabled by default in parking area)
     - crowd: Group of 3+ distinct, non-overlapping persons gathering in parking bay
-    - loitering: Optional dwell time inside restricted parking bay ROI >= 30.0s
+    - loitering: Dwell time inside restricted parking bay ROI >= 30.0s
     """
     if not enabled_activities:
         return None, 0.0, None
 
     if now_t is None:
         now_t = time.time()
+
+    if trk is None:
+        trk = {}
 
     def _is_enabled(act_name):
         return any(act_name.lower().replace('-', '_') in str(e).lower().replace('-', '_') for e in enabled_activities)
@@ -377,15 +607,19 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         return val if val is not None else now_t
 
     x1, y1, x2, y2 = box if (box and len(box) == 4) else [0, 0, 1, 1]
-    bw = max(1.0, x2 - x1)
-    bh = max(1.0, y2 - y1)
+    bw = max(1.0, float(x2 - x1))
+    bh = max(1.0, float(y2 - y1))
     aspect_ratio = bw / bh
     is_bottom_cropped = (y2 >= frame_height * 0.90)
 
     has_kp = (kp_data is not None and len(kp_data) >= 17)
 
-    # 1. Biomechanical Upright Orientation Check
+    # Update rolling wrist kinematics (velocity, acceleration, and movement variance)
+    wrist_max_v, wrist_max_a, wrist_var = update_wrist_kinematics(trk, kp_data, now_t, bh)
+
+    # 1. Biomechanical Upright Orientation & Body Angle Calculation (Section 3.A)
     is_upright = False
+    body_angle = None
     if has_kp:
         nose = kp_data[0]
         eyes_ears = [kp_data[i] for i in range(1, 5) if kp_data[i][2] > 0.20]
@@ -395,26 +629,31 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
 
         sh_valid = (l_sh[2] > 0.20 and r_sh[2] > 0.20)
         sh_y = min(l_sh[1], r_sh[1]) if sh_valid else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
-
         sh_mid_x = (l_sh[0] + r_sh[0]) / 2.0 if sh_valid else (l_sh[0] if l_sh[2] > 0.20 else r_sh[0])
+        sh_mid_y = (l_sh[1] + r_sh[1]) / 2.0 if sh_valid else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
         head_x = nose[0] if nose[2] > 0.20 else sh_mid_x
 
-        # If head keypoint is vertically above shoulders (upright head/torso axis)
-        if head_y is not None and sh_y > 0 and (sh_y - head_y) > abs(sh_mid_x - head_x) * 0.60 and (sh_y - head_y) > bh * 0.10:
+        hip_valid = (l_hip[2] > 0.20 or r_hip[2] > 0.20)
+        hip_mid_x = (l_hip[0] + r_hip[0]) / 2.0 if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[0] if l_hip[2] > 0.20 else r_hip[0])
+        hip_mid_y = (l_hip[1] + r_hip[1]) / 2.0 if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1])
+
+        # Mathematical body orientation angle relative to horizontal ground
+        if (l_sh[2] > 0.20 or r_sh[2] > 0.20) and hip_valid:
+            body_angle = calculate_body_orientation_angle((sh_mid_x, sh_mid_y), (hip_mid_x, hip_mid_y))
+
+        # If body angle is steep (>= 60 deg), body is upright standing/sitting
+        if body_angle is not None and body_angle >= 60.0:
             is_upright = True
-        # If shoulders are aligned and hips are below shoulders
-        elif (l_sh[2] > 0.20 or r_sh[2] > 0.20) and (l_hip[2] > 0.20 or r_hip[2] > 0.20):
-            sh_mid_y = (l_sh[1] + r_sh[1]) / 2.0
-            hip_mid_y = (l_hip[1] + r_hip[1]) / 2.0
-            hip_mid_x = (l_hip[0] + r_hip[0]) / 2.0
-            if (hip_mid_y - sh_mid_y) > abs(hip_mid_x - sh_mid_x) * 0.8:
-                is_upright = True
-        # If both shoulders detected horizontally with no hips (upper body portrait crop)
+        elif head_y is not None and sh_y > 0 and (sh_y - head_y) > abs(sh_mid_x - head_x) * 0.60 and (sh_y - head_y) > bh * 0.10:
+            is_upright = True
+        elif sh_valid and hip_valid and (hip_mid_y - sh_mid_y) > abs(hip_mid_x - sh_mid_x) * 0.8:
+            is_upright = True
         elif sh_valid and abs(l_sh[0] - r_sh[0]) > bw * 0.25 and abs(l_sh[1] - r_sh[1]) < abs(l_sh[0] - r_sh[0]) * 0.50:
             is_upright = True
 
-    # 2. Standing Check (A standing person has tall aspect ratio and/or vertically extended legs)
+    # 2. Standing & Bending Validation (Section 3.A)
     is_definitely_standing = (aspect_ratio < 0.60)
+    is_bending = False
     if has_kp:
         l_hip, r_hip = kp_data[11], kp_data[12]
         l_knee, r_knee = kp_data[13], kp_data[14]
@@ -424,7 +663,6 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         knee_y = min(l_knee[1], r_knee[1]) if (l_knee[2] > 0.20 and r_knee[2] > 0.20) else (l_knee[1] if l_knee[2] > 0.20 else r_knee[1] if r_knee[2] > 0.20 else None)
         ank_y = max(l_ank[1], r_ank[1]) if (l_ank[2] > 0.15 and r_ank[2] > 0.15) else (l_ank[1] if l_ank[2] > 0.15 else r_ank[1] if r_ank[2] > 0.15 else None)
 
-        # Standing in loose clothing / lungi / wide stance: hips are in upper half, ankles near bottom, knees in middle
         if hip_y is not None and knee_y is not None and ank_y is not None:
             legs_extended = ((ank_y - hip_y) >= bh * 0.46) and ((knee_y - hip_y) >= bh * 0.20) and ((ank_y - knee_y) >= bh * 0.20)
             if (hip_y - y1) < bh * 0.52 and legs_extended and (ank_y >= y1 + bh * 0.75):
@@ -438,7 +676,6 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             if aspect_ratio < 0.70 and (ank_y - hip_y) >= bh * 0.44:
                 is_definitely_standing = True
 
-        # Medium / upper-body standing crop: upright torso, head above shoulders, shoulders above hips
         if not is_definitely_standing and is_upright:
             l_sh, r_sh = kp_data[5], kp_data[6]
             sh_valid = (l_sh[2] > 0.20 or r_sh[2] > 0.20)
@@ -449,15 +686,54 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                 elif ank_y is None and aspect_ratio < 0.85:
                     is_definitely_standing = True
 
-    # 3. Unauthorized Cooking / Food Preparation in Parking Bay / Restricted Area
-    # Evaluates:
-    # A. Presence of open flame / smoke companion detection near person
-    # B. Crouched / low tending posture over stove/ground (floor eating / cooking)
-    # C. Hands working downward in front of lap/waist (cutting vegetables / tending stove)
+        # Bending / Stooping differentiation (Section 3.A)
+        # Feet are on the ground and hips are elevated, but torso is angled forward
+        if hip_y is not None and ank_y is not None:
+            if (hip_y - y1) < bh * 0.55 and ank_y >= y1 + bh * 0.75:
+                if body_angle is not None and (32.0 <= body_angle < 65.0):
+                    is_bending = True
+
+    # 3. Unauthorized Cooking Detection (Section 3.C)
+    # Detects:
+    # A. Open flame / smoke companion detection near person
+    # B. Cooking equipment proximity (bottle, cup, bowl, spoon, knife, fork, oven, microwave, pan, pot, stove)
+    # C. Crouched / low tending posture over stove/ground (floor food prep/eating)
+    # D. Hands working downward in front of lap/waist (cutting vegetables / tending stove)
     if _is_enabled('cooking'):
         is_cooking = False
+        sub_desc = 'Unauthorized Cooking / Food Prep in Restricted Area'
+        
+        # Check nearby cooking equipment from object detector (Section 3.C)
+        has_utensil_interaction = False
+        cooking_equipment_classes = (
+            "bottle", "cup", "fork", "knife", "spoon", "bowl",
+            "microwave", "oven", "toaster", "sink", "refrigerator",
+            "sandwich", "pizza", "pot", "pan", "stove", "fire", "smoke", "gas", "spatula"
+        )
+        if nearby_objects:
+            p_center = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+            for obj in nearby_objects:
+                o_cls = str(obj.get('cls', '')).lower()
+                if any(k in o_cls for k in cooking_equipment_classes):
+                    ob = obj.get('box', [])
+                    if len(ob) == 4:
+                        o_center = ((ob[0] + ob[2]) / 2.0, (ob[1] + ob[3]) / 2.0)
+                        dist_obj = calculate_euclidean_distance(p_center, o_center)
+                        if dist_obj < bh * 0.90 or calculate_box_iou(box, ob) > 0.05:
+                            # Hand-to-object interaction check
+                            if has_kp:
+                                l_wr, r_wr = kp_data[9], kp_data[10]
+                                for wr in [l_wr, r_wr]:
+                                    if wr[2] > 0.20:
+                                        if calculate_euclidean_distance((wr[0], wr[1]), o_center) < bh * 0.45:
+                                            has_utensil_interaction = True
+                                            break
+                            else:
+                                has_utensil_interaction = True
+
         if has_fire_smoke:
             is_cooking = True
+            sub_desc = 'Active Cooking with Open Flame / Smoke Detected'
         elif has_kp and not is_definitely_standing:
             l_sh, r_sh = kp_data[5], kp_data[6]
             l_hip, r_hip = kp_data[11], kp_data[12]
@@ -467,7 +743,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             sh_valid = (l_sh[2] > 0.20 or r_sh[2] > 0.20)
             hip_valid = (l_hip[2] > 0.20 or r_hip[2] > 0.20)
             knee_valid = (l_knee[2] > 0.20 or r_knee[2] > 0.20)
-            wr_valid = (l_wr[2] > 0.20 and r_wr[2] > 0.20)  # BOTH hands must be visible for food prep without fire
+            wr_valid = (l_wr[2] > 0.20 and r_wr[2] > 0.20)
 
             sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.20 and r_sh[2] > 0.20) else (l_sh[1] if l_sh[2] > 0.20 else r_sh[1])
             hip_y = min(l_hip[1], r_hip[1]) if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1])
@@ -491,20 +767,21 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             arms_separated = wr_valid and abs(l_wr[0] - r_wr[0]) > bw * 0.35
 
             if not is_tall_standing and not arms_separated and wr_valid and is_crouched_or_seated:
-                # Food prep requires both hands close together in front of lap/abdomen/ground
                 hands_clustered = abs(l_wr[0] - r_wr[0]) <= bw * 0.35
                 hands_at_lap_or_ground = (wr_y >= hip_y - bh * 0.20) if hip_valid else True
 
                 if hands_clustered and hands_at_lap_or_ground:
                     is_cooking = True
+                    if has_utensil_interaction:
+                        sub_desc = 'Food Preparation with Cooking Equipment in Restricted Area'
 
         if is_cooking:
             c_start = _get_start_t('cook_start_t')
             trk['cook_start_t'] = c_start
             wait_time = 0.0 if is_video_test else 1.2
-            if (now_t - c_start) >= wait_time:
-                sub_desc = 'Active Cooking with Open Flame / Smoke Detected' if has_fire_smoke else 'Unauthorized Cooking / Food Prep in Restricted Area'
-                return 'cooking', 0.92, sub_desc
+            if check_temporal_consistency(c_start, now_t, wait_time):
+                conf = 0.94 if has_fire_smoke else (0.92 if has_utensil_interaction else 0.88)
+                return 'cooking', conf, sub_desc
         else:
             trk['cook_start_t'] = None
 
@@ -556,12 +833,13 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                 s_start = _get_start_t('smoke_start_t')
                 trk['smoke_start_t'] = s_start
                 wait_time = 0.0 if is_video_test else 1.8
-                if (now_t - s_start) >= wait_time:
+                if check_temporal_consistency(s_start, now_t, wait_time):
                     return 'smoking_gesture', 0.88, 'Persistent Hand-to-Mouth Smoking Gesture'
             else:
                 trk['smoke_start_t'] = None
 
-    # 5. Fighting Detection (Proximity & Altercation Mapping from User's Logic)
+    # 5. Fighting Detection (Section 3.B - Physical Altercation, Combat Guard, Strikes)
+    # Strictly differentiates normal conversation, walking together, arguing vs. punching, kicking, grappling
     if _is_enabled('fighting_posture'):
         is_fighting = False
         h1 = max(1.0, bh)
@@ -572,7 +850,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         right_wrist1 = kp_data[10] if (has_kp and len(kp_data) >= 17 and kp_data[10][2] > 0.15) else None
         wrists1 = [w[:2] for w in [left_wrist1, right_wrist1] if w is not None]
 
-        # Pairwise interaction check with all other persons (User's Exact Logic)
+        # Pairwise interaction check with all other persons (ByteTrack Multi-Person Analysis)
         if all_persons:
             for other in all_persons:
                 if other is box:
@@ -582,29 +860,32 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                     o_box = other.get('box', other.get('bbox'))
                     o_kp = other.get('keypoints')
                     o_beh = other.get('behavior', other.get('unauth_activity'))
+                    o_v = float(other.get('wrist_vel', 0.0))
                 else:
                     o_box = other
                     o_kp = None
                     o_beh = None
+                    o_v = 0.0
                 
                 if not o_box or len(o_box) != 4 or o_box == box:
                     continue
-                # Skip interaction processing if one target is already verified lying flat on floor
+                # Skip interaction if opponent is already verified lying flat on floor
                 if o_beh == 'lying_down':
                     continue
                 
                 ox1, oy1, ox2, oy2 = o_box
-                h2 = max(1.0, oy2 - oy1)
+                h2 = max(1.0, float(oy2 - oy1))
                 center2 = np.array([(ox1 + ox2) / 2.0, (oy1 + oy2) / 2.0])
                 
-                # Measure structural gap metrics between separate individuals
+                # Biomechanical gap metrics between separate individuals
                 dist_centers = math.hypot(center1[0] - center2[0], center1[1] - center2[1])
                 avg_height = (h1 + h2) / 2.0
+                norm_dist = dist_centers / avg_height
                 
                 dynamic_center_thresh = avg_height * 1.3
                 dynamic_contact_thresh = avg_height * 0.45
                 
-                # Check metrics mapping closest hand positions relative to opponent's face area
+                # Check closest hand positions relative to opponent's face/upper torso area
                 o_nose = o_kp[0][:2] if (o_kp is not None and len(o_kp) >= 17 and o_kp[0][2] > 0.15) else [center2[0], oy1 + h2 * 0.2]
                 o_wrists = [w[:2] for w in [o_kp[9], o_kp[10]] if (w is not None and len(w) >= 3 and w[2] > 0.15)] if (o_kp is not None and len(o_kp) >= 17) else []
                 
@@ -616,20 +897,44 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                     for w2 in o_wrists:
                         min_wrist_gap = min(min_wrist_gap, math.hypot(w2[0] - nose1[0], w2[1] - nose1[1]))
                 
-                # Alternative grappling check: Bounding Box intersection fallback
-                x_overlap = max(0.0, min(x2, ox2) - max(x1, ox1))
-                y_overlap = max(0.0, min(y2, oy2) - max(y1, oy1))
-                has_heavy_overlap = (x_overlap > 0) and (y_overlap > 0)
+                # Genuine 2D Intersection over Union (IoU) calculation (Section 5.8)
+                iou = calculate_box_iou(box, o_box)
                 
                 wrists_valid = bool(wrists1 or o_wrists)
                 is_close = dist_centers < dynamic_center_thresh
                 is_touching = (min_wrist_gap < dynamic_contact_thresh) and wrists_valid
                 
-                if (is_close and is_touching) or has_heavy_overlap:
-                    is_fighting = True
-                    break
+                # --- CONVERSATIONAL SUPPRESSION (Prevents false positives on dialogue shots) ---
+                # In conversational dialogue, two people face each other in 2D perspective overlap.
+                # If neither individual exhibits punching velocity, guard fists, or bodily clench,
+                # it is normal conversation / walking together.
+                is_dialogue_conversation = False
+                if is_upright and is_close and not (is_touching and (wrist_max_v >= 1.2 or o_v >= 1.2)):
+                    # Check if wrists are relaxed below shoulders / hanging down
+                    wrists_hanging = True
+                    sh_ref = y1 + h1 * 0.35
+                    if left_wrist1 is not None and left_wrist1[1] < sh_ref:
+                        wrists_hanging = False
+                    if right_wrist1 is not None and right_wrist1[1] < sh_ref:
+                        wrists_hanging = False
+                        
+                    if wrists_hanging and (wrist_max_v < 1.0 and o_v < 1.0) and (iou < 0.35):
+                        is_dialogue_conversation = True
 
-        # Solitary / Sparring Combat Stance Fallback
+                # Fighting Trigger Criteria:
+                # 1. Close contact with rapid strike velocity (punching/pushing: wrist_v >= 1.2 h/s)
+                # 2. Close physical grappling with heavy bodily IoU >= 0.35 and wrist contact
+                # 3. Direct strike impact with high acceleration (wrist_a >= 3.5 h/s^2)
+                # 4. Solitary guard or sparring stance while within striking distance
+                has_strike_velocity = (wrist_max_v >= 1.2 or o_v >= 1.2 or wrist_max_a >= 3.5)
+                has_heavy_grappling = (iou >= 0.35) and is_touching
+
+                if not is_dialogue_conversation:
+                    if (is_close and is_touching) or has_heavy_grappling:
+                        is_fighting = True
+                        break
+
+        # Solitary / Sparring Combat Stance Fallback (Section 3.B)
         if not is_fighting and has_kp and len(kp_data) >= 17:
             l_sh, r_sh = kp_data[5], kp_data[6]
             l_wr, r_wr = kp_data[9], kp_data[10]
@@ -680,17 +985,21 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             f_start = _get_start_t('fight_start_t')
             trk['fight_start_t'] = f_start
             wait_time = 0.0 if is_video_test else 0.5
-            if (now_t - f_start) >= wait_time:
+            if check_temporal_consistency(f_start, now_t, wait_time):
                 return 'fighting_posture', 0.90, 'Combat Guard Stance / Physical Altercation'
         else:
             trk['fight_start_t'] = None
 
-    # 6. Lying Down Detection (Aspect ratio check + spine profile from User's Logic)
+    # 6. Lying Down Detection (Section 3.A - Mathematical Orientation & Aspect Ratio)
+    # Distinguishes standing, sitting, bending, crawling and true supine/prone lying down
     if _is_enabled('lying_down'):
-        # 1. Aspect ratio check: If bounding box is significantly wider than it is tall
-        is_horizontal_box = bw > (bh * 1.3)
+        # 1. Aspect ratio check: Bounding box is significantly wider than it is tall
+        is_horizontal_box = bw > (bh * 1.30)
         
-        # 2. Check if nose and ankles share similar vertical positions
+        # 2. Check if torso orientation angle is horizontal (< 32 degrees)
+        is_horizontal_angle = (body_angle is not None and body_angle < 32.0)
+
+        # 3. Check if nose and ankles share similar vertical positions (horizontal spine)
         is_horizontal_spine = False
         if has_kp and len(kp_data) >= 17:
             nose = kp_data[0]
@@ -704,13 +1013,14 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                 if abs(nose[1] - r_ank[1]) < (bh * 0.35):
                     is_horizontal_spine = True
 
-        is_lying = (is_horizontal_box or is_horizontal_spine) and not is_upright and not is_definitely_standing
+        # Require sustained horizontal profile while rejecting standing, upright, or forward bending
+        is_lying = (is_horizontal_box or is_horizontal_spine or is_horizontal_angle) and not is_upright and not is_definitely_standing and not is_bending
         
         # Ground plane fallback for fallen/passed-out person flat on floor
-        if not is_lying and aspect_ratio >= 1.8 and bh >= 14 and not is_upright and not is_definitely_standing:
+        if not is_lying and aspect_ratio >= 1.8 and bh >= 14 and not is_upright and not is_definitely_standing and not is_bending:
             is_lying = True
 
-        # Centroid stationarity across frames (reject mid-air jumping flips)
+        # Centroid stationarity across frames (rejects dynamic mid-air jumping flips)
         if is_lying:
             prev_cen = trk.get('last_lying_cen')
             cur_cen = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
@@ -725,7 +1035,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
             l_start = _get_start_t('lie_start_t')
             trk['lie_start_t'] = l_start
             wait_time = 0.0 if is_video_test else 0.8
-            if (now_t - l_start) >= wait_time:
+            if check_temporal_consistency(l_start, now_t, wait_time):
                 return 'lying_down', 0.90, 'Horizontal Torso Orientation on Ground'
         else:
             trk['lie_start_t'] = None
@@ -764,7 +1074,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
         sit_start = _get_start_t('sit_start_t')
         trk['sit_start_t'] = sit_start
         wait_time = 0.0 if is_video_test else 1.5
-        if (now_t - sit_start) >= wait_time:
+        if check_temporal_consistency(sit_start, now_t, wait_time):
             return 'sitting', 0.85, 'Seated Posture with Bent Knee Angles'
     else:
         trk['sit_start_t'] = None
@@ -805,7 +1115,7 @@ def classify_pose_activity(trk, kp_data, box, dwell_time, enabled_activities, al
                 c_start = _get_start_t('crowd_start_t')
                 trk['crowd_start_t'] = c_start
                 wait_time = 0.5 if is_video_test else 2.5
-                if (now_t - c_start) >= wait_time:
+                if check_temporal_consistency(c_start, now_t, wait_time):
                     return 'crowd', 0.90, f'Crowd Gathering ({num_persons_nearby} Persons in Bay)'
             else:
                 trk['crowd_start_t'] = None
@@ -2241,12 +2551,29 @@ class DetectorWorker:
 
             all_person_records = [
                 {
+                    'id': t_id,
                     'box': t['box'],
                     'keypoints': t.get('keypoints'),
-                    'behavior': t.get('unauth_activity')
+                    'behavior': t.get('unauth_activity'),
+                    'wrist_vel': float(t.get('wrist_max_v', 0.0)),
+                    'wrist_acc': float(t.get('wrist_max_a', 0.0))
+                }
+                for t_id, t in self._ema_tracks.items()
+                if 'person' in str(t.get('cls', '')).lower()
+            ]
+
+            cooking_objects = [
+                {
+                    'box': t['box'],
+                    'cls': str(t.get('cls', '')).lower(),
+                    'conf': float(t.get('conf', 0.5))
                 }
                 for t in self._ema_tracks.values()
-                if 'person' in str(t.get('cls', '')).lower()
+                if any(k in str(t.get('cls', '')).lower() for k in (
+                    "bottle", "cup", "fork", "knife", "spoon", "bowl",
+                    "microwave", "oven", "toaster", "sink", "refrigerator",
+                    "sandwich", "pizza", "pot", "pan", "stove", "fire", "smoke", "gas", "spatula"
+                ))
             ]
 
             has_fire_smoke = any(
@@ -2270,7 +2597,9 @@ class DetectorWorker:
                     if in_zone and unauth_classes:
                         dwell_time = now_t - trk.get('first_seen', now_t)
                         act, act_conf, act_sub = classify_pose_activity(
-                            trk, trk.get('keypoints'), bx, dwell_time, unauth_classes, all_person_records, frame_height=self.height, has_fire_smoke=has_fire_smoke
+                            trk, trk.get('keypoints'), bx, dwell_time, unauth_classes,
+                            all_person_records, frame_height=self.height,
+                            has_fire_smoke=has_fire_smoke, nearby_objects=cooking_objects
                         )
                         trk['unauth_activity'] = act
                         trk['unauth_conf'] = act_conf

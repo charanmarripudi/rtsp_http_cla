@@ -7,9 +7,20 @@
     "conf": 0.4,
     "iou": 0.45,
     "model_configs": {
-      "roi_polygon": [],
-      "spark_arrestor.pt": {
-        "enabled_classes": []
+      "roi_polygon": [
+        [
+          0.5,
+          0.2685
+        ],
+        [
+          0.9631,
+          0.9485
+        ]
+      ],
+      "150_firehose_best.pt": {
+        "enabled_classes": [
+          "no-fire_hose"
+        ]
       }
     },
     "device_id": "RPI-001",
