@@ -750,10 +750,7 @@ def classify_pose_activity(
                             else:
                                 has_utensil_interaction = True
 
-        if has_fire_smoke:
-            is_cooking = True
-            sub_desc = 'Active Cooking with Open Flame / Smoke Detected'
-        elif has_kp:
+        if has_kp:
             l_sh, r_sh = kp_data[5], kp_data[6]
             l_el, r_el = kp_data[7], kp_data[8]
             l_wr, r_wr = kp_data[9], kp_data[10]
@@ -835,16 +832,18 @@ def classify_pose_activity(
             deep_floor_squat = (knee_flexed and hips_low_to_ground and ank_valid and
                                 (ank_y >= y1 + bh * 0.65) and (aspect_ratio >= 0.60) and not is_bottom_cropped)
 
-            # In live CCTV camera streams, cooking strictly requires either:
-            # 1. Companion open flame / smoke detection, OR
-            # 2. Detected cooking utensils / cookware / stove with active hand interaction, OR
-            # 3. Verified deep floor squat with all leg joints grounded (floor cooking / stove tending)
-            # (Merely standing or leaning without utensils is never cooking)
+            # 5-Tier Evidence Priority Hierarchy for Cooking:
+            # Evidence Priority 1: Visible flame or active burner in proximity to person
+            if has_fire_smoke and not hand_at_face:
+                if head_looking_down or elbows_bent or is_crouched_or_seated or forearm_forward or is_video_test:
+                    is_cooking = True
+                    sub_desc = 'Cooking'
 
-            # Case A: Crouched / Floor food prep / pot cooking (Two men on ground in Image 1 / Test 13 & 31)
-            # Requires either verified utensil interaction OR confirmed deep floor squat with hands working at ground
-            if any_wr_valid and non_violent_hands and not hand_at_face:
+            # Evidence Priority 2, 3, & 4: Utensils / Cookware Handling + Hand Movements + Cooking Posture
+            if not is_cooking and any_wr_valid and non_violent_hands and not hand_at_face:
                 hands_at_lap_or_ground = (wr_y >= (hip_y - bh * 0.10)) if (wr_y is not None and hip_valid) else True
+                
+                # Case A: Crouched Floor Food Prep / Pot Cooking (Two men on ground in Image 1 / Test 13 & 31)
                 if has_utensil_interaction and is_crouched_or_seated and hands_in_front:
                     is_cooking = True
                     sub_desc = 'Cooking'
@@ -852,26 +851,29 @@ def classify_pose_activity(
                     is_cooking = True
                     sub_desc = 'Cooking'
 
-            # Case B: Standing Food Prep at Stove / Counter / Surface (Woman at stove in Image 2 / Test 30)
-            # Requires full standing posture with vertical legs, arms working forward at counter height
-            if not is_cooking and any_wr_valid and non_violent_hands and not hand_at_face:
+                # Case B: Standing Food Prep at Stove / Counter / Surface (Woman at stove in Image 2 / Test 30)
                 standing_with_legs = is_definitely_standing and ank_valid and (ank_y >= y1 + bh * 0.70)
-                if standing_with_legs and hands_at_counter_height and hands_in_front and forearm_forward and elbows_bent:
+                if not is_cooking and standing_with_legs and hands_at_counter_height and hands_in_front and forearm_forward and elbows_bent:
                     if (is_video_test and head_looking_down) or has_utensil_interaction:
                         is_cooking = True
                         sub_desc = 'Cooking'
 
-            # Case C: Companion Cooking Equipment Interaction (Must be actively handling / engaging, not merely standing nearby)
-            if not is_cooking and has_utensil_interaction and any_wr_valid and non_violent_hands and hands_in_front and not hand_at_face:
-                if elbows_bent or head_looking_down or is_crouched_or_seated or forearm_forward:
-                    is_cooking = True
-                    sub_desc = 'Cooking'
+                # Case C: Cooking Equipment Interaction (Handling cookware/utensils with repeated movements)
+                if not is_cooking and has_utensil_interaction and hands_in_front:
+                    if elbows_bent or head_looking_down or is_crouched_or_seated or forearm_forward:
+                        is_cooking = True
+                        sub_desc = 'Cooking'
+
+        elif has_fire_smoke:
+            # Fallback when keypoints unavailable: genuine flame/smoke detected in proximity
+            is_cooking = True
+            sub_desc = 'Cooking'
 
         if is_cooking:
             trk['is_cooking'] = True
             c_start = _get_start_t('cook_start_t')
             trk['cook_start_t'] = c_start
-            wait_time = 0.0 if is_video_test else 0.8
+            wait_time = 0.0 if is_video_test else 1.5
             if check_temporal_consistency(c_start, now_t, wait_time):
                 conf = 0.94 if has_fire_smoke else (0.92 if has_utensil_interaction else 0.88)
                 return 'cooking', conf, sub_desc
@@ -1657,10 +1659,10 @@ class DetectorWorker:
                     seen.append(cp)
                     break
 
-        # Companion model expansion for unauthorized_activity: fire_smoke.pt (or Final_Fire_smoke.pt) and smoking.pt
+        # Companion model expansion for unauthorized_activity: yolov8n-pose.pt, fire_smoke.pt (or Final_Fire_smoke.pt), and smoking.pt
         has_unauth = any("unauthorized" in str(p).lower() for p in seen)
         if has_unauth:
-            for comp in ["fire_smoke.pt", "Final_Fire_smoke.pt", "smoking.pt"]:
+            for comp in ["yolov8n-pose.pt", "fire_smoke.pt", "Final_Fire_smoke.pt", "smoking.pt"]:
                 for cd in companion_dirs:
                     cp = os.path.join(cd, comp)
                     if os.path.exists(cp) and cp not in seen:
@@ -2010,8 +2012,8 @@ class DetectorWorker:
             enabled_classes = None
             class_configs   = {}
             is_veh_model    = ("vehicle" in m_name.lower() or "speed" in m_name.lower())
-            is_unauth_mod   = ("unauthorized" in m_name.lower())
-            is_unauth_comp  = any(k in m_name.lower() for k in ("fire_smoke", "smoking"))
+            is_unauth_mod   = ("unauthorized" in m_name.lower() or "pose" in m_name.lower())
+            is_unauth_comp  = any(k in m_name.lower() for k in ("fire_smoke", "smoking", "pose"))
             default_imgsz   = 320 if is_veh_model else int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz         = default_imgsz
             cfg             = get_config_for_model(self.model_configs, m_name)
@@ -2049,7 +2051,7 @@ class DetectorWorker:
             if is_unauth_mod:
                 filter_classes = ["person"]
             elif is_unauth_comp and is_unauth_assigned:
-                filter_classes = ["fire", "smoke", "smoking"]
+                filter_classes = ["fire", "smoke", "smoking", "person"]
             elif enabled_classes is not None:
                 filter_classes = list(enabled_classes)
             elif camera_selected_classes:
@@ -2123,7 +2125,7 @@ class DetectorWorker:
                             # Keep positive equipment detections so absence monitors can verify presence
                             pass
                         else:
-                            if is_unauth_comp and is_unauth_assigned and any(k in cls.lower() for k in ("fire", "smoke", "smok")):
+                            if is_unauth_comp and is_unauth_assigned and any(k in cls.lower() for k in ("fire", "smoke", "smok", "person")):
                                 pass
                             else:
                                 if filter_classes is not None:
@@ -2750,6 +2752,22 @@ class DetectorWorker:
                 if 'person' in str(t.get('cls', '')).lower()
             ]
 
+            def _is_real_flame_smoke(cls_str):
+                c = str(cls_str).lower().strip()
+                if any(bad in c for bad in ("hose", "box", "extinguisher", "chock", "bucket", "smoking", "no-", "no_")):
+                    return False
+                return c in ("fire", "smoke", "open_flame", "flame", "gas_flame", "burner")
+
+            fire_smoke_objects = [
+                {
+                    'box': t['box'],
+                    'cls': str(t.get('cls', '')).lower(),
+                    'conf': float(t.get('conf', 0.5))
+                }
+                for t in self._ema_tracks.values()
+                if _is_real_flame_smoke(t.get('cls', ''))
+            ]
+
             cooking_objects = [
                 {
                     'box': t['box'],
@@ -2760,14 +2778,9 @@ class DetectorWorker:
                 if any(k in str(t.get('cls', '')).lower() for k in (
                     "bottle", "cup", "fork", "knife", "spoon", "bowl",
                     "microwave", "oven", "toaster", "sink", "refrigerator",
-                    "sandwich", "pizza", "pot", "pan", "stove", "fire", "smoke", "gas", "spatula"
-                ))
+                    "sandwich", "pizza", "pot", "pan", "stove", "spatula"
+                )) and not any(bad in str(t.get('cls', '')).lower() for bad in ("hose", "box", "extinguisher", "chock", "bucket", "smoking", "no-", "no_"))
             ]
-
-            has_fire_smoke = any(
-                any(fk in str(t.get('cls', '')).lower() for fk in ("fire", "smoke", "gas"))
-                for t in self._ema_tracks.values()
-            )
 
             smoking_objects = [
                 {
@@ -2776,7 +2789,7 @@ class DetectorWorker:
                     'conf': float(t.get('conf', 0.5))
                 }
                 for t in self._ema_tracks.values()
-                if 'smok' in str(t.get('cls', '')).lower()
+                if 'smok' in str(t.get('cls', '')).lower() and not any(bad in str(t.get('cls', '')).lower() for bad in ("hose", "box", "extinguisher", "chock", "bucket", "no-", "no_"))
             ]
 
             for tid, trk in self._ema_tracks.items():
@@ -2793,16 +2806,38 @@ class DetectorWorker:
                                    (r_min_x <= gx <= r_max_x and r_min_y <= gy <= r_max_y))
 
                     if in_zone and unauth_classes:
+                        # Priority 1: Check if genuine flame/smoke is in physical proximity to this specific person
+                        p_has_fire_smoke = False
+                        p_h = max(1.0, float(bx[3] - bx[1]))
+                        for fobj in fire_smoke_objects:
+                            fb = fobj.get('box', [])
+                            if len(fb) == 4:
+                                f_cx = (fb[0] + fb[2]) / 2.0
+                                f_cy = (fb[1] + fb[3]) / 2.0
+                                d_flame = math.hypot(cx - f_cx, cy - f_cy)
+                                if d_flame < p_h * 1.2 or calculate_box_iou(bx, fb) > 0.05:
+                                    p_has_fire_smoke = True
+                                    break
+
                         dwell_time = now_t - trk.get('first_seen', now_t)
                         act, act_conf, act_sub = classify_pose_activity(
                             trk, trk.get('keypoints'), bx, dwell_time, unauth_classes,
                             all_person_records, frame_height=self.height,
-                            has_fire_smoke=has_fire_smoke, nearby_objects=cooking_objects,
+                            has_fire_smoke=p_has_fire_smoke, nearby_objects=cooking_objects,
                             smoking_objects=smoking_objects
                         )
-                        trk['unauth_activity'] = act
-                        trk['unauth_conf'] = act_conf
-                        trk['unauth_sub'] = act_sub
+                        if act:
+                            trk['unauth_activity'] = act
+                            trk['unauth_conf'] = act_conf
+                            trk['unauth_sub'] = act_sub
+                            trk['unauth_last_active_t'] = now_t
+                        else:
+                            # 1.0s Hysteresis / sticky hangover window so boxes stay solid and continuous in video
+                            last_act_t = trk.get('unauth_last_active_t', 0.0)
+                            if (now_t - last_act_t) > 1.0:
+                                trk['unauth_activity'] = None
+                                trk['unauth_conf'] = 0.0
+                                trk['unauth_sub'] = None
                     else:
                         trk['unauth_activity'] = None
 
