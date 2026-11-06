@@ -1273,7 +1273,7 @@ async def update_thresholds(req: Request):
 
 @app.get("/api/models")
 def get_models():
-    hidden = {"nik_ppe_best.pt", "ppe_new.pt", "fire_smoke.pt", "leakage.pt", "spark_arrested.pt"}
+    hidden = {"nik_ppe_best.pt", "ppe_new.pt", "spark_arrested.pt", "yolov8n-pose.pt"}
     candidates = [
         MODEL_DIR,
         os.path.join(BASE_DIR, "models"),
@@ -1449,16 +1449,16 @@ MODEL_CLASSES_CACHE = {
         "no-Spark_Arrestor"
     ],
     "leakage_best.pt": [
-        "leak"
+        "leak", "no leak"
     ],
     "leakage_best": [
-        "leak"
+        "leak", "no leak"
     ],
     "leakage.pt": [
-        "leak"
+        "leak", "no leak"
     ],
     "leakage": [
-        "leak"
+        "leak", "no leak"
     ],
     "smoking.pt": [
         "smoking"

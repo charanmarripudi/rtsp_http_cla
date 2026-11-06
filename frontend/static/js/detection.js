@@ -323,10 +323,11 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
 
             const specializedModelNames = [
                 "ppe_new.pt", "nik_ppe_best.pt", "hf_ppe_detection.pt", "keremberke_ppe_gear.pt",
-                "hansung_ppe_violations.pt", "construction.pt", "Final_Fire_smoke.pt",
-                "150_firehose_best.pt", "120_spillage_best.pt", "best_tape.pt", "sand_ext_chocks.pt", "tyre_final.pt",
-                "Valve_box_best.pt", "dome_open_closed_best.pt", "yolov8n.pt", "spark_arrestor.pt",
-                "leakage_best.pt", "smoking.pt"
+                "hansung_ppe_violations.pt", "construction.pt", "Final_Fire_smoke.pt", "fire_smoke.pt",
+                "150_firehose_best.pt", "firehose.pt", "120_spillage_best.pt", "spillage.pt", "best_tape.pt", "tape.pt",
+                "sand_ext_chocks.pt", "sand_fire_ext_chock.pt", "tyre_final.pt", "tyre.pt",
+                "Valve_box_best.pt", "valve_box.pt", "dome_open_closed_best.pt", "dome.pt", "yolov8n.pt", "spark_arrestor.pt",
+                "leakage_best.pt", "leakage.pt", "smoking.pt", "ppe.pt"
             ];
             uniqueAssigned.forEach(m => {
                 const cleanName = m.replace(".pt", "");
@@ -356,7 +357,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                                 displayModelName = "Vehicle Intrusion Detection";
                             } else if (cleanName.toLowerCase() === "unauthorized_activity") {
                                 displayModelName = "Unauthorized Activity (Parking Area)";
-                            } else if (cleanName.toLowerCase() === "leakage_best") {
+                            } else if (cleanName.toLowerCase() === "leakage_best" || cleanName.toLowerCase() === "leakage") {
                                 displayModelName = "Leakage Detection";
                             } else if (cleanName.toLowerCase() === "smoking") {
                                 displayModelName = "Smoking Detection";
@@ -536,7 +537,7 @@ function renderUI(box, i, meta, status, cameraModelsMap) {
                         displayM = "Vehicle Intrusion Detection";
                     } else if (cleanName.toLowerCase() === "unauthorized_activity") {
                         displayM = "Unauthorized Activity (Parking Area)";
-                    } else if (cleanName.toLowerCase() === "leakage_best") {
+                    } else if (cleanName.toLowerCase() === "leakage_best" || cleanName.toLowerCase() === "leakage") {
                         displayM = "Leakage Detection";
                     } else if (cleanName.toLowerCase() === "smoking") {
                         displayM = "Smoking Detection";
