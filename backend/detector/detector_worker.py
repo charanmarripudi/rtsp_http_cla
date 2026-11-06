@@ -3371,6 +3371,11 @@ class DetectorWorker:
                 if not c:
                     continue
 
+                # When unauthorized activity model is active, activities (smoking, cooking, crowd, fighting_posture, lying_down)
+                # are exclusively handled with full biomechanical pose validation in the unauthorized activity section below.
+                if is_unauth_assigned and any(ua in c.lower() for ua in ("smoking", "cook", "crowd", "fight", "lying")):
+                    continue
+
                 disp_c = c
                 if camera_selected_classes:
                     for sc in camera_selected_classes:
@@ -3766,8 +3771,11 @@ class DetectorWorker:
                         continue
 
                     # Trigger alert with global 30-second cooldown
-                    cd_key = f"unauth_{act}_{self.cam_id}"
+                    cd_key = act.lower().replace("_posture", "")
                     if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
+                        if not hasattr(self, 'alert_cooldowns'): self.alert_cooldowns = {}
+                        self.alert_cooldowns[cd_key] = now_t
+                        self.alert_cooldowns[act] = now_t
                         alert_msg = f"VIOLATION: {act_name} Detected"
                         print(f"[ALERT-TRIGGER-UNAUTH] Camera {self.cam_id}: {alert_msg} (dur={dur:.1f}s)", flush=True)
                         self._save_alert(alert_msg, f, display_boxes=display_boxes, violating_box=bx, violating_label=f"VIOLATION: {act_name}")
