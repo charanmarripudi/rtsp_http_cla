@@ -1393,10 +1393,10 @@ MODEL_CLASSES_CACHE = {
         "no-Spark_Arrestor"
     ],
     "leakage_best.pt": [
-        "leak", "no leak"
+        "leak"
     ],
     "leakage_best": [
-        "leak", "no leak"
+        "leak"
     ],
     "smoking.pt": [
         "smoking"

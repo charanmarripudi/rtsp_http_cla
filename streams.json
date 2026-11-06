@@ -17,73 +17,23 @@
           0.9485
         ]
       ],
-      "unauthorized_activity.pt": {
+      "smoking.pt": {
         "enabled_classes": [
-          "cooking",
-          "crowd",
-          "smoking_gesture",
-          "smoking",
-          "fighting_posture",
-          "lying_down"
+          "smoking"
         ],
         "class_configs": {
-          "cooking": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "crowd": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "smoking_gesture": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "fighting_posture": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "lying_down": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
           "smoking": {
             "conf": 0.4,
             "iou": 0.45
           }
         }
       },
-      "unauthorized_activity": {
+      "smoking": {
         "enabled_classes": [
-          "cooking",
-          "crowd",
-          "smoking_gesture",
-          "smoking",
-          "fighting_posture",
-          "lying_down"
+          "smoking"
         ],
         "class_configs": {
-          "cooking": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "crowd": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "smoking_gesture": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
           "smoking": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "fighting_posture": {
-            "conf": 0.4,
-            "iou": 0.45
-          },
-          "lying_down": {
             "conf": 0.4,
             "iou": 0.45
           }

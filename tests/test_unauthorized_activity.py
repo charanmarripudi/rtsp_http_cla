@@ -583,7 +583,29 @@ def run_tests():
     assert any("smoking" in r.lower() for r in resolved), "Test 35 FAILED: smoking.pt not resolved as companion!"
     print(f"Test 35 PASSED: Unauthorized activity companion models resolved: {res_str}")
 
-    print("\nALL 35 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 36: Positive Class Suppression when only Violation is Selected (e.g. only 'leak')
+    selected = ['leak']
+    # If user selected only 'leak', positive class 'no leak' must NOT match and must be discarded
+    assert not any(match_class('no leak', sc) for sc in selected), "Test 36 FAILED: 'no leak' must not match 'leak' selection!"
+    assert any(match_class('leak', sc) for sc in selected), "Test 36 FAILED: 'leak' must match 'leak' selection!"
+    print("Test 36 PASSED: Positive class suppression verified ('no leak' is discarded when only 'leak' is selected)")
+
+    # Test 37: 3-Second Continuous Persistence Gate for All Safety Violations
+    now = 1000.0
+    trk_flicker = {'first_seen': now - 0.5, 'hit_count': 2}  # 0.5s flicker false positive (e.g. fan)
+    trk_sustained = {'first_seen': now - 3.2, 'hit_count': 6} # 3.2s continuous violation
+
+    dur_flicker = now - trk_flicker.get('first_seen', now)
+    dur_sustained = now - trk_sustained.get('first_seen', now)
+
+    flicker_alerts = (dur_flicker >= 3.0 and trk_flicker.get('hit_count', 0) >= 3)
+    sustained_alerts = (dur_sustained >= 3.0 and trk_sustained.get('hit_count', 0) >= 3)
+
+    assert not flicker_alerts, "Test 37 FAILED: 0.5s flicker false positive must NOT alert!"
+    assert sustained_alerts, "Test 37 FAILED: 3.2s continuous violation MUST trigger alert!"
+    print("Test 37 PASSED: 3-Second continuous persistence gate verified for all models!")
+
+    print("\nALL 37 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()

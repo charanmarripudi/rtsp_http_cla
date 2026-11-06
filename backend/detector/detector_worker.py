@@ -2095,18 +2095,18 @@ class DetectorWorker:
                                 pass
                             else:
                                 if filter_classes is not None:
-                                    if not any(match_class(cls, e) or is_opposite_class(cls, e) for e in filter_classes):
+                                    if not any(match_class(cls, e) for e in filter_classes):
                                         continue
 
                                 if camera_selected_classes:
-                                    if not any(match_class(cls, sc) or is_opposite_class(cls, sc) for sc in camera_selected_classes):
+                                    if not any(match_class(cls, sc) for sc in camera_selected_classes):
                                         continue
 
                         # Per-class confidence gate (hard reject)
                         req_conf = min(0.20, effective_conf) if is_unauth_mod else effective_conf
                         if class_configs and not is_unauth_mod:
                             for cc_name, cc_val in class_configs.items():
-                                if (match_class(cls, cc_name) or is_opposite_class(cls, cc_name)) and isinstance(cc_val, dict) and "conf" in cc_val:
+                                if match_class(cls, cc_name) and isinstance(cc_val, dict) and "conf" in cc_val:
                                     req_conf = float(cc_val["conf"])
                                     break
                         if conf_val < req_conf:
@@ -2278,16 +2278,16 @@ class DetectorWorker:
                                         continue
 
                                     if p_filters is not None:
-                                        if not any(match_class(c_cls, e) or is_opposite_class(c_cls, e) for e in p_filters):
+                                        if not any(match_class(c_cls, e) for e in p_filters):
                                             continue
                                     if camera_selected_classes:
-                                        if not any(match_class(c_cls, sc) or is_opposite_class(c_cls, sc) for sc in camera_selected_classes):
+                                        if not any(match_class(c_cls, sc) for sc in camera_selected_classes):
                                             continue
 
                                     req_crop_conf = p_conf_val
                                     if p_class_configs:
                                         for cc_name, cc_val in p_class_configs.items():
-                                            if (match_class(c_cls, cc_name) or is_opposite_class(c_cls, cc_name)) and isinstance(cc_val, dict) and "conf" in cc_val:
+                                            if match_class(c_cls, cc_name) and isinstance(cc_val, dict) and "conf" in cc_val:
                                                 req_crop_conf = float(cc_val["conf"])
                                                 break
                                     if c_conf < req_crop_conf:
@@ -2768,10 +2768,6 @@ class DetectorWorker:
                         disp_cls = sc
                         is_matched = True
                         break
-                    if is_opposite_class(trk_cls, sc):
-                        disp_cls = trk_cls
-                        is_matched = True
-                        break
                     if unauth_act and match_class(unauth_act, sc):
                         disp_cls = unauth_act
                         is_matched = True
@@ -2891,7 +2887,7 @@ class DetectorWorker:
                     self._absence_trackers["fire_extinguisher_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("fire_extinguisher_seen", now_t)
-                    if stream_uptime >= 2.5 and time_missing >= 2.5:
+                    if stream_uptime >= 3.0 and time_missing >= 3.0:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                             ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
@@ -2923,7 +2919,7 @@ class DetectorWorker:
                     self._absence_trackers["sand_bucket_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("sand_bucket_seen", now_t)
-                    if stream_uptime >= 2.5 and time_missing >= 2.5:
+                    if stream_uptime >= 3.0 and time_missing >= 3.0:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                             ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
@@ -2956,7 +2952,7 @@ class DetectorWorker:
                     self._absence_trackers["wheel_choke_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("wheel_choke_seen", now_t)
-                    if stream_uptime >= 2.5 and time_missing >= 2.5:
+                    if stream_uptime >= 3.0 and time_missing >= 3.0:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                             ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
@@ -3055,7 +3051,7 @@ class DetectorWorker:
                     self._absence_trackers["firehose_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("firehose_seen", now_t)
-                    if stream_uptime >= 2.5 and time_missing >= 2.5:
+                    if stream_uptime >= 3.0 and time_missing >= 3.0:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                             ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
@@ -3107,7 +3103,7 @@ class DetectorWorker:
                     self._absence_trackers["spark_arrestor_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("spark_arrestor_seen", now_t)
-                    if stream_uptime >= 2.5 and time_missing >= 2.5:
+                    if stream_uptime >= 3.0 and time_missing >= 3.0:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                             ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
@@ -3159,7 +3155,7 @@ class DetectorWorker:
                     self._absence_trackers["tape_seen"] = now_t
                 else:
                     time_missing = now_t - self._absence_trackers.get("tape_seen", now_t)
-                    if stream_uptime >= 2.5 and time_missing >= 2.5:
+                    if stream_uptime >= 3.0 and time_missing >= 3.0:
                         if self.roi_polygon and len(self.roi_polygon) == 2:
                             rx1 = int(min(self.roi_polygon[0][0], self.roi_polygon[1][0]) * f_w)
                             ry1 = int(min(self.roi_polygon[0][1], self.roi_polygon[1][1]) * f_h)
@@ -3270,6 +3266,13 @@ class DetectorWorker:
                 if camera_selected_classes and not any(match_class(disp_c, sc) for sc in camera_selected_classes):
                     continue
 
+                # 3-Second Continuous Persistence Gate for All Safety Violation Classes:
+                # Requires violation to be continuously tracked for >= 3.0 seconds to eliminate transient false positives
+                violation_dur = now_t - trk.get('first_seen', now_t)
+                total_hits = trk.get('hit_count', 0)
+                if violation_dur < 3.0 or total_hits < 3:
+                    continue
+
                 # 1. Strict 30-Second Cooldown per class per camera (thread-safe global tracking)
                 if not hasattr(self, 'alert_cooldowns'):
                     self.alert_cooldowns = {}
@@ -3277,11 +3280,9 @@ class DetectorWorker:
                     continue
                 self.alert_cooldowns[disp_c] = now_t
 
-                total_hits = trk.get('hit_count', 0)
-                if total_hits >= 1:
-                    trk['last_alert_time'] = now_t
-                    print(f"[ALERT-TRIGGER-VIOLATION] Negative alert generated: cam={self.cam_id}, class={disp_c}, track_id={tid}, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
-                    self._save_alert(disp_c, f, display_boxes=display_boxes)
+                trk['last_alert_time'] = now_t
+                print(f"[ALERT-TRIGGER-VIOLATION] Continuous 3.0s violation confirmed: cam={self.cam_id}, class={disp_c}, track_id={tid}, dur={violation_dur:.1f}s, hits={total_hits}, conf={trk.get('conf', 0.0):.2f}", flush=True)
+                self._save_alert(disp_c, f, display_boxes=display_boxes)
 
             # Check Crowd Gathering Alert in ROI if person class monitored
             cfg = get_config_for_model(self.model_configs, "yolov8n.pt") if self.model_configs else {}
@@ -3345,19 +3346,25 @@ class DetectorWorker:
                 is_crowd_alert = (person_boxes_in_roi > crowd_thresh) and (person_boxes_in_roi >= 2)
 
                 if is_crowd_alert:
+                    if not hasattr(self, '_crowd_start_time') or self._crowd_start_time is None:
+                        self._crowd_start_time = now_t
+                    crowd_dur = now_t - self._crowd_start_time
                     for b in display_boxes:
                         if b.get('cls', '').lower() == 'person':
                             b['color'] = (20, 20, 237)
                             b['label'] = f"VIOLATION: person {b.get('conf', 0.8):.2f}"
-                    cd_key = f"crowd_alert_cam{self.cam_id}"
-                    if not hasattr(self, 'alert_cooldowns'):
-                        self.alert_cooldowns = {}
-                    if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
-                        self.alert_cooldowns[cd_key] = now_t
-                        crowd_event_name = f"CROWD ALERT: {person_boxes_in_roi} Persons in ROI"
-                        print(f"[ALERT-TRIGGER-CROWD] Crowd Gathering alert triggered: cam={self.cam_id}, count={person_boxes_in_roi} (threshold={crowd_thresh})", flush=True)
-                        self._save_alert(crowd_event_name, f, display_boxes=display_boxes)
+                    # 3-Second Continuous Persistence Gate for Crowd Alert:
+                    if crowd_dur >= 3.0:
+                        cd_key = f"crowd_alert_cam{self.cam_id}"
+                        if not hasattr(self, 'alert_cooldowns'):
+                            self.alert_cooldowns = {}
+                        if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
+                            self.alert_cooldowns[cd_key] = now_t
+                            crowd_event_name = f"CROWD ALERT: {person_boxes_in_roi} Persons in ROI"
+                            print(f"[ALERT-TRIGGER-CROWD] Crowd Gathering alert triggered: cam={self.cam_id}, count={person_boxes_in_roi} (dur={crowd_dur:.1f}s, threshold={crowd_thresh})", flush=True)
+                            self._save_alert(crowd_event_name, f, display_boxes=display_boxes)
                 else:
+                    self._crowd_start_time = None
                     for b in display_boxes:
                         if b.get('cls', '').lower() == 'person':
                             b['color'] = (0, 255, 0)
@@ -3417,11 +3424,16 @@ class DetectorWorker:
                                     'trk_id': tid
                                 })
 
+                            # 3-Second Continuous Persistence Gate for Intrusion Alert:
+                            dur = now_t - trk.get('first_seen', now_t)
+                            if dur < 3.0 or trk.get('hit_count', 0) < 3:
+                                continue
+
                             # Trigger alert with global 30-second cooldown
                             cd_key = f"intrusion_{c_trk}"
                             if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
                                 alert_msg = f"VIOLATION: Intrusion / Perimeter Intrusion Detected ({c_trk.capitalize()} in ROI)"
-                                print(f"[ALERT-TRIGGER-INTRUSION] Camera {self.cam_id}: {alert_msg}", flush=True)
+                                print(f"[ALERT-TRIGGER-INTRUSION] Camera {self.cam_id}: {alert_msg} (dur={dur:.1f}s)", flush=True)
                                 self._save_alert(alert_msg, f, display_boxes=display_boxes, violating_box=bx, violating_label=f"VIOLATION: INTRUSION ({c_trk})")
 
             # -- Intrusion in Non-Working Hours --------------------------------
@@ -3513,10 +3525,15 @@ class DetectorWorker:
                                     'trk_id': tid
                                 })
 
+                            # 3-Second Continuous Persistence Gate for Non-Working Hours:
+                            dur = now_t - trk.get('first_seen', now_t)
+                            if dur < 3.0 or trk.get('hit_count', 0) < 3:
+                                continue
+
                             cd_key = f"nwh_{c_trk}"
                             if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
                                 alert_msg = f"VIOLATION: Intrusion in Non-Working Hours Detected ({c_trk.capitalize()}{' in ROI' if has_roi else ''})"
-                                print(f"[ALERT-TRIGGER-NWH] Camera {self.cam_id}: {alert_msg}", flush=True)
+                                print(f"[ALERT-TRIGGER-NWH] Camera {self.cam_id}: {alert_msg} (dur={dur:.1f}s)", flush=True)
                                 self._save_alert(alert_msg, f, display_boxes=display_boxes, violating_box=bx, violating_label=f"VIOLATION: NON-WORKING HOURS ({c_trk})")
 
             # -- Vehicle Intrusion Detection in User-Drawn ROI / Restricted Zone -
@@ -3574,10 +3591,15 @@ class DetectorWorker:
                                 'trk_id': tid
                             })
 
+                        # 3-Second Continuous Persistence Gate for Vehicle Intrusion:
+                        dur = now_t - trk.get('first_seen', now_t)
+                        if dur < 3.0 or trk.get('hit_count', 0) < 3:
+                            continue
+
                         cd_key = f"veh_intrusion_{c_trk}"
                         if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
                             alert_msg = f"VIOLATION: Vehicle Intrusion Detected ({c_trk.capitalize()}{' in ROI' if has_roi else ''})"
-                            print(f"[ALERT-TRIGGER-VEH-INTRUSION] Camera {self.cam_id}: {alert_msg}", flush=True)
+                            print(f"[ALERT-TRIGGER-VEH-INTRUSION] Camera {self.cam_id}: {alert_msg} (dur={dur:.1f}s)", flush=True)
                             self._save_alert(alert_msg, f, display_boxes=display_boxes, violating_box=bx, violating_label=f"VIOLATION: VEHICLE INTRUSION ({c_trk})")
 
             # -- Unauthorized Activity (Parking Area) Alert Triggering --
@@ -3617,12 +3639,17 @@ class DetectorWorker:
                             'trk_id': tid
                         })
 
+                    # 3-Second Continuous Persistence Gate for Unauthorized Activity Alert:
+                    dur = now_t - trk.get('first_seen', now_t)
+                    if dur < 3.0 or trk.get('hit_count', 0) < 3:
+                        continue
+
                     # Trigger alert with global 30-second cooldown
                     cd_key = f"unauth_{act}_{self.cam_id}"
                     if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
                         has_roi = bool(self.roi_polygon and len(self.roi_polygon) == 2)
                         alert_msg = f"VIOLATION: Unauthorized Activity in Parking Area Detected ({act.replace('_', ' ').title()}{' in ROI' if has_roi else ''})"
-                        print(f"[ALERT-TRIGGER-UNAUTH] Camera {self.cam_id}: {alert_msg}", flush=True)
+                        print(f"[ALERT-TRIGGER-UNAUTH] Camera {self.cam_id}: {alert_msg} (dur={dur:.1f}s)", flush=True)
                         self._save_alert(alert_msg, f, display_boxes=display_boxes, violating_box=bx, violating_label=f"VIOLATION: UNAUTHORIZED ACTIVITY ({act.replace('_', ' ').upper()})")
 
             with self._box_lock:
@@ -4163,16 +4190,21 @@ class DetectorWorker:
                                 with self._frame_lock:
                                     self._latest_jpeg_frame = j_bytes.tobytes()
 
-                            # Trigger alert if crowd threshold reached (with global 30-second cooldown)
+                            # Trigger alert if crowd threshold reached (with 3s continuous persistence and global 30-second cooldown)
                             if metrics.get("is_alert"):
-                                cd_key = f"crowd_alert_cam{self.cam_id}"
-                                if not hasattr(self, 'alert_cooldowns'):
-                                    self.alert_cooldowns = {}
-                                if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
-                                    self.alert_cooldowns[cd_key] = time.time()
-                                    cnt = metrics.get("in_roi_count", 0)
-                                    print(f"[ALERT] [ALERT-TRIGGER-CROWD] Crowd Gathering alert: cam={self.cam_id}, count={cnt} (threshold={self.crowd_engine.crowd_threshold})", flush=True)
-                                    self._save_alert(f"CROWD ALERT: {cnt} Persons in ROI", pf)
+                                if not hasattr(self, '_crowd_start_time') or self._crowd_start_time is None:
+                                    self._crowd_start_time = time.time()
+                                if (time.time() - self._crowd_start_time) >= 3.0:
+                                    cd_key = f"crowd_alert_cam{self.cam_id}"
+                                    if not hasattr(self, 'alert_cooldowns'):
+                                        self.alert_cooldowns = {}
+                                    if check_and_record_alert_cooldown(self.cam_id, cd_key, 30.0):
+                                        self.alert_cooldowns[cd_key] = time.time()
+                                        cnt = metrics.get("in_roi_count", 0)
+                                        print(f"[ALERT] [ALERT-TRIGGER-CROWD] Crowd Gathering alert: cam={self.cam_id}, count={cnt} (threshold={self.crowd_engine.crowd_threshold})", flush=True)
+                                        self._save_alert(f"CROWD ALERT: {cnt} Persons in ROI", pf)
+                            else:
+                                self._crowd_start_time = None
 
                             if ffmpeg.poll() is not None:
                                 break
