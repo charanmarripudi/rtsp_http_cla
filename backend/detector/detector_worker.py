@@ -814,6 +814,10 @@ def classify_pose_activity(
                 w_pt = l_wr if l_wr[2] > 0.20 else r_wr
                 hands_in_front = abs(w_pt[0] - (x1 + x2)/2.0) <= bw * 0.45
 
+            l_ank, r_ank = kp_data[15], kp_data[16]
+            ank_valid = (l_ank[2] > 0.15 or r_ank[2] > 0.15)
+            ank_y = max(l_ank[1], r_ank[1]) if ank_valid else None
+
             # Crouching / seated posture (hips low to ground or knees flexed or wide crouch)
             hips_low_to_ground = ((y2 - hip_y) < bh * 0.45) if hip_valid else False
             knee_flexed = False
@@ -827,18 +831,26 @@ def classify_pose_activity(
 
             is_crouched_or_seated = (hips_low_to_ground and knee_flexed) or (knee_flexed and aspect_ratio >= 0.70) or (aspect_ratio >= 0.85 and not is_definitely_standing)
 
-            # Case A: Crouched / Floor food prep / pot cooking (Two men on ground in Image 1)
-            if is_crouched_or_seated and any_wr_valid and non_violent_hands and not hand_at_face:
-                hands_at_lap_or_ground = (wr_y >= (hip_y - bh * 0.15)) if (wr_y is not None and hip_valid) else True
-                if hands_in_front and hands_at_lap_or_ground:
+            # Deep floor tending / floor cooking squat (must have grounded ankles and hands at floor level)
+            deep_floor_squat = (knee_flexed and hips_low_to_ground and ank_valid and
+                                (ank_y >= y1 + bh * 0.65) and (aspect_ratio >= 0.60))
+
+            # Case A: Crouched / Floor food prep / pot cooking (Two men on ground in Image 1 / Test 13 & 31)
+            # Requires either verified utensil interaction OR confirmed deep floor squat with hands working at ground
+            if any_wr_valid and non_violent_hands and not hand_at_face:
+                hands_at_lap_or_ground = (wr_y >= (hip_y - bh * 0.10)) if (wr_y is not None and hip_valid) else True
+                if has_utensil_interaction and is_crouched_or_seated and hands_in_front:
+                    is_cooking = True
+                    sub_desc = 'Food Preparation with Cooking Equipment in Restricted Area'
+                elif deep_floor_squat and hands_in_front and hands_at_lap_or_ground:
                     is_cooking = True
                     sub_desc = 'Unauthorized Cooking / Floor Food Prep in Restricted Area'
-                    if has_utensil_interaction:
-                        sub_desc = 'Food Preparation with Cooking Equipment in Restricted Area'
 
-            # Case B: Standing Food Prep at Stove / Counter / Surface (Woman at stove in Image 2)
-            if not is_cooking and (is_definitely_standing or is_upright) and any_wr_valid and non_violent_hands and not hand_at_face:
-                if hands_at_counter_height and hands_in_front and forearm_forward and elbows_bent:
+            # Case B: Standing Food Prep at Stove / Counter / Surface (Woman at stove in Image 2 / Test 30)
+            # Requires full standing posture with vertical legs, arms working forward at counter height
+            if not is_cooking and any_wr_valid and non_violent_hands and not hand_at_face:
+                standing_with_legs = is_definitely_standing and ank_valid and (ank_y >= y1 + bh * 0.70)
+                if standing_with_legs and hands_at_counter_height and hands_in_front and forearm_forward and elbows_bent:
                     if head_looking_down or has_utensil_interaction:
                         is_cooking = True
                         sub_desc = 'Unauthorized Cooking / Food Prep at Stove in Restricted Area'
@@ -1054,14 +1066,20 @@ def classify_pose_activity(
                 for ob in all_persons:
                     o_b = ob.get('box', ob.get('bbox')) if isinstance(ob, dict) else ob
                     if not o_b or o_b == box: continue
-                    d_c = math.hypot((x1 + x2)/2.0 - (o_b[0] + o_b[2])/2.0, (y1 + y2)/2.0 - (o_b[1] + o_b[3])/2.0)
-                    if d_c < max(bw, bh) * 2.2:
-                        near_combatant = True
-                        break
+                    o_h = max(1.0, float(o_b[3] - o_b[1]))
+                    # Opponents must be of comparable human scale (height ratio between 0.35 and 2.8)
+                    # Prevents a person holding a tiny phone screen (e.g. 50px tall) from pairing with a 300px tall person
+                    height_ratio = bh / o_h
+                    if 0.35 <= height_ratio <= 2.8:
+                        d_c = math.hypot((x1 + x2)/2.0 - (o_b[0] + o_b[2])/2.0, (y1 + y2)/2.0 - (o_b[1] + o_b[3])/2.0)
+                        if d_c < max(bw, bh) * 2.2:
+                            near_combatant = True
+                            break
             
             if near_combatant and is_upright:
-                # 1. Fighter must be looking forward/ahead at opponent (chin up / looking ahead, NOT looking down at cooking/counter/phone)
-                looking_at_opponent = (nose[2] > 0.20 and nose[1] < sh_mid_y - bh * 0.05) if (nose[2] > 0.20 and sh_valid) else True
+                # 1. Fighter must be looking forward/ahead at opponent (chin up / looking ahead, NOT looking down or sleeping)
+                # Face MUST be clearly visible (nose[2] > 0.25) and head MUST be held upright above shoulders
+                looking_at_opponent = (nose[2] > 0.25 and nose[1] < sh_mid_y - bh * 0.05) if sh_valid else False
 
                 # 2. Wrists raised to CHIN / NOSE / HEAD LEVEL (protecting face, NOT at waist or counter)
                 l_chin_guard = (l_wr[2] > 0.25 and sh_valid and l_wr[1] <= sh_mid_y - bh * 0.02)
@@ -1100,7 +1118,12 @@ def classify_pose_activity(
                 elif (r_knee[2] > 0.25 and r_hip[2] > 0.20 and r_knee[1] < r_hip[1] - bh * 0.02):
                     is_kicking = True
 
-                if (both_hands_guard and not is_crouched_or_seated) or one_punch_extended or is_kicking:
+                # Must be a standing fighter (with visible standing legs down to ground, NOT seated in a car/chair or cropped)
+                ank_valid = (l_ank[2] > 0.15 or r_ank[2] > 0.15)
+                ank_y = max(l_ank[1], r_ank[1]) if ank_valid else None
+                is_standing_fighter = (is_definitely_standing or (ank_valid and ank_y >= y1 + bh * 0.70)) and ank_valid
+
+                if (both_hands_guard and is_standing_fighter and not is_crouched_or_seated) or one_punch_extended or is_kicking:
                     is_fighting = True
 
         if is_fighting:

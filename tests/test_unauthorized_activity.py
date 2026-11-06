@@ -605,7 +605,55 @@ def run_tests():
     assert sustained_alerts, "Test 37 FAILED: 3.2s continuous violation MUST trigger alert!"
     print("Test 37 PASSED: 3-Second continuous persistence gate verified for all models!")
 
-    print("\nALL 37 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 38: Sleeping Driver Resting on Steering Wheel in Vehicle (User Uploaded Images 2 & 3)
+    # Solitary or displayed on phone screen next to user:
+    # MUST NEVER trigger cooking and MUST NEVER trigger fighting_posture!
+    trk38 = {'cook_start_t': time.time() - 3.0, 'fight_start_t': time.time() - 3.0}
+    b38_driver = [120, 100, 240, 240] # cropped driver inside vehicle (bh = 140, bw = 120, aspect_ratio = 0.86)
+    kp38 = [
+        [180, 145, 0.20], [0,0,0], [0,0,0], [0,0,0], [0,0,0], # nose buried down in arms/wheel
+        [150, 135, 0.90], [210, 135, 0.90],                   # shoulders
+        [140, 170, 0.85], [220, 170, 0.85],                   # elbows bent on wheel
+        [165, 140, 0.85], [195, 140, 0.85],                   # wrists resting on steering wheel
+        [160, 200, 0.60], [200, 200, 0.60],                   # hips seated
+        [0, 0, 0.0], [0, 0, 0.0],                              # knees hidden under dashboard
+        [0, 0, 0.0], [0, 0, 0.0]                               # ankles hidden in vehicle footwell
+    ]
+    # Another person nearby (e.g. user holding the phone in front of webcam: Image 3)
+    b38_user = [30, 20, 300, 360]
+    person_records_38 = [
+        {'id': 1, 'box': b38_driver, 'keypoints': kp38, 'behavior': None, 'wrist_vel': 0.0, 'wrist_acc': 0.0},
+        {'id': 2, 'box': b38_user, 'keypoints': None, 'behavior': None, 'wrist_vel': 0.0, 'wrist_acc': 0.0}
+    ]
+    act38, conf38, sub38 = classify_pose_activity(
+        trk38, kp38, b38_driver, 5.0, enabled,
+        all_persons=person_records_38, has_fire_smoke=False, nearby_objects=[]
+    )
+    assert act38 != 'cooking', f"Test 38 FAILED: Sleeping driver falsely alerted as cooking ({sub38})!"
+    assert act38 != 'fighting_posture', f"Test 38 FAILED: Sleeping driver falsely alerted as fighting_posture ({sub38})!"
+    print(f"Test 38 PASSED: Sleeping driver in vehicle (Images 2 & 3) -> {act38} (NOT cooking, NOT fighting!)")
+
+    # Test 39: Man Leaning Forward on Outdoor Table (User Uploaded Image 1) with No Utensils
+    # Must NEVER trigger cooking without verified cooking equipment or flame/smoke!
+    trk39 = {'cook_start_t': time.time() - 3.0}
+    b39 = [80, 70, 220, 260] # bh = 190, bw = 140, aspect_ratio = 0.74
+    kp39 = [
+        [150, 95, 0.90], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [120, 110, 0.90], [180, 110, 0.90],                  # shoulders
+        [105, 155, 0.85], [195, 155, 0.85],                  # elbows
+        [130, 185, 0.85], [170, 185, 0.85],                  # hands forward on table
+        [135, 175, 0.80], [165, 175, 0.80],                  # hips
+        [130, 225, 0.70], [170, 225, 0.70],                  # knees
+        [0, 0, 0.0], [0, 0, 0.0]                             # ankles cropped/invisible
+    ]
+    act39, _, sub39 = classify_pose_activity(
+        trk39, kp39, b39, 5.0, enabled,
+        has_fire_smoke=False, nearby_objects=[]
+    )
+    assert act39 != 'cooking', f"Test 39 FAILED: Leaning man falsely alerted as cooking ({sub39})!"
+    print(f"Test 39 PASSED: Leaning man with no cooking equipment (Image 1) -> {act39} (NOT cooking!)")
+
+    print("\nALL 39 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()

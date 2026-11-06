@@ -24,7 +24,60 @@
           "smoking",
           "fighting_posture",
           "lying_down"
-        ]
+        ],
+        "class_configs": {
+          "cooking": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "crowd": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "smoking": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "fighting_posture": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "lying_down": {
+            "conf": 0.4,
+            "iou": 0.45
+          }
+        }
+      },
+      "unauthorized_activity": {
+        "enabled_classes": [
+          "cooking",
+          "crowd",
+          "smoking",
+          "fighting_posture",
+          "lying_down"
+        ],
+        "class_configs": {
+          "cooking": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "crowd": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "smoking": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "fighting_posture": {
+            "conf": 0.4,
+            "iou": 0.45
+          },
+          "lying_down": {
+            "conf": 0.4,
+            "iou": 0.45
+          }
+        }
       }
     },
     "device_id": "RPI-001",
