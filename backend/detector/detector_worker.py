@@ -638,6 +638,8 @@ def classify_pose_activity(
     # 1. Biomechanical Upright Orientation & Body Angle Calculation (Section 3.A)
     is_upright = False
     body_angle = None
+    head_y = None
+    sh_y = None
     if has_kp:
         nose = kp_data[0]
         eyes_ears = [kp_data[i] for i in range(1, 5) if kp_data[i][2] > 0.20]
@@ -826,7 +828,9 @@ def classify_pose_activity(
                 else:
                     knee_flexed = abs(knee_y - hip_y) < bh * 0.18
 
-            is_crouched_or_seated = (hips_low_to_ground and knee_flexed) or (knee_flexed and aspect_ratio >= 0.70) or (aspect_ratio >= 0.85 and not is_definitely_standing)
+            is_crouched_or_seated = ((hips_low_to_ground and knee_flexed) or
+                                     (knee_flexed and aspect_ratio >= 0.70) or
+                                     (aspect_ratio >= 0.85 and not is_definitely_standing and not is_bottom_cropped))
 
             # Deep floor tending / floor cooking squat (must have grounded ankles and hands at floor level)
             deep_floor_squat = (knee_flexed and hips_low_to_ground and ank_valid and
@@ -942,14 +946,15 @@ def classify_pose_activity(
 
                 if not both_hands_at_collar and not elbow_on_knee:
                     for wr, el, sh in [(l_wr, l_el, l_sh), (r_wr, r_el, r_sh)]:
-                        if wr[2] >= 0.45 and el[2] >= 0.35 and sh[2] >= 0.30:
+                        if wr[2] >= 0.35 and el[2] >= 0.25 and sh[2] >= 0.25:
                             dist_to_mouth = math.hypot(wr[0] - face_x, wr[1] - mouth_y)
-                            is_at_mouth = (face_y - bh * 0.03 <= wr[1] <= sh_y) and (abs(wr[0] - face_x) < bw * 0.20)
-                            forearm_upward = (el[1] - wr[1] > bh * 0.08)
+                            is_at_mouth = (face_y - bh * 0.05 <= wr[1] <= sh_y + bh * 0.05) and (abs(wr[0] - face_x) < bw * 0.32)
+                            forearm_valid = (el[1] >= wr[1] - bh * 0.10)
                             elbow_ang = calculate_joint_angle(sh, el, wr)
-                            acute_flexion = (elbow_ang <= 115.0)
+                            acute_flexion = (elbow_ang <= 125.0)
+                            mouth_reach = dist_to_mouth < max(bh * 0.60, bw * 0.35)
 
-                            if dist_to_mouth < min(bh * 0.12, bw * 0.22) and is_at_mouth and forearm_upward and acute_flexion:
+                            if mouth_reach and is_at_mouth and forearm_valid and acute_flexion:
                                 is_smoking = True
                                 smoking_conf = 0.88
                                 smoking_sub = 'Persistent Hand-to-Mouth Smoking Gesture'
@@ -1164,11 +1169,12 @@ def classify_pose_activity(
                 if abs(nose[1] - r_ank[1]) < (bh * 0.35):
                     is_horizontal_spine = True
 
-        # Require sustained horizontal profile while rejecting standing, upright, or forward bending
-        is_lying = (is_horizontal_box or is_horizontal_spine or is_horizontal_angle) and not is_upright and not is_definitely_standing and not is_bending
+        # Require sustained horizontal profile while rejecting standing, upright, forward bending, or seated desk crops
+        head_above_shoulders = (head_y is not None and sh_y is not None and (sh_y - head_y) > max(bh * 0.20, 25.0) and (body_angle is None or body_angle >= 45.0))
+        is_lying = (is_horizontal_box or is_horizontal_spine or is_horizontal_angle) and not is_upright and not is_definitely_standing and not is_bending and not head_above_shoulders
         
         # Ground plane fallback for fallen/passed-out person flat on floor
-        if not is_lying and aspect_ratio >= 1.8 and bh >= 14 and not is_upright and not is_definitely_standing and not is_bending:
+        if not is_lying and aspect_ratio >= 1.8 and bh >= 14 and not is_upright and not is_definitely_standing and not is_bending and not head_above_shoulders:
             is_lying = True
 
         # Centroid stationarity across frames (rejects dynamic mid-air jumping flips)
@@ -2066,9 +2072,16 @@ class DetectorWorker:
                     if isinstance(cc, dict) and "conf" in cc:
                         min_class_conf = min(min_class_conf, float(cc["conf"]))
 
+            if is_unauth_comp:
+                p_conf = max(0.45, effective_conf)
+            elif is_unauth_mod:
+                p_conf = max(PREDICT_CONF_FLOOR, min(0.20, min_class_conf, effective_conf))
+            else:
+                p_conf = max(PREDICT_CONF_FLOOR, min(min_class_conf, effective_conf))
+
             predict_kwargs = {
                 "source": f,
-                "conf":   max(PREDICT_CONF_FLOOR, min(0.20, min_class_conf, effective_conf) if is_unauth_mod else min(min_class_conf, effective_conf)),
+                "conf":   p_conf,
                 "iou":    m_iou,
                 "imgsz":  m_imgsz,
                 "verbose": False
@@ -2411,14 +2424,16 @@ class DetectorWorker:
                 else:
                     self._ema_tracks[tid] = trk_data
 
-            # Expire tracks no longer active in ByteTrack
+            # Expire tracks only after sustained absence (>= TRACK_MAX_AGE_S) so tracks survive brief frame drops
             for tid in list(self._ema_tracks.keys()):
                 if tid not in active_byte_ids:
-                    del self._ema_tracks[tid]
-                    if hasattr(self, '_last_side_a') and tid in self._last_side_a:
-                        del self._last_side_a[tid]
-                    if hasattr(self, '_last_side_b') and tid in self._last_side_b:
-                        del self._last_side_b[tid]
+                    age = now_t - self._ema_tracks[tid].get('last_seen', 0.0)
+                    if age > TRACK_MAX_AGE_S:
+                        del self._ema_tracks[tid]
+                        if hasattr(self, '_last_side_a') and tid in self._last_side_a:
+                            del self._last_side_a[tid]
+                        if hasattr(self, '_last_side_b') and tid in self._last_side_b:
+                            del self._last_side_b[tid]
         else:
             # Fallback Centroid & Ground Tracking Engine
             matched_ids = set()
@@ -2810,10 +2825,15 @@ class DetectorWorker:
                         p_has_fire_smoke = False
                         p_h = max(1.0, float(bx[3] - bx[1]))
                         for fobj in fire_smoke_objects:
+                            if fobj.get('conf', 0.0) < 0.45:
+                                continue
                             fb = fobj.get('box', [])
                             if len(fb) == 4:
                                 f_cx = (fb[0] + fb[2]) / 2.0
                                 f_cy = (fb[1] + fb[3]) / 2.0
+                                # Flame/burner must be at floor or counter height (cannot be floating above head/ceiling)
+                                if f_cy < (bx[1] + p_h * 0.20):
+                                    continue
                                 d_flame = math.hypot(cx - f_cx, cy - f_cy)
                                 if d_flame < p_h * 1.2 or calculate_box_iou(bx, fb) > 0.05:
                                     p_has_fire_smoke = True
@@ -2823,7 +2843,7 @@ class DetectorWorker:
                         act, act_conf, act_sub = classify_pose_activity(
                             trk, trk.get('keypoints'), bx, dwell_time, unauth_classes,
                             all_person_records, frame_height=self.height,
-                            has_fire_smoke=p_has_fire_smoke, nearby_objects=cooking_objects,
+                            has_fire_smoke=p_has_fire_smoke, now_t=now_t, nearby_objects=cooking_objects,
                             smoking_objects=smoking_objects
                         )
                         if act:
