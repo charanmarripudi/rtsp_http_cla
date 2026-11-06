@@ -870,7 +870,7 @@ def classify_pose_activity(
         smoking_sub = 'Persistent Hand-to-Mouth Smoking Gesture'
         smoke_ret_act = 'smoking_gesture'
 
-        # Check A: Pretrained Smoking Model detection (smoking.pt / cig_smoking.pt companion)
+        # Check A: Pretrained Smoking Model detection (smoking.pt companion)
         if smoking_objects:
             p_x1, p_y1, p_x2, p_y2 = box if (box and len(box) == 4) else [0, 0, 1, 1]
             p_bw = max(1.0, float(p_x2 - p_x1))
@@ -1632,7 +1632,7 @@ class DetectorWorker:
         # Companion model expansion for unauthorized_activity: Final_Fire_smoke.pt and smoking.pt
         has_unauth = any("unauthorized" in str(p).lower() for p in seen)
         if has_unauth:
-            for comp in ["Final_Fire_smoke.pt", "smoking.pt", "cig_smoking.pt"]:
+            for comp in ["Final_Fire_smoke.pt", "smoking.pt"]:
                 for cd in companion_dirs:
                     cp = os.path.join(cd, comp)
                     if os.path.exists(cp) and cp not in seen:
@@ -1983,7 +1983,7 @@ class DetectorWorker:
             class_configs   = {}
             is_veh_model    = ("vehicle" in m_name.lower() or "speed" in m_name.lower())
             is_unauth_mod   = ("unauthorized" in m_name.lower())
-            is_unauth_comp  = any(k in m_name.lower() for k in ("fire_smoke", "smoking", "cig_smoking"))
+            is_unauth_comp  = any(k in m_name.lower() for k in ("fire_smoke", "smoking"))
             default_imgsz   = 320 if is_veh_model else int(os.getenv("DEFAULT_IMGSZ", "640"))
             m_imgsz         = default_imgsz
             cfg             = get_config_for_model(self.model_configs, m_name)

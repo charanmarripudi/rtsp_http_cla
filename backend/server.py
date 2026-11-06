@@ -1403,12 +1403,6 @@ MODEL_CLASSES_CACHE = {
     ],
     "smoking": [
         "smoking"
-    ],
-    "cig_smoking.pt": [
-        "smoking"
-    ],
-    "cig_smoking": [
-        "smoking"
     ]
 }
 
