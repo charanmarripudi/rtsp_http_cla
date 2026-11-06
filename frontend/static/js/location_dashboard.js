@@ -969,7 +969,7 @@ class LocationDashboard {
             "intrusion": ["person", "truck"],
             "non_working_hours": ["person", "truck"],
             "vehicle_intrusion": ["car", "truck", "bus", "motorcycle"],
-            "unauthorized_activity": ["cooking", "crowd", "smoking_gesture", "smoking", "fighting_posture", "lying_down"],
+            "unauthorized_activity": ["cooking", "crowd", "smoking", "fighting_posture", "lying_down"],
             "spark_arrestor": ["no-Spark_Arrestor"],
             "spark_arrested": ["no-Spark_Arrestor"]
         };

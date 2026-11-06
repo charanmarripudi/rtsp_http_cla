@@ -1319,10 +1319,10 @@ MODEL_CLASSES_CACHE = {
         "truck", "car", "bus", "motorcycle"
     ],
     "unauthorized_activity.pt": [
-        "cooking", "crowd", "smoking_gesture", "smoking", "fighting_posture", "lying_down"
+        "cooking", "crowd", "smoking", "fighting_posture", "lying_down"
     ],
     "unauthorized_activity": [
-        "cooking", "crowd", "smoking_gesture", "smoking", "fighting_posture", "lying_down"
+        "cooking", "crowd", "smoking", "fighting_posture", "lying_down"
     ],
     "ppe_new.pt": [
         "Cap-Lamp", "Gloves", "Gum-Boots", "Hard-Hat", "Mask", "NO-Mask",

@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from backend.detector.detector_worker import classify_pose_activity
 
 def run_tests():
-    enabled = ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down", "sitting", "loitering"]
+    enabled = ["cooking", "crowd", "smoking", "fighting_posture", "lying_down", "sitting", "loitering"]
 
     # Test 1: User holding phone in hands at desk (Image 6 & Image 4)
     # Solitary person in frame holding phone with both hands: MUST NEVER trigger fighting_posture!
@@ -104,7 +104,7 @@ def run_tests():
     ]
     box7 = [50, 50, 150, 310]
     act7, conf7, sub7 = classify_pose_activity(trk7, kp7, box7, 5.0, enabled)
-    assert act7 == 'smoking_gesture', f"Test 7 FAILED: Expected smoking_gesture, got {act7}"
+    assert act7 == 'smoking', f"Test 7 FAILED: Expected smoking, got {act7}"
     print(f"Test 7 PASSED: Real smoking gesture -> {act7}")
 
     # Test 8: STANDING person with legs spread (Image 7 / Maroon shirt boy)
@@ -221,7 +221,7 @@ def run_tests():
     box16 = [40, 50, 160, 195]
     act16, conf16, sub16 = classify_pose_activity(trk16, kp16, box16, 5.0, enabled)
     assert act16 == 'sitting', f"Test 16 FAILED: Expected sitting (NOT smoking), got {act16}"
-    print(f"Test 16 PASSED: Seated thinker pose (Screenshot 1) -> {act16} (NOT smoking_gesture!)")
+    print(f"Test 16 PASSED: Seated thinker pose (Screenshot 1) -> {act16} (NOT smoking!)")
 
     # Test 17: Martial arts high kick / karate sparring (Screenshot 3)
     trk17 = {'fight_start_t': time.time() - 2.0}

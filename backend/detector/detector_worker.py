@@ -592,7 +592,7 @@ def classify_pose_activity(
     
     Activities evaluated:
     - cooking: Low tending posture over stove/ground, food prep, utensil interaction, or flame/smoke proximity
-    - smoking_gesture: High-confidence hand-to-mouth gesture with acute elbow flexion and upward forearm
+    - smoking: Active smoking detected via companion model or persistent hand-to-mouth biomechanical gesture
     - fighting_posture: Multi-person altercation with punching velocity, combat guard, kicks, or grappling (excludes normal conversation)
     - lying_down: Stationary horizontal torso orientation resting on ground (excludes standing, sitting, bending, crawling)
     - sitting: Seated posture with bent knee angles (disabled by default in parking area)
@@ -864,11 +864,12 @@ def classify_pose_activity(
             trk['cook_start_t'] = None
 
     # 4. Smoking Activity Detection (Section 3 - Pretrained Smoking Model + Biomechanical Pose)
-    if not is_cooking and (_is_enabled('smoking_gesture') or _is_enabled('smoking')):
+    if not is_cooking and (_is_enabled('smoking') or _is_enabled('smoking_gesture')):
         is_smoking = False
         smoking_conf = 0.88
         smoking_sub = 'Persistent Hand-to-Mouth Smoking Gesture'
-        smoke_ret_act = 'smoking_gesture'
+        smoke_ret_act = 'smoking'
+        is_model_detected = False
 
         # Check A: Pretrained Smoking Model detection (smoking.pt companion)
         if smoking_objects:
@@ -885,6 +886,7 @@ def classify_pose_activity(
                     if (p_expanded[0] <= sx_mid <= p_expanded[2] and p_expanded[1] <= sy_mid <= p_expanded[3]) or \
                        calculate_iou(box, sb) > 0.05:
                         is_smoking = True
+                        is_model_detected = True
                         smoking_conf = max(0.92, float(smk.get('conf', 0.90)))
                         smoking_sub = 'Active Smoking Detected via Smoking Model'
                         smoke_ret_act = 'smoking'
@@ -933,13 +935,13 @@ def classify_pose_activity(
                                 is_smoking = True
                                 smoking_conf = 0.88
                                 smoking_sub = 'Persistent Hand-to-Mouth Smoking Gesture'
-                                smoke_ret_act = 'smoking_gesture'
+                                smoke_ret_act = 'smoking'
                                 break
 
         if is_smoking:
             s_start = _get_start_t('smoke_start_t')
             trk['smoke_start_t'] = s_start
-            wait_time = 0.0 if is_video_test else (0.8 if smoke_ret_act == 'smoking' else 1.8)
+            wait_time = 0.0 if is_video_test else (0.8 if is_model_detected else 1.8)
             if check_temporal_consistency(s_start, now_t, wait_time):
                 return smoke_ret_act, smoking_conf, smoking_sub
         else:
@@ -2675,7 +2677,7 @@ class DetectorWorker:
                 if sub:
                     unauth_classes = sub
             if unauth_classes is None:
-                unauth_classes = ["cooking", "crowd", "smoking_gesture", "fighting_posture", "lying_down"]
+                unauth_classes = ["cooking", "crowd", "smoking", "fighting_posture", "lying_down"]
 
             has_roi = bool(self.roi_polygon and len(self.roi_polygon) == 2)
             if has_roi:
