@@ -752,7 +752,75 @@ def run_tests():
     assert len(deduped) == 1, f"Test 45 FAILED: Expected 1 box, got {len(deduped)}"
     print(f"Test 45 PASSED: 15 stacked boxes collapsed to exactly 1 clean box: {deduped[0]['label']}")
 
-    print("\nALL 45 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 46: Two people lying down on bed side-by-side using phones (User Uploaded Image 1)
+    # Wrists near head/face holding smartphones, boxes overlapping on bed: MUST NOT trigger fighting!
+    trk46_a = {'id': 1, 'wrist_max_v': 0.15}
+    trk46_b = {'id': 2, 'wrist_max_v': 0.12}
+    b46_a = [435, 270, 615, 365] # bw = 180, bh = 95 -> aspect ratio = 1.89 (lying down)
+    b46_b = [590, 280, 710, 385] # bw = 120, bh = 105 -> aspect ratio = 1.14 (resting on bed)
+    kp46_a = [[580, 290, 0.9]] + [[0,0,0]]*4 + [
+        [550, 300, 0.85], [550, 330, 0.85],
+        [520, 310, 0.8], [520, 330, 0.8],
+        [570, 295, 0.85], [575, 300, 0.85], # wrists holding phone near face
+        [460, 310, 0.8], [460, 330, 0.8],
+        [440, 320, 0.8], [440, 340, 0.8],
+        [435, 320, 0.8], [435, 340, 0.8]
+    ]
+    kp46_b = [[620, 300, 0.9]] + [[0,0,0]]*4 + [
+        [650, 310, 0.85], [650, 330, 0.85],
+        [670, 320, 0.8], [670, 340, 0.8],
+        [615, 305, 0.85], [618, 305, 0.85], # wrists holding phone near face
+        [690, 320, 0.8], [690, 340, 0.8],
+        [700, 330, 0.8], [700, 350, 0.8],
+        [710, 340, 0.8], [710, 360, 0.8]
+    ]
+    p_recs_46 = [
+        {'id': 1, 'box': b46_a, 'keypoints': kp46_a, 'wrist_vel': 0.15},
+        {'id': 2, 'box': b46_b, 'keypoints': kp46_b, 'wrist_vel': 0.12}
+    ]
+    act46_a, _, _ = classify_pose_activity(trk46_a, kp46_a, b46_a, 5.0, enabled, all_persons=p_recs_46)
+    act46_b, _, _ = classify_pose_activity(trk46_b, kp46_b, b46_b, 5.0, enabled, all_persons=p_recs_46)
+    assert act46_a != 'fighting_posture', f"Test 46 FAILED: Bed phone user A falsely flagged as {act46_a}!"
+    assert act46_b != 'fighting_posture', f"Test 46 FAILED: Bed phone user B falsely flagged as {act46_b}!"
+    print("Test 46 PASSED: Two people lying on bed using phones -> NOT fighting!")
+
+    # Test 47: Person standing/bending by bed reaching down for phone (User Uploaded Image 2)
+    trk47 = {'id': 1, 'wrist_max_v': 0.20}
+    b47_stand = [400, 100, 680, 440]
+    b47_lie = [200, 240, 500, 360]
+    kp47 = [[590, 110, 0.9]] + [[0,0,0]]*4 + [
+        [580, 140, 0.85], [600, 140, 0.85],
+        [560, 220, 0.8], [610, 220, 0.8],
+        [530, 340, 0.85], [550, 310, 0.85], # hand reaching down to pick up phone
+        [480, 260, 0.85], [490, 260, 0.85],
+        [480, 340, 0.8], [490, 340, 0.8],
+        [480, 430, 0.8], [490, 430, 0.8]
+    ]
+    p_recs_47 = [
+        {'id': 1, 'box': b47_stand, 'keypoints': kp47, 'wrist_vel': 0.20},
+        {'id': 2, 'box': b47_lie, 'keypoints': None, 'wrist_vel': 0.05}
+    ]
+    act47, _, _ = classify_pose_activity(trk47, kp47, b47_stand, 5.0, enabled, all_persons=p_recs_47)
+    assert act47 != 'fighting_posture', f"Test 47 FAILED: Person standing/reaching near bed falsely flagged as {act47}!"
+    print("Test 47 PASSED: Person standing/reaching near bed -> NOT fighting!")
+
+    # Test 48: User holding simulated smoking object / toy gun barrel to mouth (User Uploaded Image 3)
+    trk48 = {'smoke_start_t': time.time() - 3.0}
+    b48 = [353, 140, 660, 466]
+    kp48 = [[505, 225, 0.95]] + [[0,0,0]]*4 + [
+        [410, 325, 0.9], [600, 325, 0.9],
+        [440, 390, 0.85], [570, 390, 0.85],
+        [515, 250, 0.85], [540, 380, 0.85], # wrist holding object directly to mouth
+        [450, 510, 0.8], [560, 510, 0.8],
+        [450, 550, 0.7], [560, 550, 0.7],
+        [450, 600, 0.7], [560, 600, 0.7]
+    ]
+    smk_toy = [{'box': [504, 240, 530, 300], 'conf': 0.35, 'cls': 'smoking'}]
+    act48, conf48, sub48 = classify_pose_activity(trk48, kp48, b48, 5.0, enabled, is_video_test=True, smoking_objects=smk_toy)
+    assert act48 == 'smoking', f"Test 48 FAILED: Object held to mouth expected smoking, got {act48}"
+    print(f"Test 48 PASSED: Object held to lips/mouth -> {act48} ({sub48})")
+
+    print("\nALL 48 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()

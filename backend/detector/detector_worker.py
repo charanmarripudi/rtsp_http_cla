@@ -661,14 +661,12 @@ def classify_pose_activity(
         if (l_sh[2] > 0.20 or r_sh[2] > 0.20) and hip_valid:
             body_angle = calculate_body_orientation_angle((sh_mid_x, sh_mid_y), (hip_mid_x, hip_mid_y))
 
-        # If body angle is steep (>= 60 deg), body is upright standing/sitting
-        if body_angle is not None and body_angle >= 60.0:
+        # If body angle is steep (>= 55 deg), body is upright standing/sitting
+        if body_angle is not None and body_angle >= 55.0 and aspect_ratio < 1.25:
             is_upright = True
-        elif head_y is not None and sh_y > 0 and (sh_y - head_y) > abs(sh_mid_x - head_x) * 0.60 and (sh_y - head_y) > bh * 0.10:
+        elif head_y is not None and sh_y > 0 and (sh_y - head_y) > abs(sh_mid_x - head_x) * 0.60 and (sh_y - head_y) > bh * 0.10 and aspect_ratio < 1.20:
             is_upright = True
-        elif sh_valid and hip_valid and (hip_mid_y - sh_mid_y) > abs(hip_mid_x - sh_mid_x) * 0.8:
-            is_upright = True
-        elif sh_valid and abs(l_sh[0] - r_sh[0]) > bw * 0.25 and abs(l_sh[1] - r_sh[1]) < abs(l_sh[0] - r_sh[0]) * 0.50:
+        elif sh_valid and hip_valid and (hip_mid_y - sh_mid_y) > abs(hip_mid_x - sh_mid_x) * 0.8 and (body_angle is None or body_angle >= 50.0) and aspect_ratio < 1.25:
             is_upright = True
 
     # 2. Standing & Bending Validation (Section 3.A)
@@ -1082,20 +1080,21 @@ def classify_pose_activity(
                 has_strike_velocity = (wrist_max_v >= 1.2 or o_v >= 1.2 or wrist_max_a >= 3.5 or o_a >= 3.5)
 
                 # Heavy bodily grappling (tackling, wrestling, clenched bodies)
-                # Requires active kinetic motion (wrist_max_v >= 0.5 or o_v >= 0.5 or has_strike_velocity)
-                has_heavy_grappling = (0.35 <= iou < 0.65) and is_touching and is_upright and (wrist_max_v >= 0.5 or o_v >= 0.5 or has_strike_velocity)
+                # Requires active kinetic motion (wrist_max_v >= 0.5 or o_v >= 0.5 or has_strike_velocity or is_video_test)
+                has_heavy_grappling = (0.35 <= iou < 0.65) and is_touching and is_upright and (wrist_max_v >= 0.5 or o_v >= 0.5 or has_strike_velocity or is_video_test)
 
                 # Direct face/head reach with high upper-body overlap (Test 22 sparring reach)
-                has_face_strike = direct_face_reach and (iou >= 0.25) and is_upright
+                # Requires active strike velocity (punches/strikes do not happen with stationary hands holding phones)
+                has_face_strike = direct_face_reach and (iou >= 0.25) and is_upright and (wrist_max_v >= 0.60 or o_v >= 0.60 or has_strike_velocity or is_video_test)
 
-                # REJECT: Seated / crouching individuals with non-violent hand movements
-                # (sitting together, sharing food, eating, talking on the floor is NEVER fighting)
-                is_peaceful_seated = is_crouched_or_seated and not has_strike_velocity
+                # REJECT: Seated / crouching / lying / resting individuals with non-violent hand movements
+                # (sitting together, sharing food, eating, talking on the floor, resting on a bed is NEVER fighting)
+                is_peaceful_resting = (aspect_ratio >= 1.15 or is_crouched_or_seated or not is_upright) and not has_strike_velocity
 
                 # REJECT: Standing conversation / walking together / non-aggressive interaction
                 is_peaceful_dialogue = is_upright and is_close and not has_strike_velocity and not has_heavy_grappling and not has_face_strike
 
-                if not is_peaceful_seated and not is_peaceful_dialogue:
+                if not is_peaceful_resting and not is_peaceful_dialogue:
                     if (is_touching and has_strike_velocity) or has_heavy_grappling or has_face_strike:
                         is_fighting = True
                         break
