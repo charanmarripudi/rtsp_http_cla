@@ -889,7 +889,39 @@ def run_tests():
     assert disp_blocked is False, "Test 53 FAILED: Display name variant 'VIOLATION: Smoking Detected' should be blocked!"
     print("Test 53 PASSED: Strict 30-Second Alert Cooldown strictly blocks duplicate alerts across umbrella, sub-activity, and display variants!")
 
-    print("\nALL 53 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 54: Reclining phone user with false smoking model detection on smartphone (Screenshot 4)
+    # The phone is held in front of chest/lap (75px away from mouth): MUST NEVER trigger smoking!
+    trk54 = {'first_seen': 100.0}
+    b54 = [300, 150, 480, 320]
+    kp54 = [
+        [360, 180, 0.95], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [340, 210, 0.9], [420, 210, 0.9],  # shoulders
+        [330, 250, 0.8], [430, 250, 0.8],
+        [380, 260, 0.85], [400, 260, 0.85] # wrists holding phone at chest (y=260 vs face y=180: dist = 80px)
+    ]
+    smk_phone = [{'box': [375, 250, 410, 280], 'cls': 'smoking', 'conf': 0.63}]
+    act54, _, _ = classify_pose_activity(trk54, kp54, b54, 5.0, enabled, is_video_test=True, smoking_objects=smk_phone)
+    assert act54 != 'smoking', f"Test 54 FAILED: Reclining phone user falsely flagged as smoking: {act54}"
+    print(f"Test 54 PASSED: Reclining phone user with false smoking model detection on phone -> {act54} (NOT smoking!)")
+
+    # Test 55: Person sitting at laptop on bed with bent knees (Screenshot 7) -> None (NOT fighting_posture, NOT kicking!)
+    trk55 = {'fight_start_t': time.time() - 2.0}
+    b55 = [80, 120, 180, 260] # AR = 100/140 = 0.71, sitting cross-legged
+    kp55 = [
+        [130, 140, 0.95], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [100, 160, 0.95], [160, 160, 0.95],
+        [90, 190, 0.85], [170, 190, 0.85],
+        [120, 220, 0.9], [140, 220, 0.9],   # hands typing on laptop in lap
+        [105, 215, 0.9], [155, 215, 0.9],   # hips seated on bed
+        [85, 205, 0.85], [175, 205, 0.85],  # knees elevated
+        [110, 230, 0.8], [150, 230, 0.8]    # ankles on bed near hips
+    ]
+    b55_other = [200, 120, 320, 260] # other person on adjacent bed
+    act55, _, _ = classify_pose_activity(trk55, kp55, b55, 5.0, enabled, all_persons=[b55, b55_other], is_video_test=True)
+    assert act55 != 'fighting_posture', f"Test 55 FAILED: Seated laptop user falsely flagged as fighting: {act55}"
+    print(f"Test 55 PASSED: Person sitting with laptop on bed -> {act55} (NOT fighting_posture, NOT kicking!)")
+
+    print("\nALL 55 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()
