@@ -820,7 +820,76 @@ def run_tests():
     assert act48 == 'smoking', f"Test 48 FAILED: Object held to mouth expected smoking, got {act48}"
     print(f"Test 48 PASSED: Object held to lips/mouth -> {act48} ({sub48})")
 
-    print("\nALL 48 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 49: Person sitting at laptop on bed (Screenshot 7 & 1) -> None (NOT fighting!)
+    trk49 = {'fight_start_t': time.time() - 2.0}
+    b49 = [23.8, 88.3, 151.9, 240.7] # AR = 0.84, bh = 152.4
+    kp49 = [
+        [91.3, 118.6, 0.98], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [116.1, 152.0, 0.97], [40.9, 153.3, 0.99],
+        [145.5, 199.8, 0.76], [27.6, 202.8, 0.94],
+        [142.2, 221.7, 0.72], [69.0, 210.3, 0.90], # hands typing at keyboard
+        [111.3, 232.0, 0.77], [68.1, 234.2, 0.85]
+    ]
+    p_recs_49 = [
+        {'id': 0, 'box': b49, 'keypoints': kp49, 'wrist_vel': 0.15},
+        {'id': 1, 'box': [237.9, 137.9, 428.0, 240.0], 'keypoints': None, 'wrist_vel': 0.05}
+    ]
+    act49, _, _ = classify_pose_activity(trk49, kp49, b49, 5.0, enabled, all_persons=p_recs_49)
+    assert act49 != 'fighting_posture', f"Test 49 FAILED: Person at laptop falsely flagged as {act49}!"
+    print(f"Test 49 PASSED: Person sitting at laptop on bed (Screenshot 7) -> {act49} (NOT fighting!)")
+
+    # Test 50: Person sitting on bed with knee up in pink shirt (Screenshot 7 & 8) -> None (NOT cooking!)
+    trk50 = {'cook_start_t': time.time() - 2.0}
+    b50 = [457.9, 120.2, 533.9, 220.3] # AR = 0.76, bh = 100.1
+    kp50 = [
+        [486.4, 140.2, 0.95], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [515.3, 150.3, 0.99], [493.4, 156.3, 0.93],
+        [510.1, 182.7, 0.98], [489.4, 185.0, 0.71],
+        [477.2, 190.1, 0.96], [478.9, 189.3, 0.71], # hands resting in lap holding phone
+        [519.0, 199.8, 0.94], [504.2, 199.7, 0.86],
+        [490.0, 185.0, 0.65], [485.0, 185.0, 0.40],
+        [480.0, 215.0, 0.33], [480.0, 215.0, 0.20]
+    ]
+    act50, _, _ = classify_pose_activity(trk50, kp50, b50, 5.0, enabled, is_video_test=True)
+    assert act50 != 'cooking', f"Test 50 FAILED: Person sitting on bed falsely flagged as {act50}!"
+    print(f"Test 50 PASSED: Person sitting on bed in pink shirt (Screenshot 7 & 8) -> {act50} (NOT cooking!)")
+
+    # Test 51: Person standing and bending forward near bed (Screenshot 10) -> None (NOT lying_down!)
+    trk51 = {'lie_start_t': time.time() - 2.0}
+    b51 = [350.0, 130.0, 470.0, 310.0] # AR = 0.67 (vertical box), bh = 180.0
+    kp51 = [
+        [410.0, 160.0, 0.95], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [430.0, 185.0, 0.9], [380.0, 185.0, 0.9],
+        [440.0, 220.0, 0.8], [370.0, 220.0, 0.8],
+        [430.0, 250.0, 0.8], [380.0, 250.0, 0.8],
+        [420.0, 240.0, 0.85], [390.0, 240.0, 0.85] # hips elevated
+    ]
+    act51, _, _ = classify_pose_activity(trk51, kp51, b51, 5.0, enabled, frame_height=360)
+    assert act51 != 'lying_down', f"Test 51 FAILED: Standing/bending person falsely flagged as {act51}!"
+    print(f"Test 51 PASSED: Person standing/bending forward near bed (Screenshot 10) -> {act51} (NOT lying_down!)")
+
+    # Test 52: Ground clutter / black backpack on floor (Screenshot 9) -> None (NOT lying_down, NOT crowd!)
+    trk52 = {'lie_start_t': time.time() - 2.0, 'conf': 0.28}
+    b52_backpack = [520.0, 280.0, 600.0, 340.0] # small backpack on floor, no keypoints
+    act52, _, _ = classify_pose_activity(trk52, None, b52_backpack, 5.0, enabled, frame_height=360)
+    assert act52 != 'lying_down', f"Test 52 FAILED: Backpack on floor falsely flagged as {act52}!"
+    print(f"Test 52 PASSED: Ground clutter / backpack on floor -> {act52} (NOT lying_down!)")
+
+    # Test 53: Strict 30-Second Canonical Alert Cooldown across Umbrella & Sub-Activity Names
+    from backend.detector.detector_worker import check_and_record_alert_cooldown
+    test_cam = "test_cam_99"
+    # First alert passes
+    first_ok = check_and_record_alert_cooldown(test_cam, "Unauthorized Activity (Parking Area) - smoking", 30.0)
+    assert first_ok is True, "Test 53 FAILED: First smoking alert should be permitted!"
+    # Sub-activity duplicate within 30s must be strictly blocked!
+    sub_blocked = check_and_record_alert_cooldown(test_cam, "smoking", 30.0)
+    assert sub_blocked is False, "Test 53 FAILED: Sub-activity 'smoking' within 30s should be blocked!"
+    # Display name variant duplicate within 30s must also be strictly blocked!
+    disp_blocked = check_and_record_alert_cooldown(test_cam, "VIOLATION: Smoking Detected", 30.0)
+    assert disp_blocked is False, "Test 53 FAILED: Display name variant 'VIOLATION: Smoking Detected' should be blocked!"
+    print("Test 53 PASSED: Strict 30-Second Alert Cooldown strictly blocks duplicate alerts across umbrella, sub-activity, and display variants!")
+
+    print("\nALL 53 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()

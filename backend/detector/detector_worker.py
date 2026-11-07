@@ -152,9 +152,46 @@ def check_and_record_alert_cooldown(cam_id, alert_class, cooldown_s=30.0):
     Thread-safe global alert cooldown manager across all cameras and workers.
     Ensures a strict minimum gap (default 30 seconds) between alerts of the same class on the same camera,
     persisting across worker restarts, slider updates, and stream reconnections.
+    Canonicalizes model umbrella names (e.g. 'Unauthorized Activity (Parking Area) - smoking')
+    to prevent duplicate alerts across companion models and classification loops.
     """
     now_t = time.time()
-    c_clean = str(alert_class).strip().lower().replace("_", "-").replace("saftey", "safety")
+    s_raw = str(alert_class).strip().lower()
+    
+    # Extract core canonical activity name to prevent umbrella vs sub-activity cooldown evasion
+    if "cook" in s_raw:
+        c_clean = "cooking"
+    elif "smok" in s_raw:
+        c_clean = "smoking"
+    elif "fight" in s_raw:
+        c_clean = "fighting"
+    elif "lying" in s_raw or "lie" in s_raw:
+        c_clean = "lying_down"
+    elif "crowd" in s_raw:
+        c_clean = "crowd"
+    elif "loiter" in s_raw:
+        c_clean = "loitering"
+    elif "speed" in s_raw:
+        c_clean = "overspeed"
+    elif "vehicle" in s_raw and "intrusion" in s_raw:
+        c_clean = "vehicle_intrusion"
+    elif "non" in s_raw and "working" in s_raw:
+        c_clean = "non_working_hours"
+    elif "intrusion" in s_raw:
+        c_clean = "intrusion"
+    elif "spark" in s_raw:
+        c_clean = "spark_arrestor"
+    elif "chock" in s_raw or "choke" in s_raw:
+        c_clean = "wheel_choke"
+    elif "hose" in s_raw:
+        c_clean = "fire_hose"
+    elif "extinguisher" in s_raw:
+        c_clean = "fire_extinguisher"
+    elif "bucket" in s_raw:
+        c_clean = "sand_bucket"
+    else:
+        c_clean = re.sub(r'[^a-z0-9]', '', s_raw).replace("saftey", "safety")
+        
     key = (str(cam_id), c_clean)
     with GLOBAL_ALERT_COOLDOWNS_LOCK:
         last_t = GLOBAL_ALERT_COOLDOWNS.get(key, 0.0)
@@ -661,12 +698,12 @@ def classify_pose_activity(
         if (l_sh[2] > 0.20 or r_sh[2] > 0.20) and hip_valid:
             body_angle = calculate_body_orientation_angle((sh_mid_x, sh_mid_y), (hip_mid_x, hip_mid_y))
 
-        # If body angle is steep (>= 55 deg), body is upright standing/sitting
-        if body_angle is not None and body_angle >= 55.0 and aspect_ratio < 1.25:
+        # If body angle is steep (>= 50 deg), body is upright standing/sitting regardless of leg spread AR
+        if body_angle is not None and body_angle >= 50.0:
             is_upright = True
-        elif head_y is not None and sh_y > 0 and (sh_y - head_y) > abs(sh_mid_x - head_x) * 0.60 and (sh_y - head_y) > bh * 0.10 and aspect_ratio < 1.20:
+        elif head_y is not None and sh_y > 0 and (sh_y - head_y) > abs(sh_mid_x - head_x) * 0.60 and (sh_y - head_y) > bh * 0.10 and aspect_ratio < 1.35:
             is_upright = True
-        elif sh_valid and hip_valid and (hip_mid_y - sh_mid_y) > abs(hip_mid_x - sh_mid_x) * 0.8 and (body_angle is None or body_angle >= 50.0) and aspect_ratio < 1.25:
+        elif sh_valid and hip_valid and (hip_mid_y - sh_mid_y) > max(bh * 0.18, 20.0) and (body_angle is None or body_angle >= 45.0):
             is_upright = True
 
     # 2. Standing & Bending Validation (Section 3.A)
@@ -706,11 +743,12 @@ def classify_pose_activity(
                     is_definitely_standing = True
 
         # Bending / Stooping differentiation (Section 3.A)
-        # Feet are on the ground and hips are elevated, but torso is angled forward
-        if hip_y is not None and ank_y is not None:
-            if (hip_y - y1) < bh * 0.55 and ank_y >= y1 + bh * 0.75:
-                if body_angle is not None and (32.0 <= body_angle < 65.0):
-                    is_bending = True
+        # Feet/knees are below hips and torso is angled forward (body_angle 18 to 65 deg), but hips/torso are elevated
+        if hip_y is not None and (hip_y - y1) < bh * 0.70:
+            if body_angle is not None and (18.0 <= body_angle < 65.0) and aspect_ratio < 1.05:
+                is_bending = True
+            elif ank_y is not None and ank_y >= y1 + bh * 0.70 and body_angle is not None and (18.0 <= body_angle < 65.0):
+                is_bending = True
 
     # 3. Unauthorized Cooking Detection (Section 3.C)
     # Detects:
@@ -837,13 +875,13 @@ def classify_pose_activity(
                                      (aspect_ratio >= 0.85 and not is_definitely_standing and not is_bottom_cropped))
 
             # Deep floor tending / floor cooking squat:
-            # Requires grounded ankles, flexed knees, hands at ground level, and compact crouched footprint
-            # Aspect ratio for a compact ground squat is < 1.15 (cross-legged bed sit has AR >= 1.30)
+            # Requires grounded ankles, flexed knees, hands reaching down to ground/stove, and compact crouched footprint
+            # Sitting on a bed or chair with knees up has hands in lap (wr_y <= hip_y) which is NORMAL SITTING, NEVER COOKING.
             deep_floor_squat = (knee_flexed and hips_low_to_ground and ank_valid and
-                                (ank_y >= y1 + bh * 0.65) and (0.60 <= aspect_ratio < 1.15) and
+                                (ank_y >= y1 + bh * 0.65) and (0.60 <= aspect_ratio < 1.20) and
                                 not is_bottom_cropped)
 
-            # 5-Tier Evidence Priority Hierarchy for Cooking:
+            # 5-Tier Evidence Priority Hierarchy for Cooking (User Prioritized):
             # Evidence Priority 1: Visible flame or active burner in proximity to person
             if has_fire_smoke and not hand_at_face:
                 if head_looking_down or elbows_bent or is_crouched_or_seated or forearm_forward or is_video_test:
@@ -862,12 +900,15 @@ def classify_pose_activity(
                     is_cooking = True
                     sub_desc = 'Cooking'
 
-            # Evidence Priority 5: Floor tending or standing food prep without explicit cookware detection
+            # Evidence Priority 5: Floor tending or standing food prep
+            # STRICT RULE: Requires hands reaching down to ground level BELOW hips (tending floor stove/pot)
+            # Sitting with hands in lap (wr_y <= hip_y + bh*0.10) is normal sitting / phone use, NEVER cooking!
             if not is_cooking and any_wr_valid and non_violent_hands and not hand_at_face:
-                hands_at_lap_or_ground = (wr_y >= (hip_y - bh * 0.10)) if (wr_y is not None and hip_valid) else True
+                hands_at_ground = (wr_y is not None and hip_valid and wr_y >= hip_y + bh * 0.04 and wr_y >= y1 + bh * 0.65)
                 
-                # Case A: Crouched Floor Food Prep / Pot Cooking (must be tending with head down and compact squat)
-                if deep_floor_squat and hands_in_front and hands_at_lap_or_ground:
+                # Case A: Crouched Floor Food Prep / Pot Cooking
+                # Must be tending down at floor with hands reaching to ground
+                if deep_floor_squat and hands_in_front and hands_at_ground:
                     is_cooking = True
                     sub_desc = 'Cooking'
 
@@ -1037,13 +1078,19 @@ def classify_pose_activity(
                 
                 if not o_box or len(o_box) != 4 or o_box == box:
                     continue
-                # Skip interaction if opponent is already verified lying flat on floor or cooking
-                if o_beh == 'lying_down' or o_cooking:
-                    continue
-                
                 ox1, oy1, ox2, oy2 = o_box
                 h2 = max(1.0, float(oy2 - oy1))
                 center2 = np.array([(ox1 + ox2) / 2.0, (oy1 + oy2) / 2.0])
+
+                # Skip interaction if opponent is already verified lying flat on floor or cooking
+                o_is_lying_or_resting = (o_beh == 'lying_down' or o_cooking)
+                if not o_is_lying_or_resting:
+                    o_box_w = max(1.0, float(ox2 - ox1))
+                    o_box_h = max(1.0, float(oy2 - oy1))
+                    if (o_box_w / o_box_h) >= 1.25:
+                        o_is_lying_or_resting = True
+                if o_is_lying_or_resting:
+                    continue
                 
                 # Biomechanical gap metrics between separate individuals
                 dist_centers = math.hypot(center1[0] - center2[0], center1[1] - center2[1])
@@ -1089,7 +1136,7 @@ def classify_pose_activity(
 
                 # REJECT: Seated / crouching / lying / resting individuals with non-violent hand movements
                 # (sitting together, sharing food, eating, talking on the floor, resting on a bed is NEVER fighting)
-                is_peaceful_resting = (aspect_ratio >= 1.15 or is_crouched_or_seated or not is_upright) and not has_strike_velocity
+                is_peaceful_resting = (aspect_ratio >= 1.05 or is_crouched_or_seated or not is_upright) and not has_strike_velocity
 
                 # REJECT: Standing conversation / walking together / non-aggressive interaction
                 is_peaceful_dialogue = is_upright and is_close and not has_strike_velocity and not has_heavy_grappling and not has_face_strike
@@ -1130,12 +1177,12 @@ def classify_pose_activity(
                 looking_at_opponent = (nose[2] > 0.25 and nose[1] < sh_mid_y - bh * 0.05) if sh_valid else False
 
                 # 2. Wrists raised to CHIN / NOSE / HEAD LEVEL (protecting face, NOT at waist or counter)
-                l_chin_guard = (l_wr[2] > 0.25 and sh_valid and l_wr[1] <= sh_mid_y - bh * 0.02)
-                r_chin_guard = (r_wr[2] > 0.25 and sh_valid and r_wr[1] <= sh_mid_y - bh * 0.02)
+                l_chin_guard = (l_wr[2] > 0.25 and sh_valid and l_wr[1] <= sh_mid_y - bh * 0.04)
+                r_chin_guard = (r_wr[2] > 0.25 and sh_valid and r_wr[1] <= sh_mid_y - bh * 0.04)
                 
                 # 3. Forearms pointing VERTICALLY UPWARD from elbows to fists (fists guarding jaw)
-                l_forearm_up = (l_el[2] > 0.25 and (l_el[1] - l_wr[1] >= bh * 0.07)) if l_chin_guard else False
-                r_forearm_up = (r_el[2] > 0.25 and (r_el[1] - r_wr[1] >= bh * 0.07)) if r_chin_guard else False
+                l_forearm_up = (l_el[2] > 0.25 and (l_el[1] - l_wr[1] >= bh * 0.08)) if l_chin_guard else False
+                r_forearm_up = (r_el[2] > 0.25 and (r_el[1] - r_wr[1] >= bh * 0.08)) if r_chin_guard else False
 
                 # 4. Acute elbow flexion (arms drawn close to guard face: angle <= 115 deg)
                 l_guard_bent = (l_el[2] > 0.25 and calculate_joint_angle(l_sh, l_el, l_wr) <= 115.0) if l_chin_guard else False
@@ -1186,44 +1233,54 @@ def classify_pose_activity(
     # 6. Lying Down Detection (Section 3.A - Mathematical Orientation & Aspect Ratio)
     # Distinguishes standing, sitting, bending, crawling and true supine/prone lying down
     if _is_enabled('lying_down'):
-        # 1. Aspect ratio check: Bounding box is significantly wider than it is tall
-        is_horizontal_box = bw > (bh * 1.30)
+        # A person with a vertical box (AR < 0.85) or upright posture CAN NEVER BE LYING DOWN
+        can_be_lying = (aspect_ratio >= 0.95 or (aspect_ratio >= 0.85 and body_angle is not None and body_angle < 25.0))
         
-        # 2. Check if torso orientation angle is horizontal (< 32 degrees)
-        is_horizontal_angle = (body_angle is not None and body_angle < 32.0)
-
-        # 3. Check if nose and ankles share similar vertical positions (horizontal spine)
-        is_horizontal_spine = False
-        if has_kp and len(kp_data) >= 17:
-            nose = kp_data[0]
-            l_ank = kp_data[15]
-            r_ank = kp_data[16]
+        if can_be_lying and not is_upright and not is_definitely_standing and not is_bending:
+            # 1. Aspect ratio check: Bounding box is significantly wider than it is tall
+            is_horizontal_box = bw > (bh * 1.30)
             
-            if nose[2] > 0.15 and l_ank[2] > 0.15:
-                if abs(nose[1] - l_ank[1]) < (bh * 0.35):
-                    is_horizontal_spine = True
-            if not is_horizontal_spine and nose[2] > 0.15 and r_ank[2] > 0.15:
-                if abs(nose[1] - r_ank[1]) < (bh * 0.35):
-                    is_horizontal_spine = True
+            # 2. Check if torso orientation angle is horizontal (< 32 degrees)
+            is_horizontal_angle = (body_angle is not None and body_angle < 32.0)
 
-        # Require sustained horizontal profile while rejecting standing, upright, forward bending, or seated desk crops
-        head_above_shoulders = (head_y is not None and sh_y is not None and (sh_y - head_y) > max(bh * 0.20, 25.0) and (body_angle is None or body_angle >= 45.0))
-        is_lying = (is_horizontal_box or is_horizontal_spine or is_horizontal_angle) and not is_upright and not is_definitely_standing and not is_bending and not head_above_shoulders
-        
-        # Ground plane fallback for fallen/passed-out person flat on floor
-        if not is_lying and aspect_ratio >= 1.8 and bh >= 14 and not is_upright and not is_definitely_standing and not is_bending and not head_above_shoulders:
-            is_lying = True
+            # 3. Check if nose and ankles share similar vertical positions (horizontal spine)
+            is_horizontal_spine = False
+            if has_kp and len(kp_data) >= 17:
+                nose = kp_data[0]
+                l_ank = kp_data[15]
+                r_ank = kp_data[16]
+                
+                if nose[2] > 0.15 and l_ank[2] > 0.15:
+                    if abs(nose[1] - l_ank[1]) < (bh * 0.35):
+                        is_horizontal_spine = True
+                if not is_horizontal_spine and nose[2] > 0.15 and r_ank[2] > 0.15:
+                    if abs(nose[1] - r_ank[1]) < (bh * 0.35):
+                        is_horizontal_spine = True
 
-        # Centroid stationarity across frames (rejects dynamic mid-air jumping flips)
-        if is_lying:
-            prev_cen = trk.get('last_lying_cen')
-            cur_cen = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
-            trk['last_lying_cen'] = cur_cen
-            if prev_cen:
-                disp = math.hypot(cur_cen[0] - prev_cen[0], cur_cen[1] - prev_cen[1])
-                if disp > max(bw, bh) * 0.25:
-                    trk['lie_start_t'] = now_t
-                    is_lying = False
+            # Require sustained horizontal profile while rejecting standing, upright, forward bending, or seated desk crops
+            head_above_shoulders = (head_y is not None and sh_y is not None and (sh_y - head_y) > max(bh * 0.20, 25.0) and (body_angle is None or body_angle >= 45.0))
+            
+            # Keypoint-less object filter: Ground clutter / backpacks on floor without keypoints must have human scale & conf >= 0.45
+            is_valid_lying_scale = (has_kp and len(kp_data) >= 17) or (bw >= 90.0 and bh >= 35.0 and float(trk.get('conf', 0.5)) >= 0.45)
+            
+            is_lying = (is_horizontal_box or is_horizontal_spine or is_horizontal_angle) and not head_above_shoulders and is_valid_lying_scale
+            
+            # Ground plane fallback for fallen/passed-out person flat on floor
+            if not is_lying and aspect_ratio >= 1.8 and bh >= 14 and not head_above_shoulders and is_valid_lying_scale:
+                is_lying = True
+
+            # Centroid stationarity across frames (rejects dynamic mid-air jumping flips)
+            if is_lying:
+                prev_cen = trk.get('last_lying_cen')
+                cur_cen = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+                trk['last_lying_cen'] = cur_cen
+                if prev_cen:
+                    disp = math.hypot(cur_cen[0] - prev_cen[0], cur_cen[1] - prev_cen[1])
+                    if disp > max(bw, bh) * 0.25:
+                        trk['lie_start_t'] = now_t
+                        is_lying = False
+        else:
+            is_lying = False
 
         if is_lying:
             l_start = _get_start_t('lie_start_t')
@@ -1281,6 +1338,12 @@ def classify_pose_activity(
             pbox = p_item.get('box', p_item.get('bbox')) if isinstance(p_item, dict) else p_item
             if not pbox or len(pbox) != 4:
                 continue
+            # Filter non-human ground clutter / low-confidence detections without keypoints
+            if isinstance(p_item, dict):
+                p_conf = float(p_item.get('conf', 0.5))
+                p_kp = p_item.get('keypoints')
+                if p_conf < 0.45 and (not p_kp or len(p_kp) < 17):
+                    continue
             px1, py1, px2, py2 = pbox
             p_area = max(1.0, px2 - px1) * max(1.0, py2 - py1)
             is_dup = False
@@ -2917,9 +2980,9 @@ class DetectorWorker:
                             trk['unauth_sub'] = act_sub
                             trk['unauth_last_active_t'] = now_t
                         else:
-                            # 1.0s Hysteresis / sticky hangover window so boxes stay solid and continuous in video
+                            # 2.5s Hysteresis / sticky hangover window so boxes stay solid and continuous in video
                             last_act_t = trk.get('unauth_last_active_t', 0.0)
-                            if (now_t - last_act_t) > 1.0:
+                            if (now_t - last_act_t) > 2.5:
                                 trk['unauth_activity'] = None
                                 trk['unauth_conf'] = 0.0
                                 trk['unauth_sub'] = None
@@ -3898,6 +3961,37 @@ class DetectorWorker:
                         alert_msg = f"VIOLATION: {act_name} Detected"
                         print(f"[ALERT-TRIGGER-UNAUTH] Camera {self.cam_id}: {alert_msg} (dur={dur:.1f}s)", flush=True)
                         self._save_alert(alert_msg, f, display_boxes=display_boxes, violating_box=bx, violating_label=f"VIOLATION: {act_name}")
+
+            # Final Spatial Deduplication Pass on display_boxes:
+            # Guarantees that no duplicate / overlapping boxes are displayed on screen or saved in alerts
+            final_dedup_boxes = []
+            sorted_all_boxes = sorted(
+                display_boxes,
+                key=lambda b: (
+                    1 if "VIOLATION" in str(b.get('label', '')) else 0,
+                    float(b.get('conf', 0.0))
+                ),
+                reverse=True
+            )
+            for cur_b in sorted_all_boxes:
+                c_box = cur_b.get('box', [])
+                if len(c_box) != 4:
+                    continue
+                c_cls = str(cur_b.get('cls', '')).lower()
+                is_dup = False
+                for kept_b in final_dedup_boxes:
+                    k_box = kept_b.get('box', [])
+                    k_cls = str(kept_b.get('cls', '')).lower()
+                    iou_val, io_min_val = DetectorWorker._box_iou_and_io_min(c_box, k_box)
+                    if (c_cls == k_cls or ('person' in c_cls and 'person' in k_cls)) and (iou_val >= 0.25 or io_min_val >= 0.35):
+                        is_dup = True
+                        break
+                    if iou_val >= 0.65 or io_min_val >= 0.75:
+                        is_dup = True
+                        break
+                if not is_dup:
+                    final_dedup_boxes.append(cur_b)
+            display_boxes = final_dedup_boxes
 
             with self._box_lock:
                 self._tracked_boxes = display_boxes
