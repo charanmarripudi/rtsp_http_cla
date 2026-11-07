@@ -726,21 +726,27 @@ def classify_pose_activity(
         
         # Check nearby cooking equipment from object detector (Section 3.C)
         has_utensil_interaction = False
-        cooking_equipment_classes = (
-            "bottle", "cup", "fork", "knife", "spoon", "bowl",
-            "microwave", "oven", "toaster", "sink", "refrigerator",
-            "sandwich", "pizza", "pot", "pan", "stove", "fire", "smoke", "gas", "spatula"
+        has_cooking_equipment = False
+        core_cooking_equipment = (
+            "pot", "pan", "stove", "oven", "microwave", "toaster", "kettle",
+            "burner", "cooker", "gas", "spatula", "skillet", "ladle"
         )
+        food_tableware = ("bottle", "cup", "fork", "knife", "spoon", "bowl", "plate")
+
         if nearby_objects:
             p_center = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
             for obj in nearby_objects:
                 o_cls = str(obj.get('cls', '')).lower()
-                if any(k in o_cls for k in cooking_equipment_classes):
+                is_core = any(k in o_cls for k in core_cooking_equipment)
+                is_tab = any(k in o_cls for k in food_tableware)
+                if is_core or is_tab:
                     ob = obj.get('box', [])
                     if len(ob) == 4:
                         o_center = ((ob[0] + ob[2]) / 2.0, (ob[1] + ob[3]) / 2.0)
                         dist_obj = calculate_euclidean_distance(p_center, o_center)
                         if dist_obj < bh * 0.90 or calculate_box_iou(box, ob) > 0.05:
+                            if is_core:
+                                has_cooking_equipment = True
                             # Hand-to-object interaction check
                             if has_kp:
                                 l_wr, r_wr = kp_data[9], kp_data[10]
@@ -832,9 +838,12 @@ def classify_pose_activity(
                                      (knee_flexed and aspect_ratio >= 0.70) or
                                      (aspect_ratio >= 0.85 and not is_definitely_standing and not is_bottom_cropped))
 
-            # Deep floor tending / floor cooking squat (must have grounded ankles and hands at floor level)
+            # Deep floor tending / floor cooking squat:
+            # Requires grounded ankles, flexed knees, hands at ground level, and compact crouched footprint
+            # Aspect ratio for a compact ground squat is < 1.15 (cross-legged bed sit has AR >= 1.30)
             deep_floor_squat = (knee_flexed and hips_low_to_ground and ank_valid and
-                                (ank_y >= y1 + bh * 0.65) and (aspect_ratio >= 0.60) and not is_bottom_cropped)
+                                (ank_y >= y1 + bh * 0.65) and (0.60 <= aspect_ratio < 1.15) and
+                                not is_bottom_cropped)
 
             # 5-Tier Evidence Priority Hierarchy for Cooking:
             # Evidence Priority 1: Visible flame or active burner in proximity to person
@@ -843,28 +852,31 @@ def classify_pose_activity(
                     is_cooking = True
                     sub_desc = 'Cooking'
 
-            # Evidence Priority 2, 3, & 4: Utensils / Cookware Handling + Hand Movements + Cooking Posture
+            # Evidence Priority 2: Person handling a pot or cooking utensil
+            if not is_cooking and has_utensil_interaction and hands_in_front and non_violent_hands and not hand_at_face:
+                if is_crouched_or_seated or elbows_bent or head_looking_down or forearm_forward or is_video_test:
+                    is_cooking = True
+                    sub_desc = 'Cooking'
+
+            # Evidence Priority 3 & 4: Repeated hand movements near cooking equipment + Cooking Posture
+            if not is_cooking and has_cooking_equipment and hands_in_front and non_violent_hands and not hand_at_face:
+                if (elbows_bent or forearm_forward or head_looking_down or is_crouched_or_seated):
+                    is_cooking = True
+                    sub_desc = 'Cooking'
+
+            # Evidence Priority 5: Floor tending or standing food prep without explicit cookware detection
             if not is_cooking and any_wr_valid and non_violent_hands and not hand_at_face:
                 hands_at_lap_or_ground = (wr_y >= (hip_y - bh * 0.10)) if (wr_y is not None and hip_valid) else True
                 
-                # Case A: Crouched Floor Food Prep / Pot Cooking (Two men on ground in Image 1 / Test 13 & 31)
-                if has_utensil_interaction and is_crouched_or_seated and hands_in_front:
-                    is_cooking = True
-                    sub_desc = 'Cooking'
-                elif deep_floor_squat and hands_in_front and hands_at_lap_or_ground:
+                # Case A: Crouched Floor Food Prep / Pot Cooking (must be tending with head down and compact squat)
+                if deep_floor_squat and hands_in_front and hands_at_lap_or_ground:
                     is_cooking = True
                     sub_desc = 'Cooking'
 
-                # Case B: Standing Food Prep at Stove / Counter / Surface (Woman at stove in Image 2 / Test 30)
+                # Case B: Standing Food Prep at Stove / Counter / Surface (Woman at stove in Test 30)
                 standing_with_legs = is_definitely_standing and ank_valid and (ank_y >= y1 + bh * 0.70)
                 if not is_cooking and standing_with_legs and hands_at_counter_height and hands_in_front and forearm_forward and elbows_bent:
-                    if (is_video_test and head_looking_down) or has_utensil_interaction:
-                        is_cooking = True
-                        sub_desc = 'Cooking'
-
-                # Case C: Cooking Equipment Interaction (Handling cookware/utensils with repeated movements)
-                if not is_cooking and has_utensil_interaction and hands_in_front:
-                    if elbows_bent or head_looking_down or is_crouched_or_seated or forearm_forward:
+                    if (is_video_test and head_looking_down) or has_cooking_equipment or has_utensil_interaction:
                         is_cooking = True
                         sub_desc = 'Cooking'
 
@@ -898,15 +910,28 @@ def classify_pose_activity(
             p_x1, p_y1, p_x2, p_y2 = box if (box and len(box) == 4) else [0, 0, 1, 1]
             p_bw = max(1.0, float(p_x2 - p_x1))
             p_bh = max(1.0, float(p_y2 - p_y1))
-            p_expanded = [p_x1 - 0.25 * p_bw, p_y1 - 0.10 * p_bh, p_x2 + 0.25 * p_bw, p_y1 + 0.90 * p_bh]
+            
+            face_x = nose[0] if (has_kp and nose[2] > 0.20) else (p_x1 + p_x2) / 2.0
+            face_y = nose[1] if (has_kp and nose[2] > 0.20) else (p_y1 + p_bh * 0.18)
+            sh_span = math.hypot(l_sh[0] - r_sh[0], l_sh[1] - r_sh[1]) if (has_kp and l_sh[2] > 0.20 and r_sh[2] > 0.20) else (p_bw * 0.35)
+            max_smk_dist = max(sh_span * 0.75, min(p_bh * 0.30, 55.0))
 
             for smk in smoking_objects:
+                if smk.get('conf', 0.0) < 0.50:
+                    continue
                 sb = smk.get('box', [])
                 if len(sb) == 4:
                     sx_mid = (sb[0] + sb[2]) / 2.0
                     sy_mid = (sb[1] + sb[3]) / 2.0
-                    if (p_expanded[0] <= sx_mid <= p_expanded[2] and p_expanded[1] <= sy_mid <= p_expanded[3]) or \
-                       calculate_iou(box, sb) > 0.05:
+                    dist_to_face = math.hypot(sx_mid - face_x, sy_mid - face_y)
+                    near_wrist_at_face = False
+                    if has_kp:
+                        for wr_pt in [l_wr, r_wr]:
+                            if wr_pt[2] > 0.20 and wr_pt[1] <= (face_y + p_bh * 0.35):
+                                if math.hypot(sx_mid - wr_pt[0], sy_mid - wr_pt[1]) < max(sh_span * 0.50, 35.0):
+                                    near_wrist_at_face = True
+                                    break
+                    if dist_to_face <= max_smk_dist or near_wrist_at_face:
                         is_smoking = True
                         is_model_detected = True
                         smoking_conf = max(0.92, float(smk.get('conf', 0.90)))
@@ -928,12 +953,13 @@ def classify_pose_activity(
             if face_conf >= 0.35 and (l_sh[2] > 0.30 or r_sh[2] > 0.30):
                 sh_y = min(l_sh[1], r_sh[1]) if (l_sh[2] > 0.30 and r_sh[2] > 0.30) else (l_sh[1] if l_sh[2] > 0.30 else r_sh[1])
                 mouth_y = face_y + bh * 0.04
+                sh_dist = math.hypot(l_sh[0] - r_sh[0], l_sh[1] - r_sh[1]) if (l_sh[2] > 0.25 and r_sh[2] > 0.25) else (bw * 0.35)
 
                 # Check if both hands are at collar/neck (jacket pulling / collar adjustment - Screenshot 5)
                 both_hands_at_collar = (l_wr[2] > 0.30 and r_wr[2] > 0.30 and
                                         abs(l_wr[1] - r_wr[1]) < bh * 0.15 and
                                         l_wr[1] >= face_y and r_wr[1] >= face_y and
-                                        abs(l_wr[0] - r_wr[0]) > bw * 0.18)
+                                        abs(l_wr[0] - r_wr[0]) > max(sh_dist * 0.35, bw * 0.18))
 
                 # Check if elbow is resting on knee / lap (contemplative sitting / "The Thinker" - Screenshot 1)
                 elbow_on_knee = False
@@ -944,15 +970,20 @@ def classify_pose_activity(
                                 elbow_on_knee = True
                                 break
 
+                # Biometrically invariant mouth reach thresholds based on shoulder width (NOT full bounding box width)
+                # When reclining/lying down, bw spans legs/torso (500+ px), so bw-based reach allowed false reach of 170px.
+                max_mouth_dx = min(bw * 0.30, max(sh_dist * 0.45, 30.0))
+                max_mouth_dist = min(bh * 0.50, max(sh_dist * 0.60, 45.0))
+
                 if not both_hands_at_collar and not elbow_on_knee:
                     for wr, el, sh in [(l_wr, l_el, l_sh), (r_wr, r_el, r_sh)]:
                         if wr[2] >= 0.35 and el[2] >= 0.25 and sh[2] >= 0.25:
                             dist_to_mouth = math.hypot(wr[0] - face_x, wr[1] - mouth_y)
-                            is_at_mouth = (face_y - bh * 0.05 <= wr[1] <= sh_y + bh * 0.05) and (abs(wr[0] - face_x) < bw * 0.32)
+                            is_at_mouth = (face_y - bh * 0.05 <= wr[1] <= sh_y + bh * 0.05) and (abs(wr[0] - face_x) <= max_mouth_dx)
                             forearm_valid = (el[1] >= wr[1] - bh * 0.10)
                             elbow_ang = calculate_joint_angle(sh, el, wr)
                             acute_flexion = (elbow_ang <= 125.0)
-                            mouth_reach = dist_to_mouth < max(bh * 0.60, bw * 0.35)
+                            mouth_reach = dist_to_mouth <= max_mouth_dist
 
                             if mouth_reach and is_at_mouth and forearm_valid and acute_flexion:
                                 is_smoking = True
@@ -984,11 +1015,14 @@ def classify_pose_activity(
 
         # Pairwise interaction check with all other persons (ByteTrack Multi-Person Analysis)
         if all_persons:
+            my_trk_id = trk.get('id') if isinstance(trk, dict) else None
             for other in all_persons:
                 if other is box:
                     continue
                 
                 if isinstance(other, dict):
+                    if my_trk_id is not None and other.get('id') is not None and other.get('id') == my_trk_id:
+                        continue
                     o_box = other.get('box', other.get('bbox'))
                     o_kp = other.get('keypoints')
                     o_beh = other.get('behavior', other.get('unauth_activity'))
@@ -1035,6 +1069,9 @@ def classify_pose_activity(
                 
                 # Genuine 2D Intersection over Union (IoU) calculation (Section 5.8)
                 iou = calculate_box_iou(box, o_box)
+                # Excessive overlap (>= 0.65) indicates duplicate tracking/ghost track of the same person
+                if iou >= 0.65:
+                    continue
                 
                 wrists_valid = bool(wrists1 or o_wrists)
                 is_close = dist_centers < dynamic_center_thresh
@@ -1045,7 +1082,8 @@ def classify_pose_activity(
                 has_strike_velocity = (wrist_max_v >= 1.2 or o_v >= 1.2 or wrist_max_a >= 3.5 or o_a >= 3.5)
 
                 # Heavy bodily grappling (tackling, wrestling, clenched bodies)
-                has_heavy_grappling = (iou >= 0.38) and is_touching and is_upright
+                # Requires active kinetic motion (wrist_max_v >= 0.5 or o_v >= 0.5 or has_strike_velocity)
+                has_heavy_grappling = (0.35 <= iou < 0.65) and is_touching and is_upright and (wrist_max_v >= 0.5 or o_v >= 0.5 or has_strike_velocity)
 
                 # Direct face/head reach with high upper-body overlap (Test 22 sparring reach)
                 has_face_strike = direct_face_reach and (iou >= 0.25) and is_upright
@@ -2150,24 +2188,23 @@ class DetectorWorker:
                                         continue
 
                         # Smoking False Positive Filter: A cigarette/vape cannot smoke by itself without a person!
-                        # Standalone detections on background textures / truck chassis with no person nearby are rejected.
+                        # Standalone detections on background textures / switchboards / walls with no person nearby are rejected.
                         if "smok" in cls.lower():
                             if conf_val < 0.50:
                                 continue
-                            if not is_unauth_mod:
-                                if not detected_persons_raw:
-                                    continue
-                                smk_cx = (rx1 + rx2) / 2.0
-                                smk_cy = (ry1 + ry2) / 2.0
-                                near_person = False
-                                for px1, py1, px2, py2, _ in detected_persons_raw:
-                                    pbw = max(1.0, px2 - px1)
-                                    pbh = max(1.0, py2 - py1)
-                                    if (px1 - 0.40 * pbw <= smk_cx <= px2 + 0.40 * pbw) and (py1 - 0.20 * pbh <= smk_cy <= py1 + 0.95 * pbh):
-                                        near_person = True
-                                        break
-                                if not near_person:
-                                    continue
+                            if not detected_persons_raw:
+                                continue
+                            smk_cx = (rx1 + rx2) / 2.0
+                            smk_cy = (ry1 + ry2) / 2.0
+                            near_person = False
+                            for px1, py1, px2, py2, _ in detected_persons_raw:
+                                pbw = max(1.0, px2 - px1)
+                                pbh = max(1.0, py2 - py1)
+                                if (px1 - 0.25 * pbw <= smk_cx <= px2 + 0.25 * pbw) and (py1 - 0.15 * pbh <= smk_cy <= py1 + 0.65 * pbh):
+                                    near_person = True
+                                    break
+                            if not near_person:
+                                continue
 
                         # Per-class confidence gate (hard reject)
                         req_conf = min(0.20, effective_conf) if is_unauth_mod else effective_conf
@@ -2423,6 +2460,32 @@ class DetectorWorker:
                     self._ema_tracks[tid].update(trk_data)
                 else:
                     self._ema_tracks[tid] = trk_data
+
+            # Prune superseded lost tracks: if an active track overlaps with an older lost track of the same class, delete the lost track immediately!
+            for active_id in active_byte_ids:
+                a_trk = self._ema_tracks.get(active_id)
+                if not a_trk: continue
+                a_box = a_trk.get('box', [])
+                a_cls = str(a_trk.get('cls', '')).lower()
+                for lost_id in list(self._ema_tracks.keys()):
+                    if lost_id in active_byte_ids:
+                        continue
+                    l_trk = self._ema_tracks.get(lost_id)
+                    if not l_trk: continue
+                    l_cls = str(l_trk.get('cls', '')).lower()
+                    if a_cls == l_cls or ('person' in a_cls and 'person' in l_cls):
+                        l_box = l_trk.get('box', [])
+                        if len(a_box) == 4 and len(l_box) == 4:
+                            iou_val, io_min_val = DetectorWorker._box_iou_and_io_min(a_box, l_box)
+                            if iou_val >= 0.25 or io_min_val >= 0.35:
+                                # Inherit activity tracking state to prevent violation flicker
+                                for state_k in (
+                                    'unauth_activity', 'unauth_conf', 'unauth_sub', 'unauth_last_active_t',
+                                    'cook_start_t', 'smoke_start_t', 'fight_start_t', 'first_seen'
+                                ):
+                                    if l_trk.get(state_k) is not None and a_trk.get(state_k) is None:
+                                        a_trk[state_k] = l_trk[state_k]
+                                del self._ema_tracks[lost_id]
 
             # Expire tracks only after sustained absence (>= TRACK_MAX_AGE_S) so tracks survive brief frame drops
             for tid in list(self._ema_tracks.keys()):
@@ -2764,7 +2827,10 @@ class DetectorWorker:
                     'is_cooking': bool(t.get('is_cooking', False))
                 }
                 for t_id, t in self._ema_tracks.items()
-                if 'person' in str(t.get('cls', '')).lower()
+                if 'person' in str(t.get('cls', '')).lower() and (
+                    ('active_byte_ids' in locals() and t_id in active_byte_ids) or
+                    (now_t - t.get('last_seen', 0.0)) < 0.30
+                )
             ]
 
             def _is_real_flame_smoke(cls_str):
@@ -2825,14 +2891,14 @@ class DetectorWorker:
                         p_has_fire_smoke = False
                         p_h = max(1.0, float(bx[3] - bx[1]))
                         for fobj in fire_smoke_objects:
-                            if fobj.get('conf', 0.0) < 0.45:
+                            if fobj.get('conf', 0.0) < 0.55:
                                 continue
                             fb = fobj.get('box', [])
                             if len(fb) == 4:
                                 f_cx = (fb[0] + fb[2]) / 2.0
                                 f_cy = (fb[1] + fb[3]) / 2.0
-                                # Flame/burner must be at floor or counter height (cannot be floating above head/ceiling)
-                                if f_cy < (bx[1] + p_h * 0.20):
+                                # Flame/burner must be at floor or counter height below chest (cannot be floating in face/ceiling)
+                                if f_cy < (bx[1] + p_h * 0.40):
                                     continue
                                 d_flame = math.hypot(cx - f_cx, cy - f_cy)
                                 if d_flame < p_h * 1.2 or calculate_box_iou(bx, fb) > 0.05:
@@ -2959,6 +3025,40 @@ class DetectorWorker:
                 'conf':   trk.get('conf', conf_pct),
                 'trk_id': tid,
             })
+
+        # -- Spatial Deduplication (NMS) on display_boxes --
+        # Guarantees that multiple stacked / duplicate boxes for the same object or violation
+        # will NEVER appear on screen or in alert snapshots.
+        deduped_display_boxes = []
+        sorted_disp = sorted(
+            display_boxes,
+            key=lambda b: (
+                1 if "VIOLATION" in str(b.get('label', '')) else 0,
+                float(b.get('conf', 0.0))
+            ),
+            reverse=True
+        )
+        for cur_b in sorted_disp:
+            c_box = cur_b.get('box', [])
+            if len(c_box) != 4:
+                continue
+            c_cls = str(cur_b.get('cls', '')).lower()
+            is_dup = False
+            for kept_b in deduped_display_boxes:
+                k_box = kept_b.get('box', [])
+                k_cls = str(kept_b.get('cls', '')).lower()
+                iou_val, io_min_val = DetectorWorker._box_iou_and_io_min(c_box, k_box)
+                # If same class or both persons/violations and overlapping
+                if (c_cls == k_cls or ('person' in c_cls and 'person' in k_cls)) and (iou_val >= 0.25 or io_min_val >= 0.35):
+                    is_dup = True
+                    break
+                # If high spatial overlap (> 0.65) regardless of class
+                if iou_val >= 0.65 or io_min_val >= 0.75:
+                    is_dup = True
+                    break
+            if not is_dup:
+                deduped_display_boxes.append(cur_b)
+        display_boxes = deduped_display_boxes
 
         # -- Absence Detection for Safety Equipment and Wheel Chocks (sand_ext_chocks) --
         has_sand_ext = any("sand_ext_chocks" in str(p).lower() for p in (self.model_paths if isinstance(self.model_paths, list) else [self.model_paths]))

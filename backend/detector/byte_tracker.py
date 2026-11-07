@@ -245,7 +245,7 @@ class EdgeByteTracker:
         self,
         track_thresh: float = 0.35,
         low_thresh: float = 0.12,
-        match_thresh: float = 0.65,
+        match_thresh: float = 0.45,
         track_buffer: int = 40,
         frame_rate: int = 30
     ):
@@ -294,6 +294,12 @@ class EdgeByteTracker:
             iou_score = box_iou(t_box, det_box)
             return max(dist_score * 0.7 + iou_score * 0.3, iou_score)
         elif not t_is_veh and not d_is_veh:
+            # Enforce class compatibility: tracks of different classes (e.g. person vs NO-Hardhat) must NEVER match
+            t_cls_clean = track.cls.lower().replace("-", "").replace("_", "").replace(" ", "")
+            d_cls_clean = det_cls.lower().replace("-", "").replace("_", "").replace(" ", "")
+            if t_cls_clean != d_cls_clean and not ("person" in t_cls_clean and "person" in d_cls_clean):
+                return 0.0
+
             iou_score = box_iou(t_box, det_box)
             t_cx = (t_box[0] + t_box[2]) / 2.0
             t_cy = (t_box[1] + t_box[3]) / 2.0

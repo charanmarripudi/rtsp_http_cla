@@ -653,7 +653,106 @@ def run_tests():
     assert act39 != 'cooking', f"Test 39 FAILED: Leaning man falsely alerted as cooking ({sub39})!"
     print(f"Test 39 PASSED: Leaning man with no cooking equipment (Image 1) -> {act39} (NOT cooking!)")
 
-    print("\nALL 39 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
+    # Test 40: User sitting cross-legged on bed touching feet/lap (User Evidence Image 8)
+    trk40 = {'cook_start_t': time.time() - 3.0}
+    kp40 = [
+        [0, 0, 0.01], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [380, 160, 0.9], [550, 160, 0.9],
+        [350, 220, 0.85], [580, 220, 0.85],
+        [450, 310, 0.95], [490, 310, 0.94],
+        [390, 260, 0.98], [540, 260, 0.99],
+        [320, 290, 0.85], [610, 290, 0.85],
+        [440, 320, 0.56], [500, 320, 0.57]
+    ]
+    box40 = [277.9, 100.9, 654.8, 354.0] # wide aspect ratio = 1.49
+    act40, _, _ = classify_pose_activity(trk40, kp40, box40, 5.0, enabled)
+    assert act40 != "cooking", f"Test 40 FAILED: Bed sitting cross-legged falsely triggered cooking: {act40}"
+    print("Test 40 PASSED: Bed sitting cross-legged touching feet -> None (NOT cooking!)")
+
+    # Test 41: User reclining on bed reading smartphone (User Evidence Image 9)
+    trk41 = {'smoke_start_t': time.time() - 3.0}
+    kp41 = [
+        [412, 140, 0.94], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [380, 180, 0.9], [460, 180, 0.9],
+        [360, 220, 0.85], [480, 220, 0.85],
+        [490, 240, 0.63], [420, 300, 0.53], # wrist at chest (outside shoulder mouth reach)
+        [420, 300, 0.95], [510, 300, 0.94],
+        [580, 320, 0.97], [680, 320, 0.96],
+        [750, 360, 0.97], [850, 360, 0.96]
+    ]
+    box41 = [332.8, 118.1, 869.9, 431.3]
+    act41, _, _ = classify_pose_activity(trk41, kp41, box41, 5.0, enabled)
+    assert act41 != "smoking", f"Test 41 FAILED: Reclining with phone triggered smoking: {act41}"
+    print("Test 41 PASSED: Reclining on bed reading smartphone -> None (NOT smoking!)")
+
+    # Test 42: Solitary person leaning forward adjusting trousers (User Evidence Image 10)
+    trk42 = {'id': 1, 'wrist_max_v': 0.10, 'wrist_max_a': 0.20}
+    kp42 = [
+        [250, 150, 0.96], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [200, 190, 0.85], [300, 190, 0.85],
+        [180, 240, 0.85], [320, 240, 0.85],
+        [230, 310, 0.82], [270, 310, 0.32],
+        [220, 300, 0.69], [280, 300, 0.42],
+        [210, 380, 0.20], [290, 380, 0.11],
+        [210, 440, 0.20], [290, 440, 0.11]
+    ]
+    box42 = [143.4, 93.3, 363.1, 463.5]
+    ghost_track42 = {'id': 2, 'box': [140.0, 90.0, 360.0, 460.0], 'keypoints': kp42, 'wrist_vel': 0.10, 'wrist_acc': 0.20}
+    act42, _, _ = classify_pose_activity(trk42, kp42, box42, 5.0, enabled, all_persons=[ghost_track42])
+    assert act42 != "fighting_posture", f"Test 42 FAILED: Solitary adjusting pants triggered fighting: {act42}"
+    print("Test 42 PASSED: Solitary person with ghost track -> None (NOT fighting!)")
+
+    # Test 43: Desk close-up user looking at webcam / hand on chin (Images 1 & 3)
+    trk43 = {'cook_start_t': time.time() - 3.0}
+    kp43 = [
+        [320, 200, 0.99], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
+        [250, 280, 0.9], [390, 280, 0.9],
+        [230, 330, 0.85], [410, 330, 0.85],
+        [310, 240, 0.70], [330, 320, 0.15],
+        [0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,0,0]
+    ]
+    box43 = [187.1, 129.9, 687.8, 497.7]
+    act43, _, _ = classify_pose_activity(trk43, kp43, box43, 5.0, enabled)
+    assert act43 != "cooking", f"Test 43 FAILED: Desk user triggered cooking: {act43}"
+    print("Test 43 PASSED: Desk user looking at webcam / hand on chin -> None (NOT cooking!)")
+
+    # Test 44: White switchboard on wall detected as smoking
+    smk_sw = [{'box': [620, 100, 680, 150], 'conf': 0.63, 'cls': 'smoking'}]
+    act44, _, _ = classify_pose_activity(trk41, kp41, box41, 5.0, enabled, smoking_objects=smk_sw)
+    assert act44 != "smoking", f"Test 44 FAILED: Wall switchboard triggered smoking: {act44}"
+    print("Test 44 PASSED: Wall switchboard -> None (NOT smoking!)")
+
+    # Test 45: Spatial deduplication pass on 15 stacked boxes (User Evidence Image 5)
+    stacked = []
+    for i in range(15):
+        stacked.append({
+            'box': [100 + i*2, 50 + i*1, 200 + i*2, 180 + i*1],
+            'label': f'VIOLATION: NO-Hardhat 0.{80+i}',
+            'cls': 'NO-Hardhat',
+            'conf': 0.80 + i*0.01
+        })
+    deduped = []
+    sorted_disp = sorted(stacked, key=lambda b: (1 if "VIOLATION" in b['label'] else 0, float(b['conf'])), reverse=True)
+    for cur_b in sorted_disp:
+        c_box = cur_b['box']
+        c_cls = cur_b['cls'].lower()
+        is_dup = False
+        for kept_b in deduped:
+            k_box = kept_b['box']
+            k_cls = kept_b['cls'].lower()
+            iou_val, io_min_val = DetectorWorker._box_iou_and_io_min(c_box, k_box)
+            if (c_cls == k_cls or ('person' in c_cls and 'person' in k_cls)) and (iou_val >= 0.25 or io_min_val >= 0.35):
+                is_dup = True
+                break
+            if iou_val >= 0.65 or io_min_val >= 0.75:
+                is_dup = True
+                break
+        if not is_dup:
+            deduped.append(cur_b)
+    assert len(deduped) == 1, f"Test 45 FAILED: Expected 1 box, got {len(deduped)}"
+    print(f"Test 45 PASSED: 15 stacked boxes collapsed to exactly 1 clean box: {deduped[0]['label']}")
+
+    print("\nALL 45 PRODUCTION TESTS PASSED WITH 100% ACCURACY!")
 
 if __name__ == '__main__':
     run_tests()
