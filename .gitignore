@@ -76,3 +76,10 @@ f4d3e73/
 # Binaries & archives
 mediamtx
 *.tar.gz
+
+# YOLO runs & training artifacts
+runs/
+
+# Test model weights
+tests/*.pt
+

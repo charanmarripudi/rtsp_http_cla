@@ -966,8 +966,10 @@ def classify_pose_activity(
                     near_wrist_at_face = False
                     if has_kp:
                         for wr_pt in [l_wr, r_wr]:
-                            if wr_pt[2] > 0.20 and wr_pt[1] <= (face_y + p_bh * 0.35):
-                                if math.hypot(sx_mid - wr_pt[0], sy_mid - wr_pt[1]) < max(sh_span * 0.50, 35.0):
+                            if wr_pt[2] > 0.20:
+                                wr_dist_to_face = math.hypot(wr_pt[0] - face_x, wr_pt[1] - face_y)
+                                wr_dist_to_obj = math.hypot(sx_mid - wr_pt[0], sy_mid - wr_pt[1])
+                                if wr_dist_to_face <= max(sh_span * 0.75, 55.0) and wr_dist_to_obj < max(sh_span * 0.50, 45.0):
                                     near_wrist_at_face = True
                                     break
                     if dist_to_face <= max_smk_dist or near_wrist_at_face:
@@ -1199,26 +1201,31 @@ def classify_pose_activity(
                     elif r_chin_guard and r_el[2] > 0.25 and calculate_joint_angle(r_sh, r_el, r_wr) > 135.0:
                         one_punch_extended = (wrist_max_v >= 1.0 or wrist_max_a >= 2.5)
 
-                # 6. High karate / martial arts kick
+                # 6. High karate / martial arts kick (requires standing on one leg with other leg extended high)
                 l_hip, r_hip = kp_data[11], kp_data[12]
                 l_knee, r_knee = kp_data[13], kp_data[14]
                 l_ank, r_ank = kp_data[15], kp_data[16]
-                is_kicking = False
-                if (l_ank[2] > 0.25 and l_hip[2] > 0.20 and l_ank[1] < l_hip[1] + bh * 0.08):
-                    is_kicking = True
-                elif (r_ank[2] > 0.25 and r_hip[2] > 0.20 and r_ank[1] < r_hip[1] + bh * 0.08):
-                    is_kicking = True
-                elif (l_knee[2] > 0.25 and l_hip[2] > 0.20 and l_knee[1] < l_hip[1] - bh * 0.02):
-                    is_kicking = True
-                elif (r_knee[2] > 0.25 and r_hip[2] > 0.20 and r_knee[1] < r_hip[1] - bh * 0.02):
-                    is_kicking = True
 
-                # Must be a standing fighter (with visible standing legs down to ground, NOT seated in a car/chair or cropped)
                 ank_valid = (l_ank[2] > 0.15 or r_ank[2] > 0.15)
                 ank_y = max(l_ank[1], r_ank[1]) if ank_valid else None
                 is_standing_fighter = (is_definitely_standing or (ank_valid and ank_y >= y1 + bh * 0.70)) and ank_valid
 
-                if (both_hands_guard and is_standing_fighter and not is_crouched_or_seated) or one_punch_extended or is_kicking:
+                is_kicking = False
+                if is_standing_fighter and not is_crouched_or_seated and aspect_ratio < 0.90:
+                    hip_y_ref = min(l_hip[1], r_hip[1]) if (l_hip[2] > 0.20 and r_hip[2] > 0.20) else (l_hip[1] if l_hip[2] > 0.20 else r_hip[1] if r_hip[2] > 0.20 else y1 + bh * 0.5)
+                    # Requires one foot planted low and the other foot kicked high
+                    if l_ank[2] > 0.25 and r_ank[2] > 0.25:
+                        plant_y = max(l_ank[1], r_ank[1])
+                        kick_y = min(l_ank[1], r_ank[1])
+                        if plant_y >= y1 + bh * 0.72 and kick_y < hip_y_ref + bh * 0.08 and abs(l_ank[1] - r_ank[1]) > bh * 0.35:
+                            is_kicking = True
+                    elif l_knee[2] > 0.25 and r_knee[2] > 0.25:
+                        plant_k = max(l_knee[1], r_knee[1])
+                        kick_k = min(l_knee[1], r_knee[1])
+                        if plant_k >= y1 + bh * 0.55 and kick_k < hip_y_ref - bh * 0.02 and abs(l_knee[1] - r_knee[1]) > bh * 0.25:
+                            is_kicking = True
+
+                if (both_hands_guard and is_standing_fighter and not is_crouched_or_seated) or (one_punch_extended and is_standing_fighter) or is_kicking:
                     is_fighting = True
 
         if is_fighting:
@@ -1260,8 +1267,8 @@ def classify_pose_activity(
             # Require sustained horizontal profile while rejecting standing, upright, forward bending, or seated desk crops
             head_above_shoulders = (head_y is not None and sh_y is not None and (sh_y - head_y) > max(bh * 0.20, 25.0) and (body_angle is None or body_angle >= 45.0))
             
-            # Keypoint-less object filter: Ground clutter / backpacks on floor without keypoints must have human scale & conf >= 0.45
-            is_valid_lying_scale = (has_kp and len(kp_data) >= 17) or (bw >= 90.0 and bh >= 35.0 and float(trk.get('conf', 0.5)) >= 0.45)
+            # Keypoint-less object filter: Ground clutter / backpacks on floor without keypoints must have human scale, wide aspect ratio & conf >= 0.50
+            is_valid_lying_scale = (has_kp and len(kp_data) >= 17 and any(kp[2] > 0.20 for kp in kp_data)) or (bw >= 120.0 and bh >= 35.0 and aspect_ratio >= 1.60 and float(trk.get('conf', 0.5)) >= 0.50)
             
             is_lying = (is_horizontal_box or is_horizontal_spine or is_horizontal_angle) and not head_above_shoulders and is_valid_lying_scale
             
@@ -1344,7 +1351,15 @@ def classify_pose_activity(
                 p_kp = p_item.get('keypoints')
                 if p_conf < 0.45 and (not p_kp or len(p_kp) < 17):
                     continue
+                # Ground clutter / backpack: If no keypoints are visible, require p_conf >= 0.60
+                if (not p_kp or len(p_kp) < 17 or not any(k[2] > 0.25 for k in p_kp)) and p_conf < 0.60:
+                    continue
             px1, py1, px2, py2 = pbox
+            p_w = max(1.0, px2 - px1)
+            p_h = max(1.0, py2 - py1)
+            # Filter edge border slivers (e.g. width < 18 or aspect ratio < 0.12 or > 4.5)
+            if p_w < 18.0 or p_h < 30.0 or (p_w / p_h) < 0.12 or (p_w / p_h) > 4.5:
+                continue
             p_area = max(1.0, px2 - px1) * max(1.0, py2 - py1)
             is_dup = False
             for dbox in dedup_persons:

@@ -1,0 +1,9 @@
+{
+  "speed_limit_kmh": 10.0,
+  "road_distance_meters": 20.0,
+  "line_a_ratio": 0.4,
+  "line_b_ratio": 0.75,
+  "line_a": null,
+  "line_b": null,
+  "rtsp_url": ""
+}
